@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "메인 창 권한: 기본 + 파일/폴더 고르기 대화상자",
+  "windows": ["main"],
+  "permissions": ["core:default", "dialog:allow-open"]
+}

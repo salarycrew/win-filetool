@@ -18,3 +18,6 @@ dist/
 build/
 __pycache__/
 *.log
+
+# tauri generated
+src-tauri/gen/

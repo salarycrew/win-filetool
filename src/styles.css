@@ -1,0 +1,44 @@
+:root {
+  font-family: "Malgun Gothic", "맑은 고딕", "Apple SD Gothic Neo", system-ui, sans-serif;
+  font-size: 14px;
+  color: #1f2328;
+  background: #f6f7f9;
+}
+body { margin: 0; }
+main { max-width: 760px; margin: 0 auto; padding: 16px 20px 32px; }
+h2 { font-size: 14px; margin: 18px 0 6px; color: #444; }
+section { margin-bottom: 4px; }
+.row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+button, select, input[type="text"] {
+  font: inherit; padding: 6px 12px; border: 1px solid #c8ccd2; border-radius: 6px; background: #fff;
+}
+button { cursor: pointer; }
+button:hover:not(:disabled) { background: #eef1f5; }
+button:disabled { opacity: 0.5; cursor: default; }
+button.primary { background: #2563eb; border-color: #2563eb; color: #fff; padding: 8px 22px; }
+button.primary:hover:not(:disabled) { background: #1d4ed8; }
+button.ghost { border-color: transparent; background: transparent; color: #555; }
+select { min-width: 360px; }
+input[type="text"] { min-width: 200px; }
+.drop {
+  border: 2px dashed #a9b2bd; border-radius: 10px; padding: 18px; text-align: center; background: #fff;
+}
+.drop .row { justify-content: center; }
+.drop.over { border-color: #2563eb; background: #eef4ff; }
+.drop-title { font-size: 16px; margin: 0 0 4px; }
+.hint { color: #6b7280; font-size: 12px; margin: 4px 0 10px; }
+.items { list-style: none; padding: 0; margin: 0; background: #fff; border: 1px solid #dde1e6; border-radius: 8px; max-height: 180px; overflow: auto; }
+.items li { display: flex; gap: 8px; align-items: center; padding: 5px 10px; border-bottom: 1px solid #f0f1f3; }
+.items li:last-child { border-bottom: 0; }
+.items li.empty { color: #9aa1aa; }
+.items .kind { font-size: 11px; padding: 1px 6px; border-radius: 4px; background: #e8ecf1; color: #374151; min-width: 34px; text-align: center; }
+.items .path { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; direction: rtl; text-align: left; }
+.items button { padding: 1px 7px; font-size: 12px; }
+.opts { margin-top: 8px; display: flex; flex-direction: column; gap: 8px; }
+.opts label { display: flex; gap: 8px; align-items: center; }
+.outdir { flex: 1; padding: 6px 10px; background: #fff; border: 1px solid #dde1e6; border-radius: 6px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.run-row { margin-top: 16px; }
+.busy { color: #2563eb; }
+.log { background: #111827; color: #e5e7eb; border-radius: 8px; padding: 10px 12px; min-height: 90px; max-height: 260px; overflow: auto; white-space: pre-wrap; font-family: Consolas, "D2Coding", monospace; font-size: 12px; margin: 0; }
+.log .err { color: #fca5a5; }
+.log .ok { color: #86efac; }

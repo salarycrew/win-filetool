@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>파일 도구</title>
+    <link rel="stylesheet" href="/src/styles.css" />
+  </head>
+  <body>
+    <main>
+      <section id="drop" class="drop">
+        <p class="drop-title">파일이나 폴더를 여기에 끌어다 놓으세요</p>
+        <p class="hint">PDF · zip · 폴더</p>
+        <div class="row">
+          <button id="pick-files" type="button">파일 고르기</button>
+          <button id="pick-folder" type="button">폴더 고르기</button>
+          <button id="clear" type="button" class="ghost">목록 비우기</button>
+        </div>
+      </section>
+
+      <section>
+        <h2>선택한 항목</h2>
+        <ul id="items" class="items"><li class="empty">아직 없습니다</li></ul>
+      </section>
+
+      <section>
+        <h2>작업</h2>
+        <div class="row">
+          <select id="op">
+            <option value="nfc">파일명 한글 깨짐 고치기 (폴더, NFD→NFC)</option>
+            <option value="zip">맥에서 만든 zip 풀기 (한글 이름 고침)</option>
+            <option value="merge">PDF 합치기 (목록 순서대로)</option>
+            <option value="split">PDF 나누기</option>
+            <option value="rotate">PDF 페이지 회전</option>
+            <option value="delete">PDF 페이지 삭제</option>
+            <option value="reorder">PDF 페이지 순서 변경</option>
+          </select>
+        </div>
+        <div id="opts" class="opts"></div>
+      </section>
+
+      <section>
+        <h2>저장 위치</h2>
+        <div class="row">
+          <span id="outdir" class="outdir">원본과 같은 폴더 (기본)</span>
+          <button id="pick-out" type="button">다른 폴더 고르기</button>
+          <button id="reset-out" type="button" class="ghost">기본으로</button>
+        </div>
+        <p class="hint">원본은 바꾸거나 덮어쓰지 않습니다. 같은 이름이 있으면 “이름 (1)”처럼 새 이름으로 저장합니다.</p>
+      </section>
+
+      <div class="row run-row">
+        <button id="run" type="button" class="primary">실행</button>
+        <span id="busy" class="busy" hidden>작업 중…</span>
+      </div>
+
+      <section>
+        <h2>결과</h2>
+        <pre id="log" class="log"></pre>
+      </section>
+    </main>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

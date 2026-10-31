@@ -1,0 +1,15 @@
+[package]
+name = "win-filetool"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "파일 도구 (Tauri 2 앱)"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+filetool-core = { path = "../crates/core" }
+serde = { version = "1.0.229", features = ["derive"] }
+tauri = { version = "2", features = [] }
+tauri-plugin-dialog = "2"
