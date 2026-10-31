@@ -9,6 +9,7 @@
 //! - [`watch`]: 감시 폴더, [`settings`]: 설정 저장
 //! - 1c: [`pdfcompress`]: PDF 압축, [`img2pdf`]: 이미지 → PDF, [`pdfrender`]: PDF → 이미지(PDFium)·이미지 꺼내기,
 //!   [`autostart`]: 윈도 시작 시 실행(HKCU Run)
+//! - 2a: [`search`]: 전체 파일 즉시 검색(색인·스캔·실시간 갱신·질의 언어)
 //!
 //! 원본은 절대 덮어쓰지 않는다. 출력 경로가 이미 있으면 [`paths::unique_path`]로
 //! ` (1)`, ` (2)` …를 붙인 새 이름을 쓴다.
@@ -30,6 +31,7 @@ pub mod pdfcompress;
 pub mod pdfrender;
 pub mod process;
 pub mod samples;
+pub mod search;
 pub mod settings;
 pub mod tempdir;
 pub mod tools;
