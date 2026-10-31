@@ -120,6 +120,26 @@ fn query_operators() {
     assert!(Query::parse("dm:2024-13-01", &ctx()).unwrap_err().contains("날짜"));
 }
 
+/// ux3: `< >` 묶기(Everything 문법), 겹쳐 쓰기, 묶음 아님, 비교 기호와 섞기
+#[test]
+fn query_grouping() {
+    let ix = sample();
+    assert_q(&ix, "<보고서|회의록> ext:pdf", &["보고서.pdf", "보고서_최종.pdf"]);
+    assert_q(&ix, "<보고서|회의록> !ext:pdf", &["보고서 모음", "주간보고서_2024.hwp", "회의록.docx"]);
+    // 묶음 없이는 a b|c = a 그리고 (b 또는 c), 묶으면 (a 그리고 b) 또는 c
+    assert_q(&ix, "img 0001|holiday", &["IMG_0001.JPG"]);
+    assert_q(&ix, "<img 0001>|holiday", &["IMG_0001.JPG", "holiday photo.jpg"]);
+    // 겹쳐 쓰기
+    assert_q(&ix, "<ext:jpg <holiday|0001>>|budget", &["IMG_0001.JPG", "holiday photo.jpg", "budget.xlsx"]);
+    // 묶음 아님
+    assert_q(&ix, r"file: pictures\ !<img|report>", &["holiday photo.jpg"]);
+    // 묶음 안의 크기·날짜 비교
+    assert_q(&ix, "<size:>5mb|dm:<2025> file:", &["보고서.pdf", "IMG_0001.JPG", "IMG_0002.png", "holiday photo.jpg", "report.jpg.txt"]);
+    assert_q(&ix, "<ext:pdf size:>=3mb>", &["보고서.pdf", "보고서_최종.pdf"]);
+    // 닫지 않은 묶음(치는 중)도 결과가 나옴
+    assert_q(&ix, "<보고서|회의록", &["보고서 모음", "주간보고서_2024.hwp", "회의록.docx", "보고서.pdf", "보고서_최종.pdf"]);
+}
+
 #[test]
 fn size_and_date_filters() {
     let ix = sample();

@@ -5,6 +5,9 @@
 //! - `\`(또는 `/`)가 든 낱말은 전체 경로에 맞춤
 //! - `ext:jpg;png`, `file:`, `folder:`, `size:>10mb`(`<` `>` `>=` `<=`, 범위 `1mb..5mb`, 1024 단위),
 //!   `dm:today|yesterday|thisweek|thismonth|2024-05-01`(범위 `2024-01..2024-03`, `>`/`<`도)
+//! - `<…>` 묶기(Everything 문법): `<보고서|회의록> ext:pdf`, 겹쳐 쓰기 가능, `!<a b>` = 묶음 아님.
+//!   `<`는 낱말 처음에서만 묶음을 열고, `>`는 묶음 안에서만 닫는다(`size:>1mb`처럼 `:` 바로 뒤의 `>`·`<`는 비교).
+//!   닫지 않은 `<`는 질의 끝에서 닫은 것으로 본다(치는 중에도 결과가 나오게).
 //! - 대소문자·NFC/NFD 무시. 초성만으로 된 낱말(`ㅂㄱㅅ`)은 음절 첫소리로 맞춤(`보고서`)
 
 use std::sync::Arc;
@@ -96,6 +99,10 @@ enum Compiled {
 enum Tok {
     Word { text: String, quoted: bool, not: bool },
     Or,
+    /// `<` (앞에 `!`가 있으면 not)
+    Open { not: bool },
+    /// `>`
+    Close,
 }
 
 fn tokenize(q: &str) -> Vec<Tok> {
@@ -105,6 +112,7 @@ fn tokenize(q: &str) -> Vec<Tok> {
     let mut in_q = false;
     let mut not = false;
     let mut started = false;
+    let mut depth = 0usize;
     let flush = |out: &mut Vec<Tok>, cur: &mut String, quoted: &mut bool, not: &mut bool, started: &mut bool| {
         if *started && (!cur.is_empty() || *quoted) {
             out.push(Tok::Word { text: std::mem::take(cur), quoted: *quoted, not: *not });
@@ -134,6 +142,19 @@ fn tokenize(q: &str) -> Vec<Tok> {
                 out.push(Tok::Or);
             }
             c if c.is_whitespace() => flush(&mut out, &mut cur, &mut quoted, &mut not, &mut started),
+            // 묶음 열기: 낱말 처음(앞에 `!`만 있어도 됨)
+            '<' if cur.is_empty() && !quoted => {
+                out.push(Tok::Open { not });
+                not = false;
+                started = false;
+                depth += 1;
+            }
+            // 묶음 닫기: 묶음 안이고, `size:>`처럼 `:` 바로 뒤의 비교 기호가 아닐 때
+            '>' if depth > 0 && !cur.ends_with(':') => {
+                flush(&mut out, &mut cur, &mut quoted, &mut not, &mut started);
+                out.push(Tok::Close);
+                depth -= 1;
+            }
             '!' if !started => {
                 not = !not;
                 started = true;
@@ -152,33 +173,51 @@ fn tokenize(q: &str) -> Vec<Tok> {
 
 pub fn parse(q: &str, ctx: &QueryCtx) -> Result<Node, String> {
     let toks = tokenize(q);
-    // 띄어쓰기로 나뉜 묶음 = AND, 묶음 안의 `|` = OR
+    let mut i = 0;
+    parse_seq(&toks, &mut i, ctx, false)
+}
+
+/// 낱말·묶음의 차례. 띄어쓰기로 나뉜 것 = AND, `|`로 이은 것 = OR(AND보다 먼저 묶임).
+/// `nested`면 `>`에서 끝난다(닫지 않은 묶음은 끝에서 닫음).
+fn parse_seq(toks: &[Tok], i: &mut usize, ctx: &QueryCtx, nested: bool) -> Result<Node, String> {
     let mut and_items: Vec<Node> = Vec::new();
     let mut or_items: Vec<Node> = Vec::new();
     let mut pending_or = false;
-    let mut i = 0;
-    while i < toks.len() {
-        match &toks[i] {
+    while *i < toks.len() {
+        let n = match &toks[*i] {
             Tok::Or => {
                 pending_or = true;
+                *i += 1;
+                continue;
+            }
+            Tok::Close => {
+                *i += 1;
+                if nested {
+                    break;
+                }
+                continue;
             }
             Tok::Word { text, quoted, not } => {
-                let mut n = word(text, *quoted, ctx)?;
-                if *not {
-                    n = Node::Not(Box::new(n));
-                }
-                if pending_or && !or_items.is_empty() {
-                    or_items.push(n);
-                } else {
-                    if !or_items.is_empty() {
-                        and_items.push(collapse_or(std::mem::take(&mut or_items)));
-                    }
-                    or_items.push(n);
-                }
-                pending_or = false;
+                *i += 1;
+                let n = word(text, *quoted, ctx)?;
+                if *not { Node::Not(Box::new(n)) } else { n }
             }
+            Tok::Open { not } => {
+                let not = *not;
+                *i += 1;
+                let n = parse_seq(toks, i, ctx, true)?;
+                if not { Node::Not(Box::new(n)) } else { n }
+            }
+        };
+        if pending_or && !or_items.is_empty() {
+            or_items.push(n);
+        } else {
+            if !or_items.is_empty() {
+                and_items.push(collapse_or(std::mem::take(&mut or_items)));
+            }
+            or_items.push(n);
         }
-        i += 1;
+        pending_or = false;
     }
     if !or_items.is_empty() {
         and_items.push(collapse_or(or_items));
@@ -639,6 +678,51 @@ mod tests {
                 Tok::Word { text: "e".into(), quoted: false, not: false },
                 Tok::Or,
                 Tok::Word { text: "f".into(), quoted: false, not: false },
+            ]
+        );
+    }
+
+    fn p(q: &str) -> String {
+        format!("{:?}", parse(q, &ctx()).unwrap())
+    }
+
+    #[test]
+    fn grouping_angle_brackets() {
+        // Everything 문법: <a|b> c
+        assert_eq!(p("<보고서|회의록> ext:pdf"), r#"And([Or([Substr("보고서"), Substr("회의록")]), Ext(["pdf"])])"#);
+        // 묶음 안의 띄어쓰기 = AND, 묶음끼리 OR
+        assert_eq!(p("<a b>|<c d>"), r#"Or([And([Substr("a"), Substr("b")]), And([Substr("c"), Substr("d")])])"#);
+        // 묶음이 없으면 a b|c = a 그리고 (b 또는 c), 묶으면 (a 그리고 b) 또는 c
+        assert_eq!(p("<a b>|c"), r#"Or([And([Substr("a"), Substr("b")]), Substr("c")])"#);
+        // 겹쳐 쓰기
+        assert_eq!(p("<a <b|c>>|d"), r#"Or([And([Substr("a"), Or([Substr("b"), Substr("c")])]), Substr("d")])"#);
+        assert_eq!(p("<<<a>>>"), r#"Substr("a")"#);
+        // !<…> = 묶음 아님
+        assert_eq!(p("x !<a|b>"), r#"And([Substr("x"), Not(Or([Substr("a"), Substr("b")]))])"#);
+        // 비교 기호는 그대로: size:>1mb, dm:<2024 가 묶음 안에서도
+        assert_eq!(p("<size:>1kb|dm:<2024>"), format!("{:?}", parse("size:>1kb|dm:<2024", &ctx()).unwrap()));
+        assert_eq!(p("<ext:pdf size:>=2kb>"), r#"And([Ext(["pdf"]), Size(2048, 18446744073709551615)])"#);
+        // 묶음 밖의 > 는 낱말의 일부(예전과 같음), 따옴표 안은 그대로
+        assert_eq!(p("a>b"), r#"Substr("a>b")"#);
+        assert_eq!(p(r#"<"x <y>" z>"#), r#"And([Substr("x <y>"), Substr("z")])"#);
+        // 닫지 않은 < 는 끝에서 닫음, 빈 묶음 = 모두
+        assert_eq!(p("<a|b"), r#"Or([Substr("a"), Substr("b")])"#);
+        assert_eq!(p("<>"), "True");
+        // 와일드카드·경로 낱말도 묶음 안에서 그대로
+        assert_eq!(p(r"<*.pdf|문서\>"), r#"Or([Glob(['*', '.', 'p', 'd', 'f']), PathSubstr("문서\\")])"#);
+    }
+
+    #[test]
+    fn grouping_tokens() {
+        assert_eq!(
+            tokenize("!<a|b> size:>1"),
+            vec![
+                Tok::Open { not: true },
+                Tok::Word { text: "a".into(), quoted: false, not: false },
+                Tok::Or,
+                Tok::Word { text: "b".into(), quoted: false, not: false },
+                Tok::Close,
+                Tok::Word { text: "size:>1".into(), quoted: false, not: false },
             ]
         );
     }
