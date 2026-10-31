@@ -85,7 +85,14 @@ pub fn watch(q: &str, seconds: u64, interval_ms: u64) -> Result<ExitCode> {
         let r = c.query(q, SortKey::Path, false, 50, &[]).map_err(Error::Invalid)?;
         let paths: Vec<String> = r.rows.iter().map(|x| x.path.clone()).collect();
         if prev.as_ref().map(|(n, p)| *n != r.total || *p != paths).unwrap_or(true) {
-            println!("{:>8.3} s  {}개  (서비스 안 {:.1} ms, 버전 {})", t0.elapsed().as_secs_f64(), r.total, r.millis, r.version);
+            println!(
+                "{} {:>8.3} s  {}개  (서비스 안 {:.1} ms, 버전 {})",
+                chrono::Local::now().format("%H:%M:%S%.3f"),
+                t0.elapsed().as_secs_f64(),
+                r.total,
+                r.millis,
+                r.version
+            );
             for p in &paths {
                 println!("            {p}");
             }

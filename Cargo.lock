@@ -1178,6 +1178,7 @@ dependencies = [
 name = "filetool-cli"
 version = "0.1.0"
 dependencies = [
+ "chrono",
  "filetool-core",
  "image",
  "lopdf",
