@@ -1,6 +1,6 @@
 # win-filetool
 
-Windows용 파일 도구 앱(창 제목 "파일 도구"). 파일 변환(이미지·문서·영상·PDF)과 맥↔윈도 호환 처리를 한곳에 모으고, 2단계에서 전체 파일 즉시 검색을 더한다.
+Windows용 파일 도구 앱(창 제목 "파일 도구"). 파일 변환(이미지·문서·영상·PDF)과 맥↔윈도 호환 처리, Everything식 전체 파일 즉시 검색(2a, 관리자 권한 없음)을 한곳에 모은다.
 
 스택: **Tauri 2** (Rust 코어 + Vite/TypeScript 웹 UI). 설계·단계 구분은 [docs/design.md](docs/design.md).
 
@@ -34,6 +34,51 @@ ffmpeg와 LibreOffice는 앱에 들어 있지 않다. 따로 설치하거나(관
 - **윈도우 시작 시 실행**([설정], 기본 꺼짐): 로그인하면 창 없이 알림 영역(트레이)에서 시작해 감시 폴더를 돌림.
   감시 규칙이 켜져 있으면 창을 닫아도 트레이에 남음(트레이 메뉴: 열기 / 감시 일시정지 / 끝내기). 앱은 한 번만 실행됨(두 번째 실행은 기존 창을 앞으로)
 
+## 2a에서 되는 것: 전체 파일 즉시 검색 (관리자 권한 불필요)
+
+- 첫 탭 **[검색]**: 치는 대로 바로 찾기. 결과 목록(이름 / 폴더 / 크기 / 수정한 날짜)은 머리글을 눌러 정렬(다시 누르면 반대로),
+  결과 수와 걸린 시간 표시. 결과가 수십만 개여도 보이는 줄만 그린다
+- **Enter** = 열기, **Ctrl+Enter** = 들어 있는 폴더를 열고 그 파일 선택, ↑↓·PageUp/PageDown으로 이동, 두 번 클릭 = 열기.
+  오른쪽 클릭: 열기 / 폴더 열기 / 경로 복사 / 이름 복사
+- 아래 상태 줄: 색인한 항목 수, 마지막 스캔 시각, 스캔 중인 드라이브(진행 수), 건너뛴 폴더 수, 실시간 반영 건수
+- 기본으로 **모든 고정 드라이브**(C:\, D:\ …)를 색인. 처음 스캔하는 동안에도 찾은 만큼 바로 검색된다.
+  다음부터는 저장한 색인을 불러와 바로 검색되고(100만 항목 약 0.2~0.3초), 배경에서 다시 스캔해 최신으로 맞춘다
+- 앱이 켜져 있는 동안(창이든 트레이든) 새로 생기거나 이름이 바뀌거나 지워진 파일이 몇 초 안에 결과에 반영된다
+- 트레이 메뉴 **검색 열기**. [설정]에서 **전역 단축키**(기본 꺼짐, 원하는 키를 눌러 지정)로 어디서든 검색 탭을 띄울 수 있다.
+  "윈도우 시작 시 실행"을 켜 두면 로그인 때부터 트레이에서 색인을 계속 갱신한다(창을 닫아도 트레이에 남음)
+
+### 검색 문법 (Everything의 일부)
+
+대소문자, 맥에서 만든 이름(NFD)과 윈도 이름(NFC)의 차이는 무시한다.
+
+| 쓰는 법 | 뜻 | 예 |
+|---|---|---|
+| `낱말 낱말` | 띄어쓰기 = 그리고(AND), 이름에 모두 들어 있음 | `보고서 2024` |
+| `a\|b` | 또는(OR). AND보다 먼저 묶인다: `img 1\|2` = img 그리고 (1 또는 2) | `jpg\|png` |
+| `!낱말` | 아님(NOT) | `보고서 !최종` |
+| `"구절"` | 띄어쓰기를 포함한 그대로(와일드카드 아님) | `"주간 보고서"` |
+| `*` `?` | 와일드카드. 이름 **전체**에 맞춘다(`*`=0자 이상, `?`=1자) | `*.pdf`, `IMG_00??.jpg` |
+| `\`가 든 낱말 | 이름이 아니라 **전체 경로**에 들어 있음(와일드카드면 전체 경로에 맞춤). `/`도 됨 | `문서\회의`, `c:\users\*\*.hwp` |
+| `ext:확장자;확장자` | 확장자가 그중 하나(파일만) | `ext:jpg;png;heic` |
+| `file:` / `folder:` | 파일만 / 폴더만. 뒤에 낱말을 붙여도 됨 | `folder:사진`, `file: 보고서` |
+| `size:` | 크기(파일만). `>` `>=` `<` `<=`, 범위 `a..b`, 단위 b/kb/mb/gb/tb(1024 기준) | `size:>10mb`, `size:1mb..5mb` |
+| `dm:` | 수정한 날짜. `today` `yesterday` `thisweek`(월요일부터) `lastweek` `thismonth` `lastmonth` `thisyear`(오늘·어제·이번주… 한글도 됨), 날짜 `2024-05-01`·`2024-05`·`2024`, 범위 `2024-01..2024-03`, `>` `<` | `dm:today`, `dm:>2024-06` |
+| 초성만 | 한글 초성으로만 된 낱말은 음절 첫소리로 맞춘다 | `ㅂㄱㅅ` → `보고서`, `주간보고서` |
+
+조합 예: `ext:pdf size:>2mb 계약 !초안`, `dm:thisweek file: 회의|발표`, `사진\ ext:heic`.
+같은 문법을 명령줄에서도 쓸 수 있다: `filetool-cli search "<질의>"`.
+
+### 색인이 있는 곳 · 제외할 폴더
+
+- 색인 파일: `%LOCALAPPDATA%\kr.salarycrew.winfiletool\index\index-v1.bin`(버전이 붙은 이진 파일, 임시 파일에 쓴 뒤 바꿔치기).
+  지워도 된다(다음 시작 때 다시 스캔). 스캔이 끝날 때, 바뀐 것이 있으면 10분마다, 앱을 끝낼 때 저장
+- **제외할 폴더**: [설정] > 검색 > "제외할 폴더"에 한 줄에 하나. `\`가 있으면 전체 경로에, 없으면 폴더 이름에 맞춘다(`*` `?` 가능, 대소문자 무시).
+  기본값(지울 수 있음): `$Recycle.Bin`, `System Volume Information`, `?:\Windows\WinSxS`. 예: `node_modules`, `D:\Backup`, `*\AppData\Local\Temp`
+- 색인할 곳: [설정] > 검색에서 폴더 추가/빼기. 목록을 비우면(모든 고정 드라이브로) 기본으로 돌아간다
+- 열 수 없는 폴더(권한 없음)와 정션·심볼릭 링크(따라가면 고리가 생길 수 있음)는 건너뛰고 수만 센다. OneDrive 같은 클라우드 폴더는 들어간다
+- 명령줄: `filetool-cli index C:\ D:\`(스캔 + 저장, 항목 수·시간·크기), `filetool-cli search "보고서 ext:hwp"`(찾기 + 시간),
+  `filetool-cli search-live C:\Users\me --query 보고서 --seconds 60`(앱과 같은 실시간 갱신을 돌리며 결과 변화 출력)
+
 ## 설치 / 제거
 
 - **설치 파일**: `파일도구_0.1.0_x64-setup.exe` 실행 → 관리자 권한 없이 `%LOCALAPPDATA%\파일 도구\`에 설치, 시작 메뉴에 "파일 도구".
@@ -45,7 +90,8 @@ ffmpeg와 LibreOffice는 앱에 들어 있지 않다. 따로 설치하거나(관
 
 ### 설정이 있는 곳
 
-- 설정(도구 경로·감시 규칙): `%APPDATA%\kr.salarycrew.winfiletool\settings.json` (감시 기록 `watch-state.json`도 같은 폴더)
+- 설정(도구 경로·감시 규칙·검색 루트·제외·단축키): `%APPDATA%\kr.salarycrew.winfiletool\settings.json` (감시 기록 `watch-state.json`도 같은 폴더)
+- 검색 색인: `%LOCALAPPDATA%\kr.salarycrew.winfiletool\index\index-v1.bin`
 - 윈도우 시작 시 실행: 레지스트리 `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` 값 `win-filetool`
 - 작업 중 임시 파일: `%TEMP%\win-filetool\` (끝나면 지움)
 
@@ -66,6 +112,8 @@ cargo test -p filetool-core
 - `파일도구_0.1.0_x64-setup.exe` — 사용자별 설치 파일(NSIS, 한국어)
 - `win-filetool-0.1.0-portable\` (+ `.zip`) — `win-filetool.exe`(앱, WebView2 런타임 필요), `pdfium.dll`, `licenses\`,
   `filetool-cli.exe`(같은 코어의 명령줄 도구: `selftest <빈 폴더>`로 점검, `tools`, `image`/`media`/`doc`/`watch`,
-  1c `pdf-compress`/`img2pdf`/`pdf2img`/`pdf-images`/`autostart`)
+  1c `pdf-compress`/`img2pdf`/`pdf2img`/`pdf-images`/`autostart`, 2a `index`/`search`/`search-live`)
 
-desktop 배치 위치: `C:\Users\user\dev\win-filetool-builds\<단계>\` (1a, 1b, 1c).
+desktop 배치 위치: `C:\Users\user\dev\win-filetool-builds\<단계>\` (1a, 1b, 1c, 2a).
+
+검색 벤치마크(합성 100만 항목): `cargo test --release -p filetool-core --test search_bench -- --ignored --nocapture`
