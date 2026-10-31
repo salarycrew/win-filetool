@@ -1,5 +1,16 @@
 ; NSIS 설치 파일 훅(Tauri bundler가 넣는다).
 ; 지울 때 "윈도 시작 시 실행" 값(HKCU Run\win-filetool)도 지워, 지운 앱을 가리키는 시작 항목이 남지 않게 한다.
+; 2c: 빠른 검색 서비스(FileToolSvc, 선택 설치)가 있으면 함께 지울지 묻는다. 서비스는 관리자 권한으로 등록돼 있어
+;     지우려면 UAC 창이 한 번 뜬다([예] → 앱 폴더의 filetool-svc.exe uninstall을 관리자 권한으로).
+;     [아니요]·조용히 제거(/S)일 때는 서비스가 남는다(서비스 실행 파일은 Program Files에 따로 있어 계속 동작) —
+;     나중에 관리자 명령 프롬프트에서 "C:\Program Files\파일 도구 서비스\filetool-svc.exe" uninstall 로 지운다.
 !macro NSIS_HOOK_PREUNINSTALL
   DeleteRegValue HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "win-filetool"
+  ReadRegStr $0 HKLM "SYSTEM\CurrentControlSet\Services\FileToolSvc" "ImagePath"
+  StrCmp $0 "" wft_svc_done
+  IfSilent wft_svc_done
+  IfFileExists "$INSTDIR\filetool-svc.exe" 0 wft_svc_done
+  MessageBox MB_YESNO|MB_ICONQUESTION "빠른 검색 서비스(FileToolSvc)가 설치되어 있습니다.$\r$\n함께 제거할까요? 관리자 권한 확인 창이 뜹니다.$\r$\n$\r$\n[아니요]를 누르면 서비스는 그대로 남습니다." IDNO wft_svc_done
+  ExecShellWait "runas" "$INSTDIR\filetool-svc.exe" "uninstall" SW_HIDE
+  wft_svc_done:
 !macroend

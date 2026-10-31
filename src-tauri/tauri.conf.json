@@ -44,6 +44,7 @@
     ],
     "resources": {
       "../third_party/pdfium/win-x64/bin/pdfium.dll": "pdfium.dll",
+      "../target/x86_64-pc-windows-msvc/release/filetool-svc.exe": "filetool-svc.exe",
       "../third_party/pdfium/win-x64/licenses/": "licenses/pdfium/"
     },
     "windows": {

@@ -47,10 +47,13 @@ mod win {
         ConvertSecurityDescriptorToStringSecurityDescriptorW, ConvertSidToStringSidW, ConvertStringSecurityDescriptorToSecurityDescriptorW,
         GetNamedSecurityInfoW, SetNamedSecurityInfoW,
     };
-    use windows_sys::Win32::Security::{GetSecurityDescriptorDacl, LookupAccountNameW, ACL};
+    use windows_sys::Win32::Foundation::{CloseHandle, HANDLE, LUID};
+    use windows_sys::Win32::Security::{
+        AdjustTokenPrivileges, GetSecurityDescriptorDacl, LookupAccountNameW, LookupPrivilegeValueW, ACL, LUID_AND_ATTRIBUTES, TOKEN_PRIVILEGES,
+    };
     use windows_sys::Win32::Storage::FileSystem::MoveFileExW;
     use windows_sys::Win32::System::Services::*;
-    use windows_sys::Win32::System::Threading::{GetCurrentProcess, SetPriorityClass};
+    use windows_sys::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken, SetPriorityClass};
 
     const DISPLAY_NAME: &str = "파일 도구 빠른 검색 서비스";
     const DESCRIPTION: &str =
@@ -73,6 +76,21 @@ mod win {
     const PROTECTED_DACL_SECURITY_INFORMATION: u32 = 0x8000_0000;
     const MOVEFILE_DELAY_UNTIL_REBOOT: u32 = 0x4;
     const POLICY_ALL_ACCESS: u32 = 0x000F_0FFF;
+
+    /// `--report <파일>`: 화면에 찍는 줄을 파일에도(앱의 설치 단추가 UAC로 띄운 창 없는 실행의 결과를 읽으려고)
+    static REPORT: OnceLock<Mutex<Option<std::fs::File>>> = OnceLock::new();
+
+    macro_rules! say {
+        ($($t:tt)*) => {{
+            let s = format!($($t)*);
+            println!("{s}");
+            if let Some(m) = REPORT.get() {
+                if let Some(f) = m.lock().unwrap().as_mut() {
+                    let _ = writeln!(f, "{s}");
+                }
+            }
+        }};
+    }
 
     pub fn wide(s: &str) -> Vec<u16> {
         std::ffi::OsStr::new(s).encode_wide().chain(std::iter::once(0)).collect()
@@ -107,27 +125,31 @@ mod win {
                 return 1;
             }
         };
+        if let Some(p) = args.iter().position(|a| a == "--report").and_then(|i| args.get(i + 1)) {
+            let f = std::fs::File::create(p).ok();
+            let _ = REPORT.set(Mutex::new(f));
+        }
         let r = match cmd {
             "run" => return run_dispatcher(),
             "install" => install(account),
             "uninstall" => uninstall(),
             "status" => return status(),
             _ => {
-                println!("filetool-svc {} — 파일 도구 빠른 검색 서비스", env!("CARGO_PKG_VERSION"));
-                println!("  filetool-svc install [--account system|virtual]   (관리자) 설치·시작");
-                println!("  filetool-svc uninstall                             (관리자) 멈춤·제거(폴더까지)");
-                println!("  filetool-svc status                                상태");
+                say!("filetool-svc {} — 파일 도구 빠른 검색 서비스", env!("CARGO_PKG_VERSION"));
+                say!("  filetool-svc install [--account system|virtual] [--report 파일]   (관리자) 설치·시작. virtual은 시험용(볼륨을 열 수 없어 빠른 색인이 안 됨)");
+                say!("  filetool-svc uninstall [--report 파일]             (관리자) 멈춤·제거(폴더까지)");
+                say!("  filetool-svc status                                상태");
                 return if cmd.is_empty() || cmd == "help" || cmd == "--help" { 0 } else { 1 };
             }
         };
         match r {
             Ok(()) => 0,
             Err(Fail::NotAdmin) => {
-                eprintln!("관리자 권한이 필요합니다. 관리자 권한으로 실행하세요(앱의 [설정] > 검색 > 빠른 검색 서비스 설치 단추는 UAC 창으로 권한을 얻습니다).");
+                say!("관리자 권한이 필요합니다. 관리자 권한으로 실행하세요(앱의 [설정] > 검색 > 빠른 검색 서비스 설치 단추는 UAC 창으로 권한을 얻습니다).");
                 2
             }
             Err(Fail::Msg(m)) => {
-                eprintln!("{m}");
+                say!("오류: {m}");
                 1
             }
         }
@@ -331,6 +353,30 @@ mod win {
         Ok(())
     }
 
+    /// 토큰의 권한 켜기(백업·볼륨 관리 — 계정에 있어도 처음에는 꺼져 있음). 켠 이름들
+    fn enable_privileges(names: &[&str]) -> Vec<String> {
+        let mut tok: HANDLE = std::ptr::null_mut();
+        if unsafe { OpenProcessToken(GetCurrentProcess(), 0x20 | 0x8, &mut tok) } == 0 {
+            return Vec::new();
+        }
+        let mut on = Vec::new();
+        for n in names {
+            let w = wide(n);
+            let mut luid = LUID { LowPart: 0, HighPart: 0 };
+            if unsafe { LookupPrivilegeValueW(std::ptr::null(), w.as_ptr(), &mut luid) } == 0 {
+                continue;
+            }
+            let tp = TOKEN_PRIVILEGES { PrivilegeCount: 1, Privileges: [LUID_AND_ATTRIBUTES { Luid: luid, Attributes: 0x2 }] };
+            let ok = unsafe { AdjustTokenPrivileges(tok, 0, &tp, 0, std::ptr::null_mut(), std::ptr::null_mut()) } != 0;
+            // ERROR_NOT_ALL_ASSIGNED(1300) = 계정에 그 권한이 없음
+            if ok && last_error() == 0 {
+                on.push(n.to_string());
+            }
+        }
+        unsafe { CloseHandle(tok) };
+        on
+    }
+
     // ---------- install / uninstall ----------
 
     fn install(account: Account) -> Result<(), Fail> {
@@ -338,10 +384,10 @@ mod win {
         let src = std::env::current_exe().map_err(|e| e.to_string())?;
         let dir = install_dir();
         let dst = dir.join(EXE_NAME);
-        println!("[1/6] 실행 파일: {} → {}", src.display(), dst.display());
+        say!("[1/6] 실행 파일: {} → {}", src.display(), dst.display());
         let existing = open_svc(&m, SERVICE_ALL_ACCESS)?;
         if let Some(s) = &existing {
-            println!("      이미 설치됨 → 멈추고 새로 씀");
+            say!("      이미 설치됨 → 멈추고 새로 씀");
             stop_service(s)?;
         }
         std::fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
@@ -354,7 +400,7 @@ mod win {
         }
         set_dacl(&dir, INSTALL_DIR_SDDL)?;
 
-        println!("[2/6] 서비스 등록: {SERVICE_NAME} ({DISPLAY_NAME}), 계정 {}", if account == Account::System { "LocalSystem" } else { VIRTUAL_ACCOUNT });
+        say!("[2/6] 서비스 등록: {SERVICE_NAME} ({DISPLAY_NAME}), 계정 {}", if account == Account::System { "LocalSystem" } else { VIRTUAL_ACCOUNT });
         let bin = wide(&format!("\"{}\" run", dst.display()));
         let disp = wide(DISPLAY_NAME);
         let acct = wide(VIRTUAL_ACCOUNT);
@@ -429,12 +475,12 @@ mod win {
         }
 
         let data = service_data_dir();
-        println!("[3/6] 자료 폴더: {} (SYSTEM·관리자만)", data.display());
+        say!("[3/6] 자료 폴더: {} (SYSTEM·관리자만)", data.display());
         let mut data_sddl = DATA_DIR_SDDL.to_string();
         let mut svc_sid = None;
         if account == Account::Virtual {
             let (mut sid, ss) = account_sid(VIRTUAL_ACCOUNT)?;
-            println!("      가상 계정 {VIRTUAL_ACCOUNT} = {ss} → 권한 {}", VIRTUAL_RIGHTS.join(", "));
+            say!("      가상 계정 {VIRTUAL_ACCOUNT} = {ss} → 권한 {}", VIRTUAL_RIGHTS.join(", "));
             lsa_rights(&mut sid, true)?;
             data_sddl.push_str(&format!("(A;OICI;FA;;;{ss})"));
             svc_sid = Some(ss);
@@ -444,7 +490,7 @@ mod win {
             set_dacl(&dir, &format!("{INSTALL_DIR_SDDL}(A;OICI;0x1200a9;;;{ss})"))?;
         }
 
-        println!("[4/6] 시작");
+        say!("[4/6] 시작");
         if unsafe { StartServiceW(s.0, 0, std::ptr::null()) } == 0 {
             let e = last_error();
             if e != 1056 {
@@ -454,16 +500,16 @@ mod win {
         if !wait_state(&s, SERVICE_RUNNING, Duration::from_secs(30)) {
             return Err(format!("서비스가 30초 안에 실행되지 않았습니다(상태 {})", svcpipe::state_label(state(&s))).into());
         }
-        println!("[5/6] 파이프 확인");
+        say!("[5/6] 파이프 확인");
         let t0 = Instant::now();
         let mut last = String::new();
         while t0.elapsed() < Duration::from_secs(20) {
             match svcpipe::connect("filetool-svc install").and_then(|mut c| c.status()) {
                 Ok(st) => {
                     for l in describe_status(&st) {
-                        println!("      {l}");
+                        say!("      {l}");
                     }
-                    println!("[6/6] 설치 끝({:.1} 초 뒤 파이프 응답)", t0.elapsed().as_secs_f64());
+                    say!("[6/6] 설치 끝({:.1} 초 뒤 파이프 응답)", t0.elapsed().as_secs_f64());
                     return Ok(());
                 }
                 Err(e) => last = e,
@@ -479,7 +525,7 @@ mod win {
             let cur = sddl_of(&data.to_string_lossy()).unwrap_or_default();
             let owner = owner_sid(&cur).unwrap_or("");
             if owner != "SY" && owner != "BA" && owner != "S-1-5-18" && owner != "S-1-5-32-544" {
-                println!("      소유자가 SYSTEM·관리자가 아닌 폴더({owner}) → 지우고 새로 만듦");
+                say!("      소유자가 SYSTEM·관리자가 아닌 폴더({owner}) → 지우고 새로 만듦");
                 std::fs::remove_dir_all(data).map_err(|e| format!("{}: {e}", data.display()))?;
             }
         }
@@ -494,9 +540,9 @@ mod win {
         match open_svc(&m, SERVICE_ALL_ACCESS)? {
             Some(s) => {
                 let virt = svcpipe::service_info().account.eq_ignore_ascii_case(VIRTUAL_ACCOUNT);
-                println!("[1/4] 서비스 멈춤");
+                say!("[1/4] 서비스 멈춤");
                 stop_service(&s)?;
-                println!("[2/4] 등록 해제");
+                say!("[2/4] 등록 해제");
                 if unsafe { DeleteService(s.0) } == 0 {
                     let e = last_error();
                     if e != 1072 {
@@ -506,7 +552,7 @@ mod win {
                 drop(s);
                 if virt {
                     if let Ok((mut sid, ss)) = account_sid(VIRTUAL_ACCOUNT) {
-                        println!("      가상 계정 {ss} 권한 거둠");
+                        say!("      가상 계정 {ss} 권한 거둠");
                         lsa_rights(&mut sid, false)?;
                     }
                 }
@@ -515,15 +561,15 @@ mod win {
                     std::thread::sleep(Duration::from_millis(200));
                 }
             }
-            None => println!("[1/4] 서비스 없음(이미 제거됨)"),
+            None => say!("[1/4] 서비스 없음(이미 제거됨)"),
         }
         let data = service_data_dir();
-        println!("[3/4] 자료 폴더 지움: {}", data.display());
+        say!("[3/4] 자료 폴더 지움: {}", data.display());
         if data.exists() {
             std::fs::remove_dir_all(&data).map_err(|e| format!("{}: {e}", data.display()))?;
         }
         let dir = install_dir();
-        println!("[4/4] 서비스 폴더 지움: {}", dir.display());
+        say!("[4/4] 서비스 폴더 지움: {}", dir.display());
         if dir.exists() {
             let me = std::env::current_exe().ok().and_then(|p| p.canonicalize().ok());
             let inside = me.as_ref().map(|p| dir.canonicalize().map(|d| p.starts_with(d)).unwrap_or(false)).unwrap_or(false);
@@ -539,32 +585,32 @@ mod win {
                     let w = wide_path(&p);
                     unsafe { MoveFileExW(w.as_ptr(), std::ptr::null(), MOVEFILE_DELAY_UNTIL_REBOOT) };
                 }
-                println!("      실행 중인 {EXE_NAME}는 다음 재부팅 때 지워집니다(폴더째). 앱 폴더의 filetool-svc.exe로 제거하면 바로 지워집니다");
+                say!("      실행 중인 {EXE_NAME}는 다음 재부팅 때 지워집니다(폴더째). 앱 폴더의 filetool-svc.exe로 제거하면 바로 지워집니다");
             } else {
                 std::fs::remove_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
             }
         }
-        println!("제거 끝");
+        say!("제거 끝");
         Ok(())
     }
 
     fn status() -> i32 {
         let info = svcpipe::service_info();
-        println!("서비스 {SERVICE_NAME}: {}", if info.installed { "설치됨" } else { "설치 안 됨" });
+        say!("서비스 {SERVICE_NAME}: {}", if info.installed { "설치됨" } else { "설치 안 됨" });
         if info.installed {
-            println!("  상태 {} · pid {} · 시작 {} · 계정 {}", info.state, info.pid, info.start_type, if info.account.is_empty() { "?" } else { &info.account });
-            println!("  실행 파일 {}", info.binary_path);
+            say!("  상태 {} · pid {} · 시작 {} · 계정 {}", info.state, info.pid, info.start_type, if info.account.is_empty() { "?" } else { &info.account });
+            say!("  실행 파일 {}", info.binary_path);
         }
         let dir = install_dir();
         let data = service_data_dir();
         for (what, p) in [("서비스 폴더", dir.to_string_lossy().into_owned()), ("자료 폴더", data.to_string_lossy().into_owned()), ("파이프", PIPE_NAME.to_string())] {
             if what != "파이프" && !Path::new(&p).exists() {
-                println!("  {what} {p}: 없음");
+                say!("  {what} {p}: 없음");
                 continue;
             }
             match sddl_of(&p) {
-                Ok(s) => println!("  {what} {p}: {s}"),
-                Err(e) => println!("  {what} {p}: ACL 읽기 실패({e})"),
+                Ok(s) => say!("  {what} {p}: {s}"),
+                Err(e) => say!("  {what} {p}: ACL 읽기 실패({e})"),
             }
         }
         if !info.installed {
@@ -575,14 +621,14 @@ mod win {
             c.status().map(|s| (me, s))
         }) {
             Ok((me, st)) => {
-                println!("  호출자 {} ({}) 관리자 {} · {}", me.user, me.sid, me.admin, me.visibility);
+                say!("  호출자 {} ({}) 관리자 {} · {}", me.user, me.sid, me.admin, me.visibility);
                 for l in describe_status(&st) {
-                    println!("  {l}");
+                    say!("  {l}");
                 }
                 0
             }
             Err(e) => {
-                println!("  파이프: {e}");
+                say!("  파이프: {e}");
                 4
             }
         }
@@ -694,6 +740,7 @@ mod win {
             // 처음 색인하는 동안은 낮은 I/O·CPU 우선순위(배경 모드). 준비되면 끈다
             let bg = unsafe { SetPriorityClass(GetCurrentProcess(), PROCESS_MODE_BACKGROUND_BEGIN) } != 0;
             log(format!("배경 모드(낮은 I/O 우선순위): {}", if bg { "켬" } else { "실패" }));
+            log(format!("켠 권한: {:?}", enable_privileges(&["SeBackupPrivilege", "SeManageVolumePrivilege"])));
             // NTFS 고정 드라이브 중 볼륨을 열 수 있는 것만(그 밖은 앱이 스스로 색인)
             let mut roots = Vec::new();
             for r in fixed_drives() {

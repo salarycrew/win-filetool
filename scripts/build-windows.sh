@@ -8,7 +8,7 @@
 #   - 1c: PDFium(scripts/fetch-pdfium.sh → third_party/pdfium), makensis(scripts/fetch-nsis.sh → ~/.local/opt/nsis-3.10)
 # 결과(dist-win/):
 #   - 파일도구_<버전>_x64-setup.exe  사용자별 설치 파일(관리자 권한 불필요, pdfium.dll 포함)
-#   - win-filetool-<버전>-portable/ (+ .zip)  win-filetool.exe, filetool-cli.exe, pdfium.dll, licenses/
+#   - win-filetool-<버전>-portable/ (+ .zip)  win-filetool.exe, filetool-cli.exe, filetool-svc.exe(2c 선택 서비스), pdfium.dll, licenses/
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -38,10 +38,10 @@ PC
 chmod +x "$STUB/pkg-config"
 export PATH="$STUB:$PATH" TAURI_LINUX_AYATANA_APPINDICATOR=true
 
+# 점검·자동화용 동반 CLI + 2c 빠른 검색 서비스(설치 파일에 들어가므로 앱보다 먼저)
+cargo xwin build --release --target "$TARGET" -p filetool-cli -p filetool-svc
 # GUI 앱 + NSIS 설치 파일(프런트엔드 npm run build까지 tauri CLI가 처리)
 npx tauri build --runner cargo-xwin --target "$TARGET" --bundles nsis
-# 점검·자동화용 동반 CLI
-cargo xwin build --release --target "$TARGET" -p filetool-cli
 
 VERSION=$(node -p "require('./src-tauri/tauri.conf.json').version")
 rm -rf dist-win && mkdir -p dist-win
@@ -49,7 +49,7 @@ setup=$(ls "$REL"/bundle/nsis/*-setup.exe | head -1)
 cp "$setup" "dist-win/파일도구_${VERSION}_x64-setup.exe"
 P="dist-win/win-filetool-${VERSION}-portable"
 mkdir -p "$P/licenses/pdfium"
-cp "$REL/win-filetool.exe" "$REL/filetool-cli.exe" third_party/pdfium/win-x64/bin/pdfium.dll "$P/"
+cp "$REL/win-filetool.exe" "$REL/filetool-cli.exe" "$REL/filetool-svc.exe" third_party/pdfium/win-x64/bin/pdfium.dll "$P/"
 cp third_party/pdfium/win-x64/licenses/* "$P/licenses/pdfium/"
 (cd dist-win && rm -f "win-filetool-${VERSION}-portable.zip" && python3 -c "import shutil,sys; shutil.make_archive(sys.argv[1], 'zip', '.', sys.argv[1])" "win-filetool-${VERSION}-portable")
 ls -l dist-win "$P"

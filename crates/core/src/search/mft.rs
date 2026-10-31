@@ -673,9 +673,14 @@ mod win {
                 return Err(OpenErr::NotNtfs(fsname));
             }
             let p = wide(&format!(r"\\.\{letter}:"));
-            let h = unsafe {
-                CreateFileW(p.as_ptr(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, std::ptr::null(), OPEN_EXISTING, 0, std::ptr::null_mut())
+            let open = |flags: u32| unsafe {
+                CreateFileW(p.as_ptr(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, std::ptr::null(), OPEN_EXISTING, flags, std::ptr::null_mut())
             };
+            let mut h = open(0);
+            // 2c 서비스(가상 계정 + 백업 권한)는 백업 의미로 열어 본다
+            if h == INVALID_HANDLE_VALUE && unsafe { GetLastError() } == ERROR_ACCESS_DENIED {
+                h = open(FILE_FLAG_BACKUP_SEMANTICS);
+            }
             if h == INVALID_HANDLE_VALUE {
                 let e = unsafe { GetLastError() };
                 return Err(if e == ERROR_ACCESS_DENIED { OpenErr::NotAdmin } else { OpenErr::Other(format!("오류 {e}")) });

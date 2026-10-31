@@ -15,3 +15,7 @@ tauri = { version = "2", features = ["tray-icon"] }
 tauri-plugin-dialog = "2"
 tauri-plugin-global-shortcut = "2"
 tauri-plugin-single-instance = "2"
+
+[target.'cfg(windows)'.dependencies]
+# 2c: 빠른 검색 서비스 설치/제거 단추(ShellExecuteExW runas)
+windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_System_Threading", "Win32_System_Registry", "Win32_UI_Shell"] }

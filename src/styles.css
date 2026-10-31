@@ -95,3 +95,5 @@ input[type="range"] { min-width: 160px; }
 label.col { display: flex; flex-direction: column; gap: 4px; margin-top: 8px; }
 textarea { font: 12px Consolas, "D2Coding", monospace; padding: 6px 8px; border: 1px solid #c8ccd2; border-radius: 6px; }
 #s-hotkey { min-width: 280px; }
+
+.svc-out { white-space: pre-wrap; font-size: 12px; background: #f4f6f8; border-radius: 6px; padding: 8px; max-height: 220px; overflow: auto; }

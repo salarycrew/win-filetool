@@ -1,6 +1,6 @@
 //! 2c: 빠른 검색 서비스의 이름 있는 파이프 — Windows 쪽(서버·클라이언트·호출자 확인·서비스 조회).
 //!
-//! - 파이프 DACL(SDDL [`PIPE_SDDL`]): 네트워크 로그온 거부, SYSTEM·관리자 전체, **대화형 사용자(IU)는 읽기·쓰기만**
+//! - 파이프 DACL(SDDL [`PIPE_SDDL`]): SYSTEM·관리자 전체, **대화형 사용자(IU)는 읽기·쓰기만**
 //!   (`FILE_CREATE_PIPE_INSTANCE`는 주지 않음 → 일반 사용자가 같은 이름의 인스턴스를 더 만들 수 없음).
 //!   `PIPE_REJECT_REMOTE_CLIENTS`로 원격 연결은 받지 않는다. 첫 인스턴스는 `FILE_FLAG_FIRST_PIPE_INSTANCE`(이름을 먼저 차지한 다른 프로세스가 있으면 실패).
 //! - 호출자: 첫 요청을 읽은 뒤 `ImpersonateNamedPipeClient` → 스레드 토큰(사용자 SID·그룹) → `RevertToSelf`.
@@ -14,8 +14,10 @@ use std::time::Duration;
 #[cfg(not(windows))]
 use super::svcproto::Client;
 
-/// 파이프 보안: 네트워크 거부, SYSTEM·관리자 전체, 대화형 사용자 읽기/쓰기(인스턴스 만들기 제외)
-pub const PIPE_SDDL: &str = "D:P(D;;GA;;;NU)(A;;GA;;;SY)(A;;GA;;;BA)(A;;0x12019b;;;IU)";
+/// 파이프 보안: SYSTEM·관리자 전체, 대화형 사용자(IU) 읽기/쓰기(인스턴스 만들기 제외). 그 밖(네트워크·일괄 로그온의 일반 사용자 등)은 없음.
+/// 원격(SMB) 연결은 `PIPE_REJECT_REMOTE_CLIENTS`로 막는다. 네트워크 로그온 SID(NU) 거부는 두지 않았다 — 로컬 ssh 세션이
+/// 네트워크 로그온이라 관리자 ssh도 막히기 때문(관리자는 어차피 볼륨을 직접 읽을 수 있음). 일반 사용자의 ssh 세션에는 IU가 없어 막힌다.
+pub const PIPE_SDDL: &str = "D:P(A;;GA;;;SY)(A;;GA;;;BA)(A;;0x12019b;;;IU)";
 /// 클라이언트 요청 하나의 시간 제한
 pub const CLIENT_TIMEOUT: Duration = Duration::from_secs(10);
 

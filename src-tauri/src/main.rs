@@ -9,6 +9,10 @@
 //!     감시 규칙이 켜져 있으면 창을 닫아도 트레이에 남음, 한 번만 실행(두 번째 실행은 기존 창을 앞으로).
 //! 2a: 검색 탭(첫 탭). 검색 서비스(색인 불러오기 → 배경 스캔 → 실시간 갱신)는 앱이 켜지면(트레이 포함) 바로 돈다.
 //!     트레이 [검색 열기], 전역 단축키(기본 꺼짐), 끝낼 때 색인 저장.
+//! 2c: 빠른 검색 서비스(`filetool-svc`, 선택 설치)가 답하면 그 서비스가 색인한 드라이브는 서비스에 묻고(상태 줄 "빠른 색인(서비스)"),
+//!     나머지 루트만 앱이 색인한다. 서비스가 없거나 멈추면 조용히 앱 색인으로. [설정] > 검색에서 설치/제거(UAC 1번).
+
+mod remote;
 
 use std::collections::{HashMap, VecDeque};
 use std::path::{Path, PathBuf};
@@ -25,8 +29,11 @@ use filetool_core::watch::{WatchEvent, WatchRule, Watcher};
 use filetool_core::img2pdf::{self, Img2PdfOpts, Img2PdfOut};
 use filetool_core::pdfcompress::{self, CompressOut, CompressPreset};
 use filetool_core::pdfrender::{self, ExtractOut, RenderOpts, RenderOut};
+use filetool_core::search::index::root_key;
 use filetool_core::search::query::{Row, SortKey};
-use filetool_core::search::service::{default_index_dir, SearchConfig, SearchResult, SearchService, SearchStatus};
+use filetool_core::search::service::{default_index_dir, RootStatus, SearchConfig, SearchResult, SearchService, SearchStatus};
+use filetool_core::search::svcproto::SERVICE_SOURCE_LABEL;
+use remote::{Remote, ServiceView};
 use filetool_core::settings::SearchSettings;
 use filetool_core::{autostart, nfc, paths, zipnfc};
 use serde::Serialize;
@@ -208,8 +215,18 @@ struct AppState {
     pause_item: Mutex<Option<CheckMenuItem<tauri::Wry>>>,
     /// 2a 검색
     search: Arc<SearchService>,
-    /// 마지막 검색 결과(번호 목록)와 그때의 색인 세대
-    results: Mutex<(u64, Vec<u32>)>,
+    /// 마지막 검색 결과
+    results: Mutex<Results>,
+    /// 2c 빠른 검색 서비스
+    remote: Arc<Remote>,
+    /// 지금 서비스에 묻는 루트(앱 색인에서는 뺌)
+    covered: Mutex<Vec<PathBuf>>,
+}
+
+/// 마지막 검색 결과: 앱 색인만, 또는 서비스(앞) + 앱 색인(뒤)
+enum Results {
+    Local { gen: u64, ids: Vec<u32> },
+    Mixed { remote_total: usize, local_gen: u64, local_ids: Vec<u32> },
 }
 
 impl AppState {
@@ -419,8 +436,10 @@ fn autostart_set(enabled: bool) -> CmdResult<autostart::AutostartStatus> {
 
 // ---------- 2a: 검색 ----------
 
-fn search_config(s: &SearchSettings) -> SearchConfig {
-    SearchConfig::new(s.effective_roots(), s.excludes.clone(), &index_dir())
+/// 앱 색인 설정: 서비스가 맡은 루트(`covered`)는 뺀다
+fn search_config(s: &SearchSettings, covered: &[PathBuf]) -> SearchConfig {
+    let roots = s.effective_roots().into_iter().filter(|r| !covered.iter().any(|c| root_key(c) == root_key(r))).collect();
+    SearchConfig::new(roots, s.excludes.clone(), &index_dir())
 }
 
 /// 색인 폴더(시험용 WIN_FILETOOL_INDEX_DIR, 기본 %LOCALAPPDATA%\kr.salarycrew.winfiletool\index)
@@ -431,10 +450,33 @@ fn index_dir() -> PathBuf {
 #[tauri::command]
 async fn search_query(state: State<'_, AppState>, query: String, sort: SortKey, desc: bool) -> CmdResult<SearchResult> {
     let svc = state.search.clone();
-    let (ids, r) = tauri::async_runtime::spawn_blocking(move || svc.query(&query, sort, desc))
-        .await
-        .map_err(|e| e.to_string())??;
-    *state.results.lock().unwrap() = (r.generation, ids);
+    let remote = state.remote.clone();
+    let covered = state.covered.lock().unwrap().clone();
+    let excludes = state.settings.lock().unwrap().search.excludes.clone();
+    let (res, r) = tauri::async_runtime::spawn_blocking(move || -> CmdResult<(Results, SearchResult)> {
+        let t0 = Instant::now();
+        let (ids, local) = svc.query(&query, sort, desc)?;
+        if !covered.is_empty() && !query.trim().is_empty() {
+            match remote.query(&query, sort, desc, &excludes) {
+                Ok(rr) => {
+                    let r = SearchResult {
+                        total: rr.total + local.total,
+                        millis: t0.elapsed().as_secs_f64() * 1000.0,
+                        generation: local.generation.wrapping_add(rr.generation),
+                        version: local.version.wrapping_add(rr.version),
+                    };
+                    return Ok((Results::Mixed { remote_total: rr.total, local_gen: local.generation, local_ids: ids }, r));
+                }
+                // 질의 오류(문법)는 그대로 알리고, 연결 문제는 앱 색인으로(감시 스레드가 곧 루트를 되돌림)
+                Err(e) if e.ends_with("[query]") => return Err(e.trim_end_matches(" [query]").to_string()),
+                Err(e) => eprintln!("빠른 검색 서비스 질의 실패 → 앱 색인만: {e}"),
+            }
+        }
+        Ok((Results::Local { gen: local.generation, ids }, local))
+    })
+    .await
+    .map_err(|e| e.to_string())??;
+    *state.results.lock().unwrap() = res;
     Ok(r)
 }
 
@@ -445,18 +487,46 @@ struct RowsOut {
     stale: bool,
 }
 
-/// 결과 줄 [offset, offset+limit) — 화면에 보이는 만큼만
+/// 결과 줄 [offset, offset+limit) — 화면에 보이는 만큼만. 서비스 결과가 앞, 앱 색인 결과가 뒤
 #[tauri::command]
-fn search_rows(state: State<'_, AppState>, offset: usize, limit: usize) -> RowsOut {
-    let (gen, ids) = {
+async fn search_rows(state: State<'_, AppState>, offset: usize, limit: usize) -> CmdResult<RowsOut> {
+    let end = offset.saturating_add(limit);
+    // (서비스 범위, 앱 색인 세대, 앱 색인 번호들)
+    let (remote_range, gen, ids) = {
         let g = state.results.lock().unwrap();
-        let end = (offset + limit).min(g.1.len());
-        (g.0, g.1.get(offset.min(end)..end).map(|s| s.to_vec()).unwrap_or_default())
+        match &*g {
+            Results::Local { gen, ids } => {
+                let e = end.min(ids.len());
+                (None, *gen, ids.get(offset.min(e)..e).map(|s| s.to_vec()).unwrap_or_default())
+            }
+            Results::Mixed { remote_total, local_gen, local_ids } => {
+                let rt = *remote_total;
+                let rr = (offset < rt).then(|| (offset, end.min(rt) - offset));
+                let (lo, hi) = (offset.max(rt) - rt, end.max(rt) - rt);
+                let hi = hi.min(local_ids.len());
+                (rr, *local_gen, local_ids.get(lo.min(hi)..hi).map(|s| s.to_vec()).unwrap_or_default())
+            }
+        }
     };
-    match state.search.rows(&ids, gen) {
-        Some(rows) => RowsOut { rows, stale: false },
-        None => RowsOut { rows: Vec::new(), stale: true },
-    }
+    let svc = state.search.clone();
+    let remote = state.remote.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let mut rows = Vec::new();
+        if let Some((o, n)) = remote_range {
+            match remote.rows(o, n) {
+                Ok(Some(r)) => rows.extend(r),
+                // 서비스 색인이 통째로 바뀜·연결 끊김 → 다시 검색
+                _ => return RowsOut { rows: Vec::new(), stale: true },
+            }
+        }
+        match svc.rows(&ids, gen) {
+            Some(r) => rows.extend(r),
+            None => return RowsOut { rows: Vec::new(), stale: true },
+        }
+        RowsOut { rows, stale: false }
+    })
+    .await
+    .map_err(|e| e.to_string())
 }
 
 #[derive(Serialize)]
@@ -465,12 +535,178 @@ struct SearchView {
     settings: SearchSettings,
     /// 지금 색인하는 루트(설정이 비어 있으면 고정 드라이브)
     effective_roots: Vec<PathBuf>,
+    /// 2c: 서비스가 맡은 루트
+    service_roots: Vec<PathBuf>,
+}
+
+/// 앱 색인 상태 + 서비스가 맡은 루트(“빠른 색인(서비스)”). 버전·세대는 둘을 더한 값(바뀌면 화면이 다시 검색)
+fn merged_status(state: &AppState, effective: &[PathBuf]) -> (SearchStatus, Vec<PathBuf>) {
+    let mut st = state.search.status();
+    let covered = state.covered.lock().unwrap().clone();
+    if !covered.is_empty() {
+        if let Some((rs, me)) = state.remote.status() {
+            let (g, v) = state.remote.seen();
+            st.version = st.version.wrapping_add(v);
+            st.generation = st.generation.wrapping_add(g);
+            st.entries += rs.entries;
+            st.live_updates += rs.live_updates;
+            for r in rs.roots.iter().filter(|r| covered.iter().any(|c| root_key(c) == root_key(Path::new(&r.path)))) {
+                st.skipped += r.stats.denied + r.stats.reparse;
+                st.excluded += r.stats.excluded;
+                st.roots.push(RootStatus {
+                    path: r.path.clone(),
+                    scanning: r.scanning,
+                    scanned_so_far: r.scanned_so_far,
+                    last_scan: r.last_scan,
+                    stats: r.stats.clone(),
+                    source: SERVICE_SOURCE_LABEL.to_string(),
+                    source_note: Some(format!("빠른 검색 서비스(pid {})가 색인하고 저널로 따라갑니다 · {}", rs.pid, me.visibility)),
+                    catchup: r.catchup.clone(),
+                });
+            }
+        }
+    }
+    st.roots.sort_by_key(|r| effective.iter().position(|e| root_key(e) == root_key(Path::new(&r.path))).unwrap_or(usize::MAX));
+    (st, covered)
 }
 
 #[tauri::command]
 fn search_status(state: State<'_, AppState>) -> SearchView {
     let settings = state.settings.lock().unwrap().search.clone();
-    SearchView { status: state.search.status(), effective_roots: settings.effective_roots(), settings }
+    let effective_roots = settings.effective_roots();
+    let (status, service_roots) = merged_status(&state, &effective_roots);
+    SearchView { status, effective_roots, settings, service_roots }
+}
+
+// ---------- 2c: 빠른 검색 서비스 ----------
+
+/// 서비스 상태를 1초마다(없으면 2초마다) 확인하고, 서비스가 맡는 루트가 바뀌면 앱 색인 루트를 바꾼다
+fn start_service_monitor(app: AppHandle) {
+    std::thread::Builder::new()
+        .name("svc-monitor".into())
+        .spawn(move || loop {
+            let state = app.state::<AppState>();
+            let ok = state.remote.poll().is_some();
+            refresh_coverage(&state);
+            std::thread::sleep(Duration::from_millis(if ok { 1000 } else { 2000 }));
+        })
+        .ok();
+}
+
+fn refresh_coverage(state: &AppState) {
+    let settings = state.settings.lock().unwrap().search.clone();
+    let covered = state.remote.covered(&settings.effective_roots());
+    let changed = {
+        let mut c = state.covered.lock().unwrap();
+        if *c != covered {
+            *c = covered.clone();
+            true
+        } else {
+            false
+        }
+    };
+    if changed {
+        state.search.reconfigure(search_config(&settings, &covered));
+    }
+}
+
+/// 앱 폴더의 filetool-svc.exe
+fn svc_exe() -> Option<PathBuf> {
+    let p = std::env::current_exe().ok()?.parent()?.join("filetool-svc.exe");
+    p.exists().then_some(p)
+}
+
+fn svc_report_file() -> PathBuf {
+    std::env::temp_dir().join("win-filetool").join("svc-setup.txt")
+}
+
+/// 설치/제거 단추가 UAC(runas)로 실행할 (파일, 인자)
+fn svc_command(install: bool) -> Option<(PathBuf, String)> {
+    let exe = svc_exe()?;
+    Some((exe, format!("{} --report \"{}\"", if install { "install" } else { "uninstall" }, svc_report_file().display())))
+}
+
+#[derive(Serialize)]
+struct SvcPanel {
+    #[serde(flatten)]
+    view: ServiceView,
+    install_cmd: Option<String>,
+    uninstall_cmd: Option<String>,
+}
+
+#[tauri::command]
+async fn svc_view(state: State<'_, AppState>) -> CmdResult<SvcPanel> {
+    let remote = state.remote.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let fmt = |c: Option<(PathBuf, String)>| c.map(|(e, a)| format!("\"{}\" {a}", e.display()));
+        SvcPanel { view: remote.view(svc_exe().map(|p| p.display().to_string())), install_cmd: fmt(svc_command(true)), uninstall_cmd: fmt(svc_command(false)) }
+    })
+    .await
+    .map_err(|e| e.to_string())
+}
+
+/// 설치/제거: filetool-svc.exe를 관리자 권한으로(UAC 창 1번) 실행하고 끝날 때까지 기다린다. 결과 글
+#[tauri::command]
+async fn svc_setup(install: bool) -> CmdResult<String> {
+    tauri::async_runtime::spawn_blocking(move || -> CmdResult<String> {
+        let (exe, args) = svc_command(install).ok_or("앱 폴더에 filetool-svc.exe가 없습니다(설치 파일로 설치한 앱에 들어 있습니다)")?;
+        let report = svc_report_file();
+        let _ = std::fs::create_dir_all(report.parent().unwrap());
+        let _ = std::fs::remove_file(&report);
+        let code = elevate::run_as_admin(&exe, &args)?;
+        let text = std::fs::read_to_string(&report).unwrap_or_default();
+        let _ = std::fs::remove_file(&report);
+        if code == 0 {
+            Ok(text)
+        } else {
+            Err(format!("{}{}(종료 코드 {code})", text, if text.is_empty() { "" } else { "\n" }))
+        }
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+mod elevate {
+    use std::path::Path;
+
+    /// `runas`로 실행(UAC 창)하고 끝날 때까지 기다린다. 종료 코드
+    #[cfg(windows)]
+    pub fn run_as_admin(exe: &Path, args: &str) -> Result<u32, String> {
+        use std::os::windows::ffi::OsStrExt;
+        use windows_sys::Win32::Foundation::{CloseHandle, GetLastError};
+        use windows_sys::Win32::System::Threading::{GetExitCodeProcess, WaitForSingleObject};
+        use windows_sys::Win32::UI::Shell::{ShellExecuteExW, SHELLEXECUTEINFOW};
+        let w = |s: &std::ffi::OsStr| s.encode_wide().chain(std::iter::once(0)).collect::<Vec<u16>>();
+        let verb = w("runas".as_ref());
+        let file = w(exe.as_os_str());
+        let params = w(args.as_ref());
+        let mut info: SHELLEXECUTEINFOW = unsafe { std::mem::zeroed() };
+        info.cbSize = std::mem::size_of::<SHELLEXECUTEINFOW>() as u32;
+        info.fMask = 0x40 | 0x100; // SEE_MASK_NOCLOSEPROCESS | SEE_MASK_NOASYNC
+        info.lpVerb = verb.as_ptr();
+        info.lpFile = file.as_ptr();
+        info.lpParameters = params.as_ptr();
+        info.nShow = 0; // SW_HIDE
+        if unsafe { ShellExecuteExW(&mut info) } == 0 {
+            let e = unsafe { GetLastError() };
+            return Err(if e == 1223 { "관리자 권한 확인(UAC)을 취소했습니다".into() } else { format!("관리자 권한으로 실행하지 못했습니다(오류 {e})") });
+        }
+        if info.hProcess.is_null() {
+            return Err("설치 단계 프로세스를 알 수 없습니다".into());
+        }
+        unsafe { WaitForSingleObject(info.hProcess, 180_000) };
+        let mut code = 1u32;
+        unsafe {
+            GetExitCodeProcess(info.hProcess, &mut code);
+            CloseHandle(info.hProcess);
+        }
+        Ok(code)
+    }
+
+    #[cfg(not(windows))]
+    pub fn run_as_admin(_exe: &Path, _args: &str) -> Result<u32, String> {
+        Err("Windows에서만 됩니다".into())
+    }
 }
 
 /// 검색 설정 저장(루트·제외가 바뀌면 다시 스캔, 단축키는 바로 등록/해제)
@@ -486,7 +722,9 @@ fn search_set_settings(app: AppHandle, state: State<'_, AppState>, settings: Sea
     state.settings.lock().unwrap().search = settings.clone();
     state.save()?;
     if old.roots != settings.roots || old.excludes != settings.excludes {
-        state.search.reconfigure(search_config(&settings));
+        let covered = state.remote.covered(&settings.effective_roots());
+        *state.covered.lock().unwrap() = covered.clone();
+        state.search.reconfigure(search_config(&settings, &covered));
     }
     if old.hotkey_enabled != settings.hotkey_enabled || old.hotkey != settings.hotkey {
         apply_hotkey(&app, &settings)?;
@@ -705,8 +943,20 @@ fn main() {
                 .or_else(|| app.path().app_config_dir().ok())
                 .unwrap_or_else(|| std::env::temp_dir().join("win-filetool"));
             let settings = Settings::load(&config_dir);
+            // 2c: 빠른 검색 서비스가 답하면 그 서비스가 맡은 드라이브는 앱 색인에서 뺀다(최대 1.5초만 기다림)
+            let remote = Arc::new(Remote::default());
+            let covered = {
+                let (tx, rx) = std::sync::mpsc::channel();
+                let r2 = remote.clone();
+                let roots = settings.search.effective_roots();
+                std::thread::spawn(move || {
+                    r2.poll();
+                    let _ = tx.send(r2.covered(&roots));
+                });
+                rx.recv_timeout(Duration::from_millis(1500)).unwrap_or_default()
+            };
             // 검색 서비스: 저장한 색인을 불러오고 배경에서 다시 스캔, 실시간 갱신(창이 없어도 트레이에서 계속)
-            let search = SearchService::start(search_config(&settings.search));
+            let search = SearchService::start(search_config(&settings.search, &covered));
             let search_settings = settings.search.clone();
             app.manage(AppState {
                 config_dir,
@@ -716,8 +966,11 @@ fn main() {
                 watch_paused: AtomicBool::new(false),
                 pause_item: Mutex::new(None),
                 search,
-                results: Mutex::new((0, Vec::new())),
+                results: Mutex::new(Results::Local { gen: 0, ids: Vec::new() }),
+                remote,
+                covered: Mutex::new(covered),
             });
+            start_service_monitor(app.handle().clone());
             if let Err(e) = apply_hotkey(app.handle(), &search_settings) {
                 eprintln!("{e}");
             }
@@ -761,6 +1014,8 @@ fn main() {
             search_status,
             search_set_settings,
             search_rescan,
+            svc_view,
+            svc_setup,
             open_path,
             open_folder,
             startup_query

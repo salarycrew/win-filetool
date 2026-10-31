@@ -745,7 +745,12 @@ interface SearchStatus {
   index_file: string; skipped: number; excluded: number; version: number; generation: number; ready: boolean; live_updates: number; memory_bytes: number;
 }
 interface SearchSettings { roots: string[]; excludes: string[]; hotkey_enabled: boolean; hotkey: string }
-interface SearchView { status: SearchStatus; settings: SearchSettings; effective_roots: string[] }
+interface SearchView { status: SearchStatus; settings: SearchSettings; effective_roots: string[]; service_roots: string[] }
+interface ServiceInfo { installed: boolean; state: string; running: boolean; pid: number; start_type: string; account: string; binary_path: string }
+interface SvcPanel {
+  info: ServiceInfo; connected: boolean; entries: number; ready: boolean; roots: string[]; visibility: string; error: string | null;
+  exe: string | null; install_cmd: string | null; uninstall_cmd: string | null;
+}
 type SortKey = "name" | "path" | "size" | "modified";
 
 const ROW_H = 24;
@@ -1024,11 +1029,55 @@ function renderSearchSettings() {
     }
     ul.appendChild(li);
   }
+  if (Date.now() - svcAt > 3000) refreshSvc();
   const ex = $<HTMLTextAreaElement>("s-excludes");
   if (document.activeElement !== ex && ex.dataset.dirty !== "1") ex.value = settings.excludes.join("\n");
   $<HTMLInputElement>("s-hotkey-on").checked = settings.hotkey_enabled;
   if (document.activeElement !== $("s-hotkey")) $<HTMLInputElement>("s-hotkey").value = hotkeyDraft || settings.hotkey;
 }
+
+// 2c: 빠른 검색 서비스(선택 설치)
+let svcAt = 0;
+let svcBusy = false;
+async function refreshSvc() {
+  svcAt = Date.now();
+  let p: SvcPanel;
+  try { p = await invoke<SvcPanel>("svc_view"); } catch (e) { $("svc-state").textContent = errText(e); return; }
+  const i = p.info;
+  let t = i.installed ? `설치됨 · ${i.state} · 시작 ${i.start_type} · 계정 ${i.account || "?"}` : "설치 안 됨";
+  if (i.installed) {
+    t += p.connected
+      ? ` · 연결됨: 항목 ${nf.format(p.entries)}개${p.ready ? "" : "(색인 중)"} · ${p.roots.join(", ")} · ${p.visibility}`
+      : ` · 연결 안 됨${p.error ? ` (${p.error})` : ""} — 앱이 스스로 색인합니다`;
+  }
+  $("svc-state").textContent = t;
+  const inst = $<HTMLButtonElement>("svc-install"), un = $<HTMLButtonElement>("svc-uninstall");
+  inst.textContent = i.installed ? "빠른 검색 서비스 다시 설치(갱신)" : "빠른 검색 서비스 설치";
+  inst.disabled = svcBusy || !p.exe;
+  un.disabled = svcBusy || !p.exe || !i.installed;
+  $("svc-cmd").textContent = p.exe
+    ? `단추를 누르면 관리자 권한으로 실행합니다: ${i.installed ? p.uninstall_cmd + "  (제거)  /  " : ""}${p.install_cmd}  (설치)`
+    : "이 앱 폴더에는 filetool-svc.exe가 없습니다(설치 파일로 설치하면 들어 있습니다).";
+}
+async function svcSetup(install: boolean) {
+  if (svcBusy) return;
+  if (!install && !confirm("빠른 검색 서비스를 제거할까요? (관리자 권한 확인 창이 뜹니다)")) return;
+  svcBusy = true;
+  const out = $<HTMLPreElement>("svc-out");
+  out.hidden = false;
+  out.textContent = `${install ? "설치" : "제거"} 중… (관리자 권한 확인 창에서 [예]를 누르세요)`;
+  refreshSvc();
+  try {
+    out.textContent = await invoke<string>("svc_setup", { install });
+  } catch (e) {
+    out.textContent = errText(e);
+  } finally {
+    svcBusy = false;
+    refreshSvc();
+  }
+}
+$("svc-install").onclick = () => svcSetup(true);
+$("svc-uninstall").onclick = () => svcSetup(false);
 
 async function saveSearchSettings(next: SearchSettings) {
   try {
