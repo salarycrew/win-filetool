@@ -13,6 +13,7 @@ mod pdf1c;
 mod search2a;
 mod selftest1b;
 mod selftest1c;
+mod svc2c;
 
 const USAGE: &str = "사용법:
   filetool-cli nfc-preview <폴더>
@@ -39,7 +40,9 @@ const USAGE: &str = "사용법:
                --source: auto(기본, 관리자 권한 + NTFS 드라이브 전체면 MFT) / mft(MFT만, 안 되면 오류) / walk(폴더 훑기만)
   filetool-cli usn-catchup [--index-dir 폴더]   저장한 색인의 MFT 루트를 USN 저널로 따라잡기(바뀐 것만 반영) + 저장
   filetool-cli index-compare <색인 폴더 A> <색인 폴더 B> [--samples 20] [--spot 파일.tsv]   두 색인 비교(점검용)
-  filetool-cli search <질의> [--limit 20] [--sort name|path|size|modified] [--desc] [--paths] [--index-dir 폴더]   저장한 색인에서 찾기
+  filetool-cli search <질의> [--limit 20] [--sort name|path|size|modified] [--desc] [--paths] [--index-dir 폴더] [--via local|service] [--repeat N]   저장한 색인(local, 기본) 또는 빠른 검색 서비스(service)에서 찾기
+  filetool-cli svc-status                     빠른 검색 서비스(2c) 설치·상태·색인(일반 사용자로 됨). 종료 코드 0 답함 / 3 설치 안 됨 / 4 답하지 않음
+  filetool-cli svc-watch <질의> [--seconds 30] [--interval-ms 100]   서비스 결과가 바뀔 때마다 시각과 함께 출력
   filetool-cli search-live [루트...] --query <질의> [--seconds 60] [--source auto|walk] [--index-dir 폴더]   앱과 같은 검색 서비스(실시간 갱신)를 돌리며 결과 변화를 출력
   filetool-cli selftest <빈 폴더> [--apple <Pages·Numbers·Keynote 샘플 폴더>] [--only 2a]   샘플을 만들어 모든 작업을 점검
 공통 옵션: --ffmpeg <경로> --soffice <경로>  (없으면 앱 설정 → PATH → 설치 폴더 순으로 찾음)";

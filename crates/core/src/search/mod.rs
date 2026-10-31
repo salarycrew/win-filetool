@@ -7,6 +7,7 @@
 //! - [`live`]: 실시간 변경 알림(Windows `ReadDirectoryChangesW`)
 //! - [`query`]: 질의 언어(Everything 일부) 해석·실행·정렬
 //! - [`service`]: 불러오기 → 감시 → 배경 스캔 → 저장을 묶은 서비스(앱·CLI 공용)
+//! - [`svcproto`]·[`svcpipe`]: 2c 빠른 검색 서비스(`filetool-svc`)와의 파이프 프로토콜·가시성 규칙, Windows 파이프 서버·클라이언트
 //! - [`text`]: NFC/NFD·대소문자 무시 키, 한글 초성, 와일드카드
 
 pub mod index;
@@ -16,6 +17,8 @@ pub mod ntfs;
 pub mod query;
 pub mod scan;
 pub mod service;
+pub mod svcpipe;
+pub mod svcproto;
 pub mod text;
 
 pub use index::Index;

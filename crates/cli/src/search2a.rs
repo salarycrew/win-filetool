@@ -14,6 +14,8 @@ use filetool_core::{samples::nfd, Error, Result};
 
 const SWITCHES: [&str; 3] = ["--desc", "--no-default-excludes", "--paths"];
 
+// 2c: --via service는 서비스(파이프)에 묻는다(crate::svc2c)
+
 struct Args {
     opts: Vec<(String, Option<String>)>,
     rest: Vec<String>,
@@ -88,6 +90,11 @@ pub fn run(cmd: &str, args: &[String]) -> Result<Option<ExitCode>> {
         "search-live" => live(&Args::parse(&args[1..])).map(Some),
         "usn-catchup" => usn_catchup(&Args::parse(&args[1..])).map(Some),
         "index-compare" => index_compare(&Args::parse(&args[1..])).map(Some),
+        "svc-status" => crate::svc2c::status().map(Some),
+        "svc-watch" => {
+            let a = Args::parse(&args[1..]);
+            crate::svc2c::watch(&a.rest.join(" "), a.num("--seconds", 30)?, a.num("--interval-ms", 100)?).map(Some)
+        }
         _ => Ok(None),
     }
 }
@@ -166,6 +173,21 @@ fn index(a: &Args) -> Result<ExitCode> {
 /// `search "<질의>"`: 저장한 색인을 읽어 찾기
 fn search(a: &Args) -> Result<ExitCode> {
     let q = a.rest.join(" ");
+    match a.get("--via").unwrap_or("local") {
+        "local" => {}
+        "service" => {
+            return crate::svc2c::search(
+                &q,
+                a.num("--limit", 20)? as usize,
+                sort_key(a.get("--sort")),
+                a.has("--desc"),
+                a.has("--paths"),
+                a.num("--repeat", 1)? as usize,
+                &a.all("--exclude"),
+            )
+        }
+        v => return Err(Error::Invalid(format!("--via 값은 local 또는 service입니다: {v}"))),
+    }
     let file = a.index_dir().join(INDEX_FILE);
     let t0 = Instant::now();
     let ix = Index::load_dir_file(&file)?;

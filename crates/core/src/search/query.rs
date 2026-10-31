@@ -585,7 +585,7 @@ pub fn sort(ix: &Index, ids: &mut [u32], key: SortKey, desc: bool) {
 }
 
 /// 결과 줄 하나(화면·CLI용)
-#[derive(Debug, Clone, serde::Serialize)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Row {
     pub id: u32,
     pub name: String,

@@ -81,6 +81,26 @@ impl Excludes {
         false
     }
 
+    /// 이미 비교 키로 바꾼 이름·전체 경로로 맞추기(색인 항목용, 2c 서비스의 사용자별 제외)
+    pub fn matches_key(&self, name_key: &str, path_key: &str) -> bool {
+        if self.is_empty() {
+            return false;
+        }
+        if !self.name_pats.is_empty() {
+            let n: Vec<char> = name_key.chars().collect();
+            if self.name_pats.iter().any(|p| glob_chars(p, &n)) {
+                return true;
+            }
+        }
+        if !self.path_pats.is_empty() {
+            let k: Vec<char> = path_key.trim_end_matches('\\').chars().collect();
+            if self.path_pats.iter().any(|p| glob_chars(p, &k)) {
+                return true;
+            }
+        }
+        false
+    }
+
     /// 경로나 그 위 폴더 중 하나라도 제외 대상인지(실시간 갱신용)
     pub fn matches_any_ancestor(&self, path: &Path) -> bool {
         !self.is_empty() && path.ancestors().any(|a| self.matches(a))

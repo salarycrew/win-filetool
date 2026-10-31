@@ -56,7 +56,7 @@ impl SearchConfig {
     pub fn new(roots: Vec<PathBuf>, excludes: Vec<String>, index_dir: &Path) -> Self {
         Self { roots, excludes, index_file: index_dir.join(INDEX_FILE), source: SourceMode::Auto }
     }
-    fn opts(&self) -> ScanOpts {
+    pub fn opts(&self) -> ScanOpts {
         let skip = self.index_file.parent().map(|p| vec![p.to_path_buf()]).unwrap_or_default();
         ScanOpts { excludes: Excludes::new(&self.excludes), skip, threads: 0 }
     }
@@ -533,7 +533,7 @@ impl SearchService {
                     // MFT 루트에 같은 저널의 저장 위치가 있으면 그 뒤 변경만 따라잡는다
                     if let Some(v) = &vol {
                         if !ctl.cancel.load(Ordering::SeqCst) {
-                            if let Some(msg) = try_catch_up(&index, v, &root, &opts) {
+                            if let Some(msg) = try_catch_up(&index, &*v.view(), &root, &opts) {
                                 if let Some(n) = notes.lock().unwrap().get_mut(&root) {
                                     n.catchup = Some(msg);
                                 }
@@ -619,8 +619,9 @@ impl SearchService {
     }
 }
 
-/// 저장한 색인의 MFT 루트를 저널로 따라잡기. 됐으면 결과 문장, 안 되면 None(→ 전체 읽기)
-fn try_catch_up(index: &RwLock<Index>, v: &Arc<Volume>, root: &Path, opts: &ScanOpts) -> Option<String> {
+/// 저장한 색인의 MFT 루트를 저널로 따라잡기. 됐으면 결과 문장, 안 되면 None(→ 전체 읽기).
+/// 앱(관리자 실행)과 2c 서비스(`filetool-svc`, 자기 색인 파일)가 같이 쓴다.
+pub fn try_catch_up(index: &RwLock<Index>, view: &dyn mft::VolumeView, root: &Path, opts: &ScanOpts) -> Option<String> {
     let (rid, cur) = {
         let ix = index.read().unwrap();
         let r = ix.root_by_path(root)?;
@@ -630,11 +631,10 @@ fn try_catch_up(index: &RwLock<Index>, v: &Arc<Volume>, root: &Path, opts: &Scan
         (r.id, r.usn?)
     };
     let t0 = Instant::now();
-    let view = v.view();
-    match mft::catch_up(&*view, &cur) {
+    match mft::catch_up(view, &cur) {
         Ok((frns, newc, nrec)) => {
             let mut map = FrnMap::empty(rid);
-            let st = mft::apply_changes(index, &mut map, root, &frns, &*view, opts);
+            let st = mft::apply_changes(index, &mut map, root, &frns, view, opts);
             let mut ix = index.write().unwrap();
             if let Some(r) = ix.roots_mut().iter_mut().find(|r| r.id == rid) {
                 r.usn = Some(newc);

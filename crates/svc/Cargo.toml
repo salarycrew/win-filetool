@@ -1,0 +1,25 @@
+[package]
+name = "filetool-svc"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "파일 도구 빠른 검색 서비스(2c): NTFS MFT 읽기·USN 저널 따라가기를 맡고 이름 있는 파이프로 검색에 답한다"
+
+[[bin]]
+name = "filetool-svc"
+path = "src/main.rs"
+
+[dependencies]
+filetool-core = { path = "../core" }
+chrono = { version = "0.4.45", default-features = false, features = ["clock", "std"] }
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61.2", features = [
+  "Win32_Foundation",
+  "Win32_Security",
+  "Win32_Security_Authorization",
+  "Win32_Security_Authentication_Identity",
+  "Win32_Storage_FileSystem",
+  "Win32_System_Services",
+  "Win32_System_Threading",
+] }

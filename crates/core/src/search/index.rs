@@ -60,7 +60,7 @@ pub struct UsnCursor {
 }
 
 /// 루트 하나를 스캔한 결과 요약
-#[derive(Debug, Clone, Default, Serialize, PartialEq)]
+#[derive(Debug, Clone, Default, Serialize, serde::Deserialize, PartialEq)]
 pub struct RootStats {
     pub dirs: u64,
     pub files: u64,
