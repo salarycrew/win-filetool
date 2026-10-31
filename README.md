@@ -4,7 +4,9 @@ Windows용 파일 도구 앱(창 제목 "파일 도구"). 파일 변환(이미�
 
 스택: **Tauri 2** (Rust 코어 + Vite/TypeScript 웹 UI). 설계·단계 구분은 [docs/design.md](docs/design.md).
 
-## 0.2.0
+## 0.2.1
+
+0.2.1은 작은 고침입니다: 검색 상태 줄의 "C:\ 빠른 색인(서비스)" 같은 색인 방식이 좁은 창에서도 보이고, 서비스를 설치한 직후 첫 색인 동안 "시작 중…"으로 표시합니다.
 
 전체 파일 검색·NTFS 빠른 색인·선택 설치 검색 서비스와 폴더 열기·화면 상태 기억을 담았습니다. 사용자별 설치 파일로 0.1.0 위에 설치하면 기존 도구 경로와 감시 규칙을 이어 씁니다. 변경 내용은 [CHANGELOG.md](CHANGELOG.md). 버전은 [설정] 맨 위에서 확인할 수 있습니다.
 
@@ -129,12 +131,12 @@ ffmpeg와 LibreOffice는 앱에 들어 있지 않다. 따로 설치하거나(관
 
 ## 설치 / 제거
 
-- **설치 파일**: `파일도구_0.2.0_x64-setup.exe` 실행 → 관리자 권한 없이 `%LOCALAPPDATA%\파일 도구\`에 설치, 시작 메뉴에 "파일 도구".
-  조용히 설치: `파일도구_0.2.0_x64-setup.exe /S`
+- **설치 파일**: `파일도구_0.2.1_x64-setup.exe` 실행 → 관리자 권한 없이 `%LOCALAPPDATA%\파일 도구\`에 설치, 시작 메뉴에 "파일 도구".
+  조용히 설치: `파일도구_0.2.1_x64-setup.exe /S`
 - **제거**: [설정 > 앱 > 설치된 앱]에서 "파일 도구" 제거, 또는 `%LOCALAPPDATA%\파일 도구\uninstall.exe` (조용히: `/S`).
   앱 파일·시작 메뉴·"윈도우 시작 시 실행" 값을 지운다. 설정 폴더는 제거 화면에서 "앱 데이터 삭제"를 고를 때만 지운다.
   빠른 검색 서비스(2c)가 설치돼 있으면 함께 지울지 묻는다(위)
-- **휴대용**: `win-filetool-0.2.0-portable.zip`을 풀고 `win-filetool.exe` 실행(`pdfium.dll`이 같은 폴더에 있어야 PDF→이미지가 됨)
+- **휴대용**: `win-filetool-0.2.1-portable.zip`을 풀고 `win-filetool.exe` 실행(`pdfium.dll`이 같은 폴더에 있어야 PDF→이미지가 됨)
 - 서명하지 않은 프로그램이라 처음 실행할 때 SmartScreen("Windows의 PC 보호")이 뜰 수 있다 → [추가 정보] → [실행]
 
 ### 설정이 있는 곳
@@ -159,8 +161,8 @@ cargo test -p filetool-core
 
 결과물(`dist-win/`):
 
-- `파일도구_0.2.0_x64-setup.exe` — 사용자별 설치 파일(NSIS, 한국어)
-- `win-filetool-0.2.0-portable\` (+ `.zip`) — `win-filetool.exe`(앱, WebView2 런타임 필요), `pdfium.dll`, `licenses\`,
+- `파일도구_0.2.1_x64-setup.exe` — 사용자별 설치 파일(NSIS, 한국어)
+- `win-filetool-0.2.1-portable\` (+ `.zip`) — `win-filetool.exe`(앱, WebView2 런타임 필요), `pdfium.dll`, `licenses\`,
   `filetool-cli.exe`(같은 코어의 명령줄 도구: `selftest <빈 폴더>`로 점검, `tools`, `image`/`media`/`doc`/`watch`,
   1c `pdf-compress`/`img2pdf`/`pdf2img`/`pdf-images`/`autostart`, 2a `index`/`search`/`search-live`, 2c `svc-status`/`search --via service`/`svc-watch`),
   `filetool-svc.exe`(2c 빠른 검색 서비스 — 설치 파일에도 들어 있음)

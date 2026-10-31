@@ -1088,18 +1088,26 @@ async function refreshStatus() {
   parts.push(`건너뛴 폴더 ${nf.format(st.skipped)}개`);
   if (st.excluded) parts.push(`제외 ${nf.format(st.excluded)}개`);
   if (st.live_updates) parts.push(`실시간 반영 ${nf.format(st.live_updates)}건`);
-  // 2b: 루트마다 쓴 길(빠른 색인(MFT) / 일반 색인)
-  if (st.roots.length) parts.push(st.roots.map((r) => `${r.path} ${r.source}`).join(", "));
+  // 2b: 루트마다 쓴 길(빠른 색인(MFT) / 일반 색인) — 0.2.1: 창이 좁아도 잘리지 않게 오른쪽 따로 칸에(나머지 글만 줄임표)
+  const source = st.roots.map((r) => `${r.path} ${r.source}`).join(", ");
+  const scanText = scanning.length ? "스캔 중: " + scanning.map((r) => `${r.path} (${nf.format(r.scanned_so_far)})`).join(", ") : "";
   const el = $("search-status");
-  el.textContent = parts.join(" · ");
-  if (scanning.length) {
+  const main = document.createElement("span");
+  main.className = "st-main";
+  main.textContent = parts.join(" · ");
+  if (scanText) {
     const sp = document.createElement("span");
     sp.className = "scan";
-    sp.textContent = " · 스캔 중: " + scanning.map((r) => `${r.path} (${nf.format(r.scanned_so_far)})`).join(", ");
-    el.appendChild(sp);
+    sp.textContent = " · " + scanText;
+    main.appendChild(sp);
   }
+  const src = document.createElement("span");
+  src.className = "st-src";
+  src.textContent = source;
+  src.hidden = !source;
+  el.replaceChildren(main, src);
   const notes = st.roots.flatMap((r) => [r.source_note, r.catchup].filter((x): x is string => !!x).map((m) => `${r.path}: ${m}`));
-  el.title = [st.load_error, ...notes].filter(Boolean).join("\n");
+  el.title = [[...parts, scanText, source].filter(Boolean).join(" · "), st.load_error, ...notes].filter(Boolean).join("\n");
   // 색인이 바뀌었으면(스캔 진행·실시간 반영) 결과를 새로 고친다(너무 자주는 말고)
   if (tab === "search" && qEl.value.trim() && (st.version !== lastVersion || st.generation !== lastGeneration) && Date.now() - lastQueryAt > 900) {
     runSearch(true);
@@ -1146,17 +1154,34 @@ function renderSearchSettings() {
 // 2c: 빠른 검색 서비스(선택 설치)
 let svcAt = 0;
 let svcBusy = false;
+const SVC_STARTING_MS = 30_000;
+let svcWaitSince = 0;
+let svcPollTimer: number | undefined;
 async function refreshSvc() {
   svcAt = Date.now();
   let p: SvcPanel;
   try { p = await invoke<SvcPanel>("svc_view"); } catch (e) { $("svc-state").textContent = errText(e); return; }
   const i = p.info;
   let t = i.installed ? `설치됨 · ${i.state} · 시작 ${i.start_type} · 계정 ${i.account || "?"}` : "설치 안 됨";
+  // 0.2.1: 서비스가 막 시작해 파이프가 아직 없거나 첫 색인 중이면 "시작 중…"으로(곧바로 "연결 안 됨"이라 하지 않음).
+  // 실행 중인데 SVC_STARTING_MS 넘게 응답이 없거나 서비스가 멈췄을 때만 "연결 안 됨"
+  const starting = i.installed && (i.running || i.state === "시작 중") && !p.connected;
+  if (!starting) svcWaitSince = 0;
+  else if (!svcWaitSince) svcWaitSince = Date.now();
   if (i.installed) {
-    t += p.connected
-      ? ` · 연결됨: 항목 ${nf.format(p.entries)}개${p.ready ? "" : "(색인 중)"} · ${p.roots.join(", ")} · ${p.visibility}`
-      : ` · 연결 안 됨${p.error ? ` (${p.error})` : ""} — 앱이 스스로 색인합니다`;
+    if (p.connected && !p.ready) {
+      t += ` · 연결됨 · 시작 중… (첫 색인 중): 항목 ${nf.format(p.entries)}개 · ${p.roots.join(", ")} · ${p.visibility}`;
+    } else if (p.connected) {
+      t += ` · 연결됨: 항목 ${nf.format(p.entries)}개 · ${p.roots.join(", ")} · ${p.visibility}`;
+    } else if (starting && Date.now() - svcWaitSince < SVC_STARTING_MS) {
+      t += " · 시작 중… (첫 색인 중) — 서비스가 응답하면 자동으로 연결합니다";
+    } else {
+      t += ` · 연결 안 됨${p.error ? ` (${p.error})` : ""} — 앱이 스스로 색인합니다`;
+    }
   }
+  // 시작 중이면 설정 탭을 다시 그리지 않아도 계속 확인(연결되거나 30 초가 지날 때까지)
+  window.clearTimeout(svcPollTimer);
+  if (starting || (p.connected && !p.ready)) svcPollTimer = window.setTimeout(() => { if (tab === "tools") refreshSvc(); }, 1500);
   $("svc-state").textContent = t;
   const inst = $<HTMLButtonElement>("svc-install"), un = $<HTMLButtonElement>("svc-uninstall");
   inst.textContent = i.installed ? "빠른 검색 서비스 다시 설치(갱신)" : "빠른 검색 서비스 설치";
@@ -1179,6 +1204,7 @@ async function svcSetup(install: boolean) {
   refreshSvc();
   try {
     out.textContent = await invoke<string>("svc_setup", { install });
+    if (install) svcWaitSince = Date.now(); // 방금 (다시) 설치 → 첫 응답까지 "시작 중…"
   } catch (e) {
     out.textContent = errText(e);
   } finally {

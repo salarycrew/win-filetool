@@ -23,7 +23,7 @@ use filetool_core::search::svcproto::{
 #[test]
 fn requests_and_responses_round_trip() {
     let reqs = vec![
-        Request::Hello { client: "win-filetool 0.2.0".into() },
+        Request::Hello { client: "win-filetool 0.2.1".into() },
         Request::Status,
         Request::Query { q: "보고서 ext:pdf".into(), sort: SortKey::Modified, desc: true, limit: 50, excludes: vec!["node_modules".into()] },
         Request::Rows { offset: 100, limit: 100 },

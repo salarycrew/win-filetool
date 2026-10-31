@@ -143,7 +143,7 @@ bash scripts/fetch-pdfium.sh         # 1c: PDFium(third_party/, sha256 고정)
 bash scripts/fetch-nsis.sh           # 1c: makensis(~/.local/opt/nsis-3.10)
 bash scripts/build-windows.sh        # = npx tauri build --runner cargo-xwin --target x86_64-pc-windows-msvc --bundles nsis
                                      #   + cargo xwin build --release -p filetool-cli + 휴대용 묶음
-# → dist-win/파일도구_0.2.0_x64-setup.exe, dist-win/win-filetool-0.2.0-portable/(.zip)
+# → dist-win/파일도구_0.2.1_x64-setup.exe, dist-win/win-filetool-0.2.1-portable/(.zip)
 cargo test -p filetool-core          # 코어 테스트(Linux)
 ```
 
@@ -204,7 +204,7 @@ qpdf·Ghostscript를 쓰지 않은 이유: 동봉하면 크기·라이선스(Gho
   `src-tauri/icons/`(icon.ico 16·24·32·48·64·256 포함)를 만든다. 창·작업 표시줄·트레이·설치 파일이 같은 아이콘을 쓴다.
 - **사용자별 NSIS 설치 파일**(Tauri bundler, `installMode: currentUser`, 한국어, 언어 선택 없음): 관리자 권한·UAC 없이
   `%LOCALAPPDATA%\파일 도구\`에 설치, 시작 메뉴 바로가기 "파일 도구", [설정 > 앱]에 제거 항목(HKCU), 제거 프로그램 `uninstall.exe`.
-  제거할 때 훅(`src-tauri/windows/installer-hooks.nsh`)이 HKCU Run 값도 지운다. 조용히: `파일도구_0.2.0_x64-setup.exe /S`, 제거 `uninstall.exe /S`.
+  제거할 때 훅(`src-tauri/windows/installer-hooks.nsh`)이 HKCU Run 값도 지운다. 조용히: `파일도구_0.2.1_x64-setup.exe /S`, 제거 `uninstall.exe /S`.
 - `makensis`는 K12에 sudo 없이: `scripts/fetch-nsis.sh`가 Ubuntu `nsis`/`nsis-common` 패키지를 `apt-get download`로 받아 `~/.local/opt/nsis-3.10`에 풀고
   `NSISDIR`을 맞춰 주는 감싸개를 만든다. Tauri의 Linux→Windows NSIS 묶기가 cargo-xwin과 함께 그대로 동작했다.
 - 휴대용 묶음도 계속 만든다: `win-filetool-<버전>-portable\`(+ zip) = `win-filetool.exe`, `filetool-cli.exe`, `pdfium.dll`, `licenses\`.
