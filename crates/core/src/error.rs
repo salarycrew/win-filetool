@@ -19,6 +19,18 @@ pub enum Error {
     AlreadyExists(PathBuf),
     #[error("{0}")]
     Invalid(String),
+    #[error("{tool}을(를) 찾지 못했습니다. [도구 설정]에서 설치 상태를 확인하세요. {hint}")]
+    ToolMissing { tool: String, hint: String },
+    #[error("{tool} 실행 실패: {message}")]
+    Tool { tool: String, message: String },
+    #[error("시간 초과({0}초)로 작업을 멈췄습니다")]
+    Timeout(u64),
+    #[error("취소했습니다")]
+    Cancelled,
+    #[error("이미지를 처리할 수 없습니다 ({path}): {message}")]
+    Image { path: PathBuf, message: String },
+    #[error("이 파일 형식은 이 작업에 쓸 수 없습니다: {0}")]
+    Unsupported(String),
 }
 
 pub type Result<T> = std::result::Result<T, Error>;

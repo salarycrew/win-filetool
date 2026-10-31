@@ -159,3 +159,106 @@ mod tests {
         assert_eq!(super::crc32(b"123456789"), 0xCBF4_3926);
     }
 }
+
+// ---------- 1b: 변환 점검용 샘플 ----------
+
+/// 사분면 색이 다른 그림(왼쪽 위 빨강, 오른쪽 위 초록, 왼쪽 아래 파랑, 오른쪽 아래 흰색).
+/// 회전·타일 순서를 색으로 확인할 수 있다.
+pub fn quadrant_image(w: u32, h: u32) -> image::RgbImage {
+    image::RgbImage::from_fn(w, h, |x, y| {
+        let c = match (x >= w / 2, y >= h / 2) {
+            (false, false) => [255, 0, 0],
+            (true, false) => [0, 255, 0],
+            (false, true) => [0, 0, 255],
+            (true, true) => [255, 255, 255],
+        };
+        image::Rgb(c)
+    })
+}
+
+/// 색 이름(가장 가까운 기본색): "빨강"/"초록"/"파랑"/"흰색"/"기타"
+pub fn color_name(p: [u8; 3]) -> &'static str {
+    let [r, g, b] = p.map(|v| v as i32);
+    let near = |a: i32, t: i32| (a - t).abs() < 70;
+    match () {
+        _ if near(r, 255) && near(g, 0) && near(b, 0) => "빨강",
+        _ if near(r, 0) && near(g, 255) && near(b, 0) => "초록",
+        _ if near(r, 0) && near(g, 0) && near(b, 255) => "파랑",
+        _ if near(r, 255) && near(g, 255) && near(b, 255) => "흰색",
+        _ => "기타",
+    }
+}
+
+/// 이미지의 네 사분면 가운데 색: [왼위, 오위, 왼아래, 오아래]
+pub fn quadrant_colors(img: &image::DynamicImage) -> [&'static str; 4] {
+    let rgb = img.to_rgb8();
+    let (w, h) = rgb.dimensions();
+    let at = |x: u32, y: u32| color_name(rgb.get_pixel(x, y).0);
+    [at(w / 4, h / 4), at(3 * w / 4, h / 4), at(w / 4, 3 * h / 4), at(3 * w / 4, 3 * h / 4)]
+}
+
+/// EXIF(촬영 날짜, 회전 값)가 들어간 JPEG. 픽셀은 `quadrant_image(w,h)`.
+pub fn make_jpeg_with_exif(path: &Path, w: u32, h: u32, date: &str, orientation: u16) -> Result<()> {
+    use image::ImageEncoder;
+    let img = quadrant_image(w, h);
+    let mut buf = Vec::new();
+    let mut enc = image::codecs::jpeg::JpegEncoder::new_with_quality(&mut buf, 95);
+    let _ = enc.set_exif_metadata(crate::exif::build_sample(date, orientation));
+    enc.write_image(img.as_raw(), w, h, image::ExtendedColorType::Rgb8)
+        .map_err(|e| Error::Invalid(e.to_string()))?;
+    std::fs::write(path, buf).map_err(io_err(path))
+}
+
+fn run_ffmpeg(ffmpeg: &Path, args: &[&std::ffi::OsStr]) -> Result<()> {
+    let args: Vec<std::ffi::OsString> = args.iter().map(|a| a.to_os_string()).collect();
+    let out = crate::process::run(ffmpeg, &args, std::time::Duration::from_secs(120), None, &mut |_| {})?;
+    if !out.success() {
+        return Err(Error::Tool { tool: "ffmpeg".into(), message: crate::process::last_lines(&out.stderr_tail, 3) });
+    }
+    Ok(())
+}
+
+/// 아이폰식 grid HEIC: 2×2 타일(각 `tile`px, 색: 빨강/초록/파랑/흰색), 출력 크기는 타일 합보다
+/// 작게 잘라(`out_w`×`out_h`) grid 자르기도 확인하고, `irot`=1(반시계 90°)과 EXIF(날짜, 회전 6)를 넣는다.
+/// 타일은 ffmpeg(libx265)로 인코딩한다.
+pub fn make_grid_heic(ffmpeg: &Path, path: &Path, tile: u32, out_w: u16, out_h: u16, date: &str) -> Result<()> {
+    let tmp = crate::tempdir::JobDir::new("heicgen")?;
+    let mut tiles = Vec::new();
+    for (i, color) in ["red", "lime", "blue", "white"].iter().enumerate() {
+        let f = tmp.path().join(format!("t{i}.hevc"));
+        let src = format!("color=c={color}:s={tile}x{tile}");
+        run_ffmpeg(
+            ffmpeg,
+            &[
+                "-hide_banner".as_ref(), "-nostdin".as_ref(), "-loglevel".as_ref(), "error".as_ref(), "-y".as_ref(),
+                "-f".as_ref(), "lavfi".as_ref(), "-i".as_ref(), src.as_ref(), "-frames:v".as_ref(), "1".as_ref(),
+                "-pix_fmt".as_ref(), "yuv420p".as_ref(), "-c:v".as_ref(), "libx265".as_ref(),
+                "-x265-params".as_ref(), "log-level=error".as_ref(), "-f".as_ref(), "hevc".as_ref(), f.as_os_str(),
+            ],
+        )?;
+        tiles.push(std::fs::read(&f).map_err(io_err(&f))?);
+    }
+    let exif = crate::exif::build_sample(date, 6);
+    let bytes = crate::heif::build_grid_heic(&tiles, tile, tile, 2, 2, out_w, out_h, 1, Some(&exif))
+        .ok_or_else(|| Error::Invalid("HEIC 샘플을 만들지 못했습니다(HEVC 타일 해석 실패)".into()))?;
+    std::fs::write(path, bytes).map_err(io_err(path))
+}
+
+/// 소리가 있는 짧은 시험 영상(testsrc2 + 440Hz). 확장자에 맞는 형식으로 저장(.mov 등).
+pub fn make_test_video(ffmpeg: &Path, path: &Path, secs: u32, w: u32, h: u32) -> Result<()> {
+    let v = format!("testsrc2=s={w}x{h}:r=30:d={secs}");
+    let a = format!("sine=f=440:d={secs}");
+    let t = secs.to_string();
+    // WebM은 VP8/Opus만 담을 수 있다. 나머지는 빠른 MPEG-4 Part 2 + PCM.
+    let webm = path.extension().map(|e| e.eq_ignore_ascii_case("webm")).unwrap_or(false);
+    let (vc, vq, vqv, ac): (&str, &str, &str, &str) = if webm { ("libvpx", "-b:v", "800k", "libopus") } else { ("mpeg4", "-q:v", "3", "pcm_s16le") };
+    run_ffmpeg(
+        ffmpeg,
+        &[
+            "-hide_banner".as_ref(), "-nostdin".as_ref(), "-loglevel".as_ref(), "error".as_ref(), "-y".as_ref(),
+            "-f".as_ref(), "lavfi".as_ref(), "-i".as_ref(), v.as_ref(), "-f".as_ref(), "lavfi".as_ref(), "-i".as_ref(), a.as_ref(),
+            "-t".as_ref(), t.as_ref(), "-c:v".as_ref(), vc.as_ref(), vq.as_ref(), vqv.as_ref(),
+            "-c:a".as_ref(), ac.as_ref(), path.as_os_str(),
+        ],
+    )
+}

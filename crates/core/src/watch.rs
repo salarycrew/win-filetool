@@ -1,0 +1,253 @@
+//! 감시 폴더: 규칙(폴더 + 변환 + 출력 하위 폴더)마다 폴더 맨 위 파일을 주기적으로 살펴
+//! 새 파일을 변환한다(앱이 열려 있는 동안).
+//!
+//! - 복사 중인 파일: 크기·수정 시각이 `stable_for` 동안 바뀌지 않고, (Windows) 다른 프로그램이
+//!   쓰기로 열고 있지 않을 때만 처리한다.
+//! - 다시 처리하지 않기: 처리한 파일(이름+크기+수정 시각)과 만든 출력 이름을 상태 파일에 적는다.
+//!   출력은 하위 폴더에 쓰고 하위 폴더는 살피지 않는다. 같은 이름이라도 내용이 바뀌면(크기/시각) 다시 처리한다.
+//! - 파일 시스템 알림(notify) 대신 2초 간격 폴링을 쓴다: 네트워크 드라이브·USB에서도 같게 동작하고 시험하기 쉽다.
+
+use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+
+use serde::{Deserialize, Serialize};
+
+use crate::convert::{self, Op};
+use crate::error::Result;
+use crate::process::Cancel;
+use crate::settings::{load_json, save_json};
+use crate::tools::Toolset;
+
+fn default_sub() -> String {
+    "변환됨".into()
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WatchRule {
+    pub id: String,
+    pub folder: PathBuf,
+    pub op: Op,
+    #[serde(default = "default_sub")]
+    pub out_subfolder: String,
+    #[serde(default)]
+    pub enabled: bool,
+}
+
+impl WatchRule {
+    pub fn out_dir(&self) -> PathBuf {
+        self.folder.join(self.out_subfolder.trim())
+    }
+    /// 규칙 검사(출력 하위 폴더가 비어 있으면 출력이 다시 입력이 되므로 막는다).
+    pub fn validate(&self) -> std::result::Result<(), String> {
+        let sub = self.out_subfolder.trim();
+        if sub.is_empty() || sub == "." || sub.contains("..") || Path::new(sub).is_absolute() {
+            return Err("출력 하위 폴더 이름을 적어 주세요 (예: 변환됨)".into());
+        }
+        if !self.folder.is_dir() {
+            return Err(format!("감시할 폴더가 없습니다: {}", self.folder.display()));
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FileSig {
+    pub size: u64,
+    pub mtime_ms: i64,
+}
+
+fn sig_of(meta: &std::fs::Metadata) -> FileSig {
+    let mtime_ms = meta
+        .modified()
+        .ok()
+        .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(0);
+    FileSig { size: meta.len(), mtime_ms }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DoneEntry {
+    pub sig: FileSig,
+    pub ok: bool,
+    pub output: Option<PathBuf>,
+    pub message: String,
+    pub at_unix: i64,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct RuleState {
+    /// 파일 이름 → 처리 기록
+    #[serde(default)]
+    pub done: BTreeMap<String, DoneEntry>,
+    /// 이 규칙이 만든 출력 파일 이름(혹시 같은 폴더에 생겨도 입력으로 받지 않음)
+    #[serde(default)]
+    pub outputs: BTreeSet<String>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct WatchState {
+    #[serde(default)]
+    pub rules: BTreeMap<String, RuleState>,
+}
+
+/// 임시·숨김·부분 다운로드 파일은 보지 않는다.
+pub fn is_ignored_name(name: &str) -> bool {
+    let lower = name.to_lowercase();
+    name.starts_with('.')
+        || name.starts_with("~$")
+        || lower == "desktop.ini"
+        || lower == "thumbs.db"
+        || [".tmp", ".part", ".crdownload", ".download", ".partial", ".!ut", ".opdownload"].iter().any(|e| lower.ends_with(e))
+}
+
+/// 다른 프로그램이 아직 쓰고 있는지(Windows: 읽기만 공유로 열어 본다).
+pub fn is_unlocked(p: &Path) -> bool {
+    let mut o = std::fs::OpenOptions::new();
+    o.read(true);
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+        o.share_mode(1); // FILE_SHARE_READ: 누군가 쓰기로 열고 있으면 실패
+    }
+    o.open(p).is_ok()
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct WatchEvent {
+    pub rule_id: String,
+    pub input: PathBuf,
+    pub ok: bool,
+    pub output: Option<PathBuf>,
+    pub message: String,
+}
+
+pub struct Watcher {
+    state_path: PathBuf,
+    pub state: WatchState,
+    /// 규칙 → 파일 → (마지막으로 본 sig, 그 sig를 처음 본 시각)
+    pending: HashMap<String, HashMap<PathBuf, (FileSig, Instant)>>,
+    pub stable_for: Duration,
+}
+
+impl Watcher {
+    pub fn new(state_path: PathBuf, stable_for: Duration) -> Self {
+        let state = load_json(&state_path);
+        Self { state_path, state, pending: HashMap::new(), stable_for }
+    }
+
+    /// 처리할 준비가 된 파일들(크기가 안정되었고 아직 처리하지 않은 것).
+    pub fn ready(&mut self, rule: &WatchRule, now: Instant) -> Vec<PathBuf> {
+        let rs = self.state.rules.get(&rule.id);
+        let pend = self.pending.entry(rule.id.clone()).or_default();
+        let mut seen = Vec::new();
+        let mut ready = Vec::new();
+        let mut entries: Vec<_> = std::fs::read_dir(&rule.folder).map(|it| it.filter_map(|e| e.ok()).collect()).unwrap_or_default();
+        entries.sort_by_key(|e| e.file_name());
+        for e in entries {
+            let path = e.path();
+            let Ok(meta) = e.metadata() else { continue };
+            if !meta.is_file() {
+                continue;
+            }
+            let name = e.file_name().to_string_lossy().into_owned();
+            if is_ignored_name(&name) || !rule.op.accepts(&path) {
+                continue;
+            }
+            if let Some(rs) = rs {
+                if rs.outputs.contains(&name) {
+                    continue;
+                }
+            }
+            let sig = sig_of(&meta);
+            if rs.and_then(|r| r.done.get(&name)).map(|d| d.sig == sig).unwrap_or(false) {
+                continue;
+            }
+            seen.push(path.clone());
+            if sig.size == 0 {
+                pend.insert(path, (sig, now));
+                continue;
+            }
+            match pend.get(&path) {
+                Some((prev, since)) if *prev == sig => {
+                    if now.duration_since(*since) >= self.stable_for && is_unlocked(&path) {
+                        ready.push(path.clone());
+                    }
+                }
+                _ => {
+                    pend.insert(path, (sig, now));
+                }
+            }
+        }
+        pend.retain(|p, _| seen.contains(p));
+        for r in &ready {
+            pend.remove(r);
+        }
+        ready
+    }
+
+    /// 처리 결과를 상태 파일에 적는다.
+    pub fn record(&mut self, rule: &WatchRule, input: &Path, res: &Result<convert::ConvertOut>) -> WatchEvent {
+        let name = input.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+        let sig = std::fs::metadata(input).map(|m| sig_of(&m)).unwrap_or(FileSig { size: 0, mtime_ms: 0 });
+        let rs = self.state.rules.entry(rule.id.clone()).or_default();
+        let at_unix = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0);
+        let ev = match res {
+            Ok(o) => {
+                if let Some(n) = o.output.file_name() {
+                    rs.outputs.insert(n.to_string_lossy().into_owned());
+                }
+                WatchEvent { rule_id: rule.id.clone(), input: input.into(), ok: true, output: Some(o.output.clone()), message: o.note.clone() }
+            }
+            Err(e) => WatchEvent { rule_id: rule.id.clone(), input: input.into(), ok: false, output: None, message: e.to_string() },
+        };
+        rs.done.insert(name, DoneEntry { sig, ok: ev.ok, output: ev.output.clone(), message: ev.message.clone(), at_unix });
+        let _ = save_json(&self.state_path, &self.state);
+        ev
+    }
+
+    /// 켜진 규칙마다 한 번 살펴보고 준비된 파일을 변환한다.
+    pub fn run_once(&mut self, rules: &[WatchRule], tools: &Toolset, cancel: Option<&Cancel>, now: Instant) -> Vec<WatchEvent> {
+        let mut events = Vec::new();
+        for rule in rules.iter().filter(|r| r.enabled) {
+            if rule.validate().is_err() {
+                continue;
+            }
+            for input in self.ready(rule, now) {
+                if cancel.map(Cancel::is_cancelled).unwrap_or(false) {
+                    return events;
+                }
+                let res = convert::convert_file(tools, &input, Some(&rule.out_dir()), &rule.op, cancel, &mut |_| {});
+                // 취소로 끝난 것은 기록하지 않는다(다음에 다시 처리)
+                if matches!(res, Err(crate::Error::Cancelled)) {
+                    return events;
+                }
+                events.push(self.record(rule, &input, &res));
+            }
+        }
+        events
+    }
+
+    /// 규칙을 지우면 그 기록도 지운다.
+    pub fn forget_rule(&mut self, rule_id: &str) {
+        self.state.rules.remove(rule_id);
+        self.pending.remove(rule_id);
+        let _ = save_json(&self.state_path, &self.state);
+    }
+}
+
+/// 감시는 한 프로세스만: 설정 폴더의 잠금 파일을 잡은 앱만 규칙을 돌린다
+/// (창을 두 개 열어도 같은 파일을 두 번 변환하지 않게). 프로세스가 끝나면 자동으로 풀린다.
+pub struct WatchLock(#[allow(dead_code)] std::fs::File);
+
+impl WatchLock {
+    pub fn try_acquire(path: &Path) -> Option<Self> {
+        if let Some(p) = path.parent() {
+            let _ = std::fs::create_dir_all(p);
+        }
+        let f = std::fs::OpenOptions::new().create(true).truncate(false).write(true).open(path).ok()?;
+        f.try_lock().ok()?;
+        Some(Self(f))
+    }
+}
