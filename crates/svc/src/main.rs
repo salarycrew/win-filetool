@@ -737,9 +737,11 @@ mod win {
             std::fs::create_dir_all(&idx).map_err(|e| format!("{}: {e}", idx.display()))?;
             open_log(&data);
             log(format!("시작: {} pid {} · 자료 폴더 {}", svcproto::server_name(), std::process::id(), data.display()));
-            // 처음 색인하는 동안은 낮은 I/O·CPU 우선순위(배경 모드). 준비되면 끈다
-            let bg = unsafe { SetPriorityClass(GetCurrentProcess(), PROCESS_MODE_BACKGROUND_BEGIN) } != 0;
-            log(format!("배경 모드(낮은 I/O 우선순위): {}", if bg { "켬" } else { "실패" }));
+            // 처음 전체 읽기(저장한 색인이 없을 때)는 낮은 I/O·CPU 우선순위(배경 모드). 준비되면 끈다.
+            // 저장한 색인이 있으면(다시 시작) 불러오기 + 저널 따라잡기만이라 보통 우선순위(배경 모드에서는 111 MB 불러오기가 13 초 걸렸음)
+            let first = !idx.join(filetool_core::search::index::INDEX_FILE).exists();
+            let bg = first && unsafe { SetPriorityClass(GetCurrentProcess(), PROCESS_MODE_BACKGROUND_BEGIN) } != 0;
+            log(format!("배경 모드(낮은 I/O 우선순위): {}", if bg { "켬(처음 전체 읽기)" } else if first { "실패" } else { "끔(저장한 색인 불러오기)" }));
             log(format!("켠 권한: {:?}", enable_privileges(&["SeBackupPrivilege", "SeManageVolumePrivilege"])));
             // NTFS 고정 드라이브 중 볼륨을 열 수 있는 것만(그 밖은 앱이 스스로 색인)
             let mut roots = Vec::new();
