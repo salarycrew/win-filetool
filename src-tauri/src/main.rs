@@ -7,11 +7,13 @@
 //! 1b: 변환(진행률 이벤트·취소), 도구 설정(경로 저장), 감시 폴더(앱이 열려 있는 동안 백그라운드 스레드).
 //! 1c: PDF 압축·이미지↔PDF, 트레이(열기/감시 일시정지/끝내기), 윈도 시작 시 실행(`--autostart`면 창 없이 트레이로),
 //!     감시 규칙이 켜져 있으면 창을 닫아도 트레이에 남음, 한 번만 실행(두 번째 실행은 기존 창을 앞으로).
+//! 2a: 검색 탭(첫 탭). 검색 서비스(색인 불러오기 → 배경 스캔 → 실시간 갱신)는 앱이 켜지면(트레이 포함) 바로 돈다.
+//!     트레이 [검색 열기], 전역 단축키(기본 꺼짐), 끝낼 때 색인 저장.
 
 use std::collections::{HashMap, VecDeque};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use filetool_core::convert::{self, ConvertOut, Op};
@@ -23,11 +25,15 @@ use filetool_core::watch::{WatchEvent, WatchRule, Watcher};
 use filetool_core::img2pdf::{self, Img2PdfOpts, Img2PdfOut};
 use filetool_core::pdfcompress::{self, CompressOut, CompressPreset};
 use filetool_core::pdfrender::{self, ExtractOut, RenderOpts, RenderOut};
+use filetool_core::search::query::{Row, SortKey};
+use filetool_core::search::service::{default_index_dir, SearchConfig, SearchResult, SearchService, SearchStatus};
+use filetool_core::settings::SearchSettings;
 use filetool_core::{autostart, nfc, paths, zipnfc};
 use serde::Serialize;
 use tauri::menu::{CheckMenuItem, Menu, MenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
-use tauri::{AppHandle, Emitter, Manager, State, WindowEvent};
+use tauri::{AppHandle, Emitter, Manager, RunEvent, State, WindowEvent};
+use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, ShortcutState};
 
 type CmdResult<T> = Result<T, String>;
 
@@ -200,6 +206,10 @@ struct AppState {
     /// 트레이 [감시 일시정지]
     watch_paused: AtomicBool,
     pause_item: Mutex<Option<CheckMenuItem<tauri::Wry>>>,
+    /// 2a 검색
+    search: Arc<SearchService>,
+    /// 마지막 검색 결과(번호 목록)와 그때의 색인 세대
+    results: Mutex<(u64, Vec<u32>)>,
 }
 
 impl AppState {
@@ -212,6 +222,11 @@ impl AppState {
     }
     fn any_rule_enabled(&self) -> bool {
         self.settings.lock().unwrap().watch_rules.iter().any(|r| r.enabled)
+    }
+    /// 창을 닫아도 트레이에 남을지: 감시 규칙, 윈도 시작 시 실행(검색 색인을 계속 갱신), 전역 단축키 중 하나라도 켜져 있으면
+    fn keep_in_tray(&self) -> bool {
+        let hotkey = self.settings.lock().unwrap().search.hotkey_enabled;
+        self.any_rule_enabled() || hotkey || std::env::current_exe().map(|e| autostart::status(&e).enabled).unwrap_or(false)
     }
     fn begin_job(&self, job: u64) -> Cancel {
         let c = Cancel::new();
@@ -401,6 +416,156 @@ fn autostart_set(enabled: bool) -> CmdResult<autostart::AutostartStatus> {
     autostart::set(enabled, &current_exe()?).map_err(|e| e.to_string())
 }
 
+
+// ---------- 2a: 검색 ----------
+
+fn search_config(s: &SearchSettings) -> SearchConfig {
+    SearchConfig::new(s.effective_roots(), s.excludes.clone(), &index_dir())
+}
+
+/// 색인 폴더(시험용 WIN_FILETOOL_INDEX_DIR, 기본 %LOCALAPPDATA%\kr.salarycrew.winfiletool\index)
+fn index_dir() -> PathBuf {
+    default_index_dir()
+}
+
+#[tauri::command]
+async fn search_query(state: State<'_, AppState>, query: String, sort: SortKey, desc: bool) -> CmdResult<SearchResult> {
+    let svc = state.search.clone();
+    let (ids, r) = tauri::async_runtime::spawn_blocking(move || svc.query(&query, sort, desc))
+        .await
+        .map_err(|e| e.to_string())??;
+    *state.results.lock().unwrap() = (r.generation, ids);
+    Ok(r)
+}
+
+#[derive(Serialize)]
+struct RowsOut {
+    rows: Vec<Row>,
+    /// 색인이 통째로 바뀌어(다시 스캔 반영) 다시 검색해야 함
+    stale: bool,
+}
+
+/// 결과 줄 [offset, offset+limit) — 화면에 보이는 만큼만
+#[tauri::command]
+fn search_rows(state: State<'_, AppState>, offset: usize, limit: usize) -> RowsOut {
+    let (gen, ids) = {
+        let g = state.results.lock().unwrap();
+        let end = (offset + limit).min(g.1.len());
+        (g.0, g.1.get(offset.min(end)..end).map(|s| s.to_vec()).unwrap_or_default())
+    };
+    match state.search.rows(&ids, gen) {
+        Some(rows) => RowsOut { rows, stale: false },
+        None => RowsOut { rows: Vec::new(), stale: true },
+    }
+}
+
+#[derive(Serialize)]
+struct SearchView {
+    status: SearchStatus,
+    settings: SearchSettings,
+    /// 지금 색인하는 루트(설정이 비어 있으면 고정 드라이브)
+    effective_roots: Vec<PathBuf>,
+}
+
+#[tauri::command]
+fn search_status(state: State<'_, AppState>) -> SearchView {
+    let settings = state.settings.lock().unwrap().search.clone();
+    SearchView { status: state.search.status(), effective_roots: settings.effective_roots(), settings }
+}
+
+/// 검색 설정 저장(루트·제외가 바뀌면 다시 스캔, 단축키는 바로 등록/해제)
+#[tauri::command]
+fn search_set_settings(app: AppHandle, state: State<'_, AppState>, settings: SearchSettings) -> CmdResult<SearchView> {
+    let mut settings = settings;
+    settings.excludes.retain(|e| !e.trim().is_empty());
+    settings.hotkey = settings.hotkey.trim().to_string();
+    if settings.hotkey_enabled {
+        settings.hotkey.parse::<Shortcut>().map_err(|e| format!("단축키를 알 수 없습니다({}): {e}", settings.hotkey))?;
+    }
+    let old = state.settings.lock().unwrap().search.clone();
+    state.settings.lock().unwrap().search = settings.clone();
+    state.save()?;
+    if old.roots != settings.roots || old.excludes != settings.excludes {
+        state.search.reconfigure(search_config(&settings));
+    }
+    if old.hotkey_enabled != settings.hotkey_enabled || old.hotkey != settings.hotkey {
+        apply_hotkey(&app, &settings)?;
+    }
+    Ok(search_status(state))
+}
+
+#[tauri::command]
+fn search_rescan(state: State<'_, AppState>) {
+    state.search.rescan_all();
+}
+
+/// 결과 열기(기본 프로그램)
+#[tauri::command]
+fn open_path(path: String) -> CmdResult<()> {
+    if !Path::new(&path).exists() {
+        return Err(format!("파일이 없습니다(옮겨졌거나 지워짐): {path}"));
+    }
+    #[cfg(windows)]
+    {
+        std::process::Command::new("explorer").arg(&path).spawn().map_err(|e| e.to_string())?;
+    }
+    #[cfg(not(windows))]
+    {
+        std::process::Command::new("xdg-open").arg(&path).spawn().map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+/// 들어 있는 폴더를 열고 그 파일을 선택
+#[tauri::command]
+fn open_folder(path: String) -> CmdResult<()> {
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        if Path::new(&path).exists() {
+            // explorer는 /select,"경로" 형식만 받는다(따옴표가 인자 안에 있어야 함)
+            std::process::Command::new("explorer").raw_arg(format!("/select,\"{path}\"")).spawn().map_err(|e| e.to_string())?;
+        } else if let Some(p) = Path::new(&path).parent().filter(|p| p.exists()) {
+            std::process::Command::new("explorer").arg(p).spawn().map_err(|e| e.to_string())?;
+        } else {
+            return Err(format!("폴더가 없습니다: {path}"));
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        let p = Path::new(&path).parent().map(|p| p.to_path_buf()).unwrap_or_default();
+        std::process::Command::new("xdg-open").arg(p).spawn().map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+/// 시작할 때 검색 칸에 넣을 질의(`--search=…`, 화면 점검용)
+#[tauri::command]
+fn startup_query() -> Option<String> {
+    std::env::args().find_map(|a| a.strip_prefix("--search=").map(str::to_string))
+}
+
+/// 검색 탭을 앞으로(트레이·단축키)
+fn show_search(app: &AppHandle) {
+    show_main(app);
+    let _ = app.emit("goto-tab", "search");
+}
+
+fn apply_hotkey(app: &AppHandle, s: &SearchSettings) -> CmdResult<()> {
+    let gs = app.global_shortcut();
+    let _ = gs.unregister_all();
+    if s.hotkey_enabled && !s.hotkey.is_empty() {
+        let sc: Shortcut = s.hotkey.parse().map_err(|e| format!("단축키를 알 수 없습니다({}): {e}", s.hotkey))?;
+        gs.on_shortcut(sc, |app, _sc, ev| {
+            if ev.state == ShortcutState::Pressed {
+                show_search(app);
+            }
+        })
+        .map_err(|e| format!("단축키를 등록하지 못했습니다(다른 프로그램이 쓰는 중일 수 있음): {e}"))?;
+    }
+    Ok(())
+}
+
 // ---------- 1c: 창·트레이 ----------
 
 fn show_main(app: &AppHandle) {
@@ -429,9 +594,10 @@ fn update_tray_tooltip(app: &AppHandle) {
 
 fn build_tray(app: &tauri::App) -> tauri::Result<()> {
     let open = MenuItem::with_id(app, "open", "열기", true, None::<&str>)?;
+    let search = MenuItem::with_id(app, "search", "검색 열기", true, None::<&str>)?;
     let pause = CheckMenuItem::with_id(app, "pause", "감시 일시정지", true, false, None::<&str>)?;
     let quit = MenuItem::with_id(app, "quit", "끝내기", true, None::<&str>)?;
-    let menu = Menu::with_items(app, &[&open, &pause, &quit])?;
+    let menu = Menu::with_items(app, &[&open, &search, &pause, &quit])?;
     *app.state::<AppState>().pause_item.lock().unwrap() = Some(pause);
     let mut b = TrayIconBuilder::with_id("main")
         .tooltip("파일 도구")
@@ -439,6 +605,7 @@ fn build_tray(app: &tauri::App) -> tauri::Result<()> {
         .show_menu_on_left_click(false)
         .on_menu_event(|app, ev| match ev.id.as_ref() {
             "open" => show_main(app),
+            "search" => show_search(app),
             "pause" => {
                 let now = !app.state::<AppState>().watch_paused.load(Ordering::SeqCst);
                 set_paused(app, now);
@@ -521,10 +688,11 @@ fn main() {
             }
         }))
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .on_window_event(|window, event| {
             // 감시 규칙이 켜져 있으면 창을 닫아도 트레이에 남아 감시를 계속한다
             if let WindowEvent::CloseRequested { api, .. } = event {
-                if window.label() == "main" && window.app_handle().state::<AppState>().any_rule_enabled() {
+                if window.label() == "main" && window.app_handle().state::<AppState>().keep_in_tray() {
                     api.prevent_close();
                     let _ = window.hide();
                 }
@@ -537,6 +705,9 @@ fn main() {
                 .or_else(|| app.path().app_config_dir().ok())
                 .unwrap_or_else(|| std::env::temp_dir().join("win-filetool"));
             let settings = Settings::load(&config_dir);
+            // 검색 서비스: 저장한 색인을 불러오고 배경에서 다시 스캔, 실시간 갱신(창이 없어도 트레이에서 계속)
+            let search = SearchService::start(search_config(&settings.search));
+            let search_settings = settings.search.clone();
             app.manage(AppState {
                 config_dir,
                 settings: Mutex::new(settings),
@@ -544,7 +715,12 @@ fn main() {
                 watch_log: Mutex::new(VecDeque::new()),
                 watch_paused: AtomicBool::new(false),
                 pause_item: Mutex::new(None),
+                search,
+                results: Mutex::new((0, Vec::new())),
             });
+            if let Err(e) = apply_hotkey(app.handle(), &search_settings) {
+                eprintln!("{e}");
+            }
             build_tray(app)?;
             update_tray_tooltip(app.handle());
             start_watch_thread(app.handle().clone());
@@ -579,8 +755,24 @@ fn main() {
             autostart_get,
             autostart_set,
             launched_by_autostart,
-            startup_tab
+            startup_tab,
+            search_query,
+            search_rows,
+            search_status,
+            search_set_settings,
+            search_rescan,
+            open_path,
+            open_folder,
+            startup_query
         ])
-        .run(tauri::generate_context!())
-        .expect("파일 도구를 시작하지 못했습니다");
+        .build(tauri::generate_context!())
+        .expect("파일 도구를 시작하지 못했습니다")
+        .run(|app, ev| {
+            // 끝낼 때 검색 색인 저장(다음 시작이 빠르게)
+            if let RunEvent::Exit = ev {
+                let state = app.state::<AppState>();
+                let _ = state.search.save_now();
+                state.search.stop();
+            }
+        });
 }

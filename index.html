@@ -8,7 +8,8 @@
   </head>
   <body>
     <nav id="tabs" class="tabs">
-      <button type="button" data-tab="files" class="active">파일명·zip</button>
+      <button type="button" data-tab="search" class="active">검색</button>
+      <button type="button" data-tab="files">파일명·zip</button>
       <button type="button" data-tab="pdf">PDF</button>
       <button type="button" data-tab="image">이미지</button>
       <button type="button" data-tab="media">영상·소리</button>
@@ -16,6 +17,30 @@
       <button type="button" data-tab="watch">감시 폴더</button>
       <button type="button" data-tab="tools">설정</button>
     </nav>
+    <div id="search-panel" class="search-panel">
+      <div class="search-bar">
+        <input type="search" id="q" placeholder="파일 이름으로 찾기 — 예: 보고서 ext:pdf · ㅂㄱㅅ · *.jpg · size:>10mb · dm:today" autocomplete="off" spellcheck="false" />
+        <span id="q-info" class="q-info"></span>
+      </div>
+      <div class="res-head" id="res-head">
+        <button type="button" data-sort="name" class="c-name">이름</button>
+        <button type="button" data-sort="path" class="c-folder">폴더</button>
+        <button type="button" data-sort="size" class="c-size">크기</button>
+        <button type="button" data-sort="modified" class="c-date">수정한 날짜</button>
+      </div>
+      <div id="res" class="res" tabindex="0">
+        <div id="res-spacer" class="res-spacer"></div>
+        <div id="res-rows" class="res-rows"></div>
+        <div id="res-empty" class="res-empty"></div>
+      </div>
+      <div id="search-status" class="search-status"></div>
+      <div id="ctx" class="ctx" hidden>
+        <button type="button" data-act="open">열기<span>Enter</span></button>
+        <button type="button" data-act="folder">폴더 열기<span>Ctrl+Enter</span></button>
+        <button type="button" data-act="copy-path">경로 복사</button>
+        <button type="button" data-act="copy-name">이름 복사</button>
+      </div>
+    </div>
     <main>
       <div id="work">
         <section id="drop" class="drop">
@@ -101,8 +126,26 @@
 
       <div id="tools-panel" hidden>
         <h2>윈도우 시작</h2>
-        <label><input type="checkbox" id="autostart" /> 윈도우 시작 시 실행 (감시 폴더용 — 창 없이 알림 영역에서 시작)</label>
+        <label><input type="checkbox" id="autostart" /> 윈도우 시작 시 실행 (감시 폴더·검색 색인 — 창 없이 알림 영역에서 시작)</label>
         <p id="autostart-state" class="hint"></p>
+        <h2>검색</h2>
+        <p class="hint">색인할 곳: 목록이 비어 있으면 모든 고정 드라이브. 관리자 권한 없이 폴더를 훑어 색인을 만들고, 앱이 켜져 있는 동안(트레이 포함)
+          바뀐 파일을 바로 반영합니다. 색인 파일: <span id="s-index-file"></span></p>
+        <ul id="s-roots" class="items"></ul>
+        <div class="row">
+          <button id="s-add-root" type="button">폴더 추가</button>
+          <button id="s-reset-roots" type="button" class="ghost">모든 고정 드라이브로</button>
+          <button id="s-rescan" type="button">지금 다시 색인</button>
+        </div>
+        <label class="col">제외할 폴더 (한 줄에 하나 — <code>\</code>가 있으면 전체 경로, 없으면 폴더 이름. <code>*</code> <code>?</code> 가능)
+          <textarea id="s-excludes" rows="4" spellcheck="false"></textarea></label>
+        <div class="row"><button id="s-save-excludes" type="button">제외 목록 저장 (다시 색인)</button></div>
+        <label><input type="checkbox" id="s-hotkey-on" /> 전역 단축키로 검색 열기</label>
+        <div class="row">
+          <input type="text" id="s-hotkey" placeholder="여기를 누르고 단축키를 누르세요 (예: Ctrl+Alt+F)" readonly />
+          <button id="s-hotkey-save" type="button">단축키 저장</button>
+        </div>
+        <p id="s-state" class="hint"></p>
         <h2>외부 도구</h2>
         <p class="hint">영상·소리·HEIC 변환에는 ffmpeg, 문서 변환에는 LibreOffice가 필요합니다(앱에 들어 있지 않음).
           PATH와 흔한 설치 위치에서 자동으로 찾고, 못 찾으면 직접 위치를 지정할 수 있습니다.</p>

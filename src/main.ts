@@ -24,13 +24,13 @@ type Op =
   | { kind: "doc"; target: "pdf" | "docx" | "xlsx" | "pptx" };
 interface WatchRule { id: string; folder: string; op: Op; out_subfolder: string; enabled: boolean }
 interface WatchEvent { rule_id: string; input: string; ok: boolean; output: string | null; message: string }
-type Tab = "files" | "pdf" | "image" | "media" | "doc" | "watch" | "tools";
+type Tab = "search" | "files" | "pdf" | "image" | "media" | "doc" | "watch" | "tools";
 interface CompressOut { input: string; output: string | null; before: number; after: number; pages: number; note: string }
 interface Img2PdfOut { output: string; note: string }
 interface RenderOut { folder: string; pages: { page: number; output: string; width: number; height: number }[]; note: string }
 interface ExtractOut { folder: string | null; files: string[]; note: string }
 interface AutostartStatus { enabled: boolean; value: string | null; matches_exe: boolean; supported: boolean }
-const TABS: Tab[] = ["files", "pdf", "image", "media", "doc", "watch", "tools"];
+const TABS: Tab[] = ["search", "files", "pdf", "image", "media", "doc", "watch", "tools"];
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 const itemsEl = $<HTMLUListElement>("items");
@@ -46,7 +46,7 @@ const progressEl = $<HTMLDivElement>("progress");
 const progressBar = $<HTMLDivElement>("progress-bar");
 const progressText = $<HTMLSpanElement>("progress-text");
 
-let tab: Tab = "files";
+let tab: Tab = "search";
 let items: Item[] = [];
 let outDir: string | null = null;
 let pendingPlan: FolderPlan | null = null;
@@ -103,7 +103,9 @@ const DROP_HINT: Record<string, string> = {
 function setTab(t: Tab) {
   tab = t;
   document.querySelectorAll<HTMLButtonElement>("#tabs button").forEach((b) => b.classList.toggle("active", b.dataset.tab === t));
-  const work = t !== "watch" && t !== "tools";
+  const work = t !== "watch" && t !== "tools" && t !== "search";
+  document.querySelector("main")!.hidden = t === "search";
+  $("search-panel").hidden = t !== "search";
   $("work").hidden = !work;
   $("watch-panel").hidden = t !== "watch";
   $("tools-panel").hidden = t !== "tools";
@@ -121,6 +123,7 @@ function setTab(t: Tab) {
   }
   if (t === "tools") loadTools();
   if (t === "watch") loadWatch();
+  if (t === "search") enterSearch();
 }
 document.querySelectorAll<HTMLButtonElement>("#tabs button").forEach((b) => (b.onclick = () => setTab(b.dataset.tab as Tab)));
 
@@ -183,7 +186,7 @@ function autoPickTab() {
   if (tab === "pdf" && opEl.value === "img2pdf" && (only === "image" || only === "heic")) return;
   const target: Tab | null =
     only === "image" || only === "heic" ? "image" : only === "video" || only === "audio" ? "media" : only === "document" ? "doc" : only === "pdf" ? "pdf" : only === "dir" || only === "zip" ? "files" : null;
-  if (target && target !== tab && tab !== "watch" && tab !== "tools") setTab(target);
+  if (target && target !== tab && tab !== "watch" && tab !== "tools" && tab !== "search") setTab(target);
   if (tab === "files") {
     if (only === "dir") opEl.value = "nfc";
     else if (only === "zip") opEl.value = "zip";
@@ -575,6 +578,7 @@ autostartEl.onchange = async () => {
 };
 
 async function loadTools() {
+  ensureStatusTimer();
   invoke<AutostartStatus>("autostart_get").then(showAutostart).catch((e) => ($("autostart-state").textContent = errText(e)));
   invoke<string>("pdfium_status")
     .then((p) => ($("pdfium-state").textContent = `✓ PDF→이미지 렌더러(PDFium): ${p}`))
@@ -726,6 +730,351 @@ $("w-add").onclick = () => {
 };
 listen<WatchEvent>("watch-event", (ev) => watchLine(ev.payload));
 
+
+// ---------- 2a: 검색 ----------
+
+interface Row { id: number; name: string; folder: string; path: string; is_dir: boolean; size: number; mtime: number }
+interface SearchResult { total: number; millis: number; generation: number; version: number }
+interface RootStats { dirs: number; files: number; denied: number; reparse: number; excluded: number; millis: number }
+interface RootStatus { path: string; scanning: boolean; scanned_so_far: number; last_scan: number; stats: RootStats }
+interface SearchStatus {
+  entries: number; roots: RootStatus[]; loaded_ms: number | null; load_error: string | null; last_save: number; index_bytes: number;
+  index_file: string; skipped: number; excluded: number; version: number; generation: number; ready: boolean; live_updates: number; memory_bytes: number;
+}
+interface SearchSettings { roots: string[]; excludes: string[]; hotkey_enabled: boolean; hotkey: string }
+interface SearchView { status: SearchStatus; settings: SearchSettings; effective_roots: string[] }
+type SortKey = "name" | "path" | "size" | "modified";
+
+const ROW_H = 24;
+const qEl = $<HTMLInputElement>("q");
+const resEl = $<HTMLDivElement>("res");
+const rowsEl = $<HTMLDivElement>("res-rows");
+const spacerEl = $<HTMLDivElement>("res-spacer");
+const ctxEl = $<HTMLDivElement>("ctx");
+let sortKey: SortKey = "name";
+let sortDesc = false;
+let total = 0;
+let sel = -1;
+let rowCache = new Map<number, Row>();
+let fetching = new Set<number>();
+let searchSeq = 0;
+let lastQueryAt = 0;
+let lastVersion = -1;
+let lastGeneration = -1;
+let searchView: SearchView | null = null;
+let statusTimer: number | undefined;
+
+const nf = new Intl.NumberFormat("ko-KR");
+function human(n: number): string {
+  if (n < 1024) return `${n} B`;
+  const u = ["KB", "MB", "GB", "TB"];
+  let v = n / 1024, i = 0;
+  while (v >= 1024 && i < u.length - 1) { v /= 1024; i++; }
+  return `${v < 10 ? v.toFixed(1) : Math.round(v)} ${u[i]}`;
+}
+function fmtTime(t: number): string {
+  if (!t) return "";
+  const d = new Date(t * 1000), p = (x: number) => String(x).padStart(2, "0");
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+
+function ensureStatusTimer() {
+  refreshStatus();
+  if (statusTimer === undefined) statusTimer = window.setInterval(() => { if (tab === "search" || tab === "tools") refreshStatus(); }, 1000);
+}
+
+function enterSearch() {
+  qEl.focus();
+  qEl.select();
+  ensureStatusTimer();
+}
+
+async function runSearch(keepScroll = false) {
+  const seq = ++searchSeq;
+  const q = qEl.value;
+  lastQueryAt = Date.now();
+  try {
+    const r = await invoke<SearchResult>("search_query", { query: q, sort: sortKey, desc: sortDesc });
+    if (seq !== searchSeq) return;
+    total = r.total;
+    lastVersion = r.version;
+    lastGeneration = r.generation;
+    rowCache = new Map();
+    fetching = new Set();
+    if (!keepScroll) { resEl.scrollTop = 0; sel = total > 0 ? 0 : -1; }
+    else if (sel >= total) sel = total - 1;
+    $("q-info").className = "q-info";
+    $("q-info").textContent = q.trim() ? `${nf.format(total)}개 · ${r.millis < 10 ? r.millis.toFixed(1) : Math.round(r.millis)} ms` : "";
+    $("res-empty").textContent = !q.trim() ? "찾을 이름을 입력하세요" : total === 0 ? "찾은 항목이 없습니다" : "";
+    spacerEl.style.height = `${total * ROW_H}px`;
+    renderRows();
+  } catch (e) {
+    if (seq !== searchSeq) return;
+    $("q-info").className = "q-info err";
+    $("q-info").textContent = errText(e);
+  }
+}
+
+function renderRows() {
+  const top = resEl.scrollTop;
+  const first = Math.max(0, Math.floor(top / ROW_H) - 5);
+  const last = Math.min(total, Math.ceil((top + resEl.clientHeight) / ROW_H) + 5);
+  const missing: number[] = [];
+  const frag = document.createDocumentFragment();
+  for (let i = first; i < last; i++) {
+    const r = rowCache.get(i);
+    const div = document.createElement("div");
+    div.className = "res-row" + (i === sel ? " sel" : "") + (r?.is_dir ? " dir" : "");
+    div.style.top = `${i * ROW_H}px`;
+    div.dataset.i = String(i);
+    if (r) {
+      const cells: [string, string][] = [
+        ["c-name", r.name], ["c-folder", r.folder], ["c-size", r.is_dir ? "" : human(r.size)], ["c-date", fmtTime(r.mtime)],
+      ];
+      for (const [c, t] of cells) {
+        const sp = document.createElement("span");
+        sp.className = c;
+        sp.textContent = t;
+        if (c === "c-folder" || c === "c-name") sp.title = c === "c-name" ? r.path : r.folder;
+        div.appendChild(sp);
+      }
+    } else {
+      missing.push(i);
+    }
+    frag.appendChild(div);
+  }
+  rowsEl.replaceChildren(frag);
+  if (missing.length) fetchRows(missing[0], missing[missing.length - 1] + 1);
+}
+
+async function fetchRows(from: number, to: number) {
+  const start = Math.floor(from / 100) * 100;
+  const end = Math.ceil(to / 100) * 100;
+  if (fetching.has(start)) return;
+  fetching.add(start);
+  const seq = searchSeq;
+  try {
+    const out = await invoke<{ rows: Row[]; stale: boolean }>("search_rows", { offset: start, limit: end - start });
+    if (seq !== searchSeq) return;
+    if (out.stale) { runSearch(true); return; }
+    out.rows.forEach((r, k) => rowCache.set(start + k, r));
+    renderRows();
+  } finally {
+    fetching.delete(start);
+  }
+}
+
+function selectRow(i: number, scroll = true) {
+  if (total === 0) return;
+  sel = Math.max(0, Math.min(total - 1, i));
+  if (scroll) {
+    const y = sel * ROW_H;
+    if (y < resEl.scrollTop) resEl.scrollTop = y;
+    else if (y + ROW_H > resEl.scrollTop + resEl.clientHeight) resEl.scrollTop = y + ROW_H - resEl.clientHeight;
+  }
+  renderRows();
+}
+
+async function act(what: string, i = sel) {
+  const r = rowCache.get(i);
+  ctxEl.hidden = true;
+  if (!r) return;
+  try {
+    if (what === "open") await invoke("open_path", { path: r.path });
+    else if (what === "folder") await invoke("open_folder", { path: r.path });
+    else if (what === "copy-path") await copyText(r.path);
+    else if (what === "copy-name") await copyText(r.name);
+  } catch (e) {
+    $("q-info").className = "q-info err";
+    $("q-info").textContent = errText(e);
+  }
+}
+
+async function copyText(t: string) {
+  try {
+    await navigator.clipboard.writeText(t);
+  } catch {
+    const ta = document.createElement("textarea");
+    ta.value = t;
+    document.body.appendChild(ta);
+    ta.select();
+    document.execCommand("copy");
+    ta.remove();
+  }
+  $("q-info").className = "q-info";
+  $("q-info").textContent = "복사함: " + (t.length > 60 ? "…" + t.slice(-60) : t);
+}
+
+let typingTimer: number | undefined;
+qEl.addEventListener("input", () => {
+  window.clearTimeout(typingTimer);
+  typingTimer = window.setTimeout(() => runSearch(), 60);
+});
+function keyNav(e: KeyboardEvent) {
+  const page = Math.max(1, Math.floor(resEl.clientHeight / ROW_H) - 1);
+  if (e.key === "ArrowDown") { selectRow(sel + 1); e.preventDefault(); }
+  else if (e.key === "ArrowUp") { selectRow(sel - 1); e.preventDefault(); }
+  else if (e.key === "PageDown") { selectRow(sel + page); e.preventDefault(); }
+  else if (e.key === "PageUp") { selectRow(sel - page); e.preventDefault(); }
+  else if (e.key === "Enter") { act(e.ctrlKey ? "folder" : "open"); e.preventDefault(); }
+  else if (e.key === "Escape") { ctxEl.hidden = true; }
+}
+qEl.addEventListener("keydown", keyNav);
+resEl.addEventListener("keydown", (e) => {
+  if (e.key === "Home") { selectRow(0); e.preventDefault(); return; }
+  if (e.key === "End") { selectRow(total - 1); e.preventDefault(); return; }
+  keyNav(e);
+});
+resEl.addEventListener("scroll", () => renderRows());
+window.addEventListener("resize", () => { if (tab === "search") renderRows(); });
+rowsEl.addEventListener("mousedown", (e) => {
+  const row = (e.target as HTMLElement).closest<HTMLElement>(".res-row");
+  if (row) selectRow(Number(row.dataset.i), false);
+});
+rowsEl.addEventListener("dblclick", (e) => {
+  const row = (e.target as HTMLElement).closest<HTMLElement>(".res-row");
+  if (row) act("open", Number(row.dataset.i));
+});
+rowsEl.addEventListener("contextmenu", (e) => {
+  const row = (e.target as HTMLElement).closest<HTMLElement>(".res-row");
+  if (!row) return;
+  e.preventDefault();
+  selectRow(Number(row.dataset.i), false);
+  ctxEl.hidden = false;
+  const w = 200, h = 140;
+  ctxEl.style.left = `${Math.min(e.clientX, window.innerWidth - w)}px`;
+  ctxEl.style.top = `${Math.min(e.clientY, window.innerHeight - h)}px`;
+});
+ctxEl.querySelectorAll<HTMLButtonElement>("button").forEach((b) => (b.onclick = () => act(b.dataset.act!)));
+document.addEventListener("mousedown", (e) => { if (!ctxEl.contains(e.target as Node)) ctxEl.hidden = true; });
+document.querySelectorAll<HTMLButtonElement>("#res-head button").forEach((b) => {
+  b.onclick = () => {
+    const k = b.dataset.sort as SortKey;
+    if (k === sortKey) sortDesc = !sortDesc; else { sortKey = k; sortDesc = k === "size" || k === "modified"; }
+    document.querySelectorAll<HTMLButtonElement>("#res-head button").forEach((x) => {
+      x.classList.toggle("sorted", x.dataset.sort === sortKey);
+      x.classList.toggle("desc", x.dataset.sort === sortKey && sortDesc);
+    });
+    runSearch();
+  };
+});
+document.querySelector<HTMLButtonElement>('#res-head button[data-sort="name"]')!.classList.add("sorted");
+
+async function refreshStatus() {
+  try {
+    searchView = await invoke<SearchView>("search_status");
+  } catch { return; }
+  const st = searchView.status;
+  const scanning = st.roots.filter((r) => r.scanning);
+  const lastScan = Math.max(0, ...st.roots.map((r) => r.last_scan));
+  const parts = [`항목 ${nf.format(st.entries)}개`];
+  parts.push(lastScan ? `마지막 스캔 ${fmtTime(lastScan)}` : "아직 전체 스캔 전");
+  if (st.loaded_ms != null) parts.push(`저장한 색인 불러옴(${st.loaded_ms} ms)`);
+  parts.push(`건너뛴 폴더 ${nf.format(st.skipped)}개`);
+  if (st.excluded) parts.push(`제외 ${nf.format(st.excluded)}개`);
+  if (st.live_updates) parts.push(`실시간 반영 ${nf.format(st.live_updates)}건`);
+  const el = $("search-status");
+  el.textContent = parts.join(" · ");
+  if (scanning.length) {
+    const sp = document.createElement("span");
+    sp.className = "scan";
+    sp.textContent = " · 스캔 중: " + scanning.map((r) => `${r.path} (${nf.format(r.scanned_so_far)})`).join(", ");
+    el.appendChild(sp);
+  }
+  if (st.load_error) el.title = st.load_error;
+  // 색인이 바뀌었으면(스캔 진행·실시간 반영) 결과를 새로 고친다(너무 자주는 말고)
+  if (tab === "search" && qEl.value.trim() && (st.version !== lastVersion || st.generation !== lastGeneration) && Date.now() - lastQueryAt > 900) {
+    runSearch(true);
+  }
+  if (tab === "tools") renderSearchSettings();
+}
+
+// 설정 탭: 검색 루트·제외·단축키
+let hotkeyDraft = "";
+function renderSearchSettings() {
+  if (!searchView) return;
+  const { settings, effective_roots, status } = searchView;
+  $("s-index-file").textContent = `${status.index_file} (${human(status.index_bytes)})`;
+  const ul = $<HTMLUListElement>("s-roots");
+  ul.innerHTML = "";
+  for (const r of effective_roots) {
+    const li = document.createElement("li");
+    const kind = document.createElement("span");
+    kind.className = "kind";
+    const rs = status.roots.find((x) => x.path === r);
+    kind.textContent = rs?.scanning ? "스캔 중" : settings.roots.length ? "폴더" : "드라이브";
+    const path = document.createElement("span");
+    path.className = "path";
+    path.style.direction = "ltr";
+    path.textContent = r + (rs && rs.last_scan ? `  ·  폴더 ${nf.format(rs.stats.dirs)} / 파일 ${nf.format(rs.stats.files)} / 건너뜀 ${nf.format(rs.stats.denied + rs.stats.reparse)} / ${(rs.stats.millis / 1000).toFixed(1)}초` : "");
+    li.append(kind, path);
+    if (settings.roots.length) {
+      const del = document.createElement("button");
+      del.type = "button";
+      del.textContent = "✕";
+      del.title = "빼기";
+      del.onclick = () => saveSearchSettings({ ...settings, roots: settings.roots.filter((x) => x !== r) });
+      li.appendChild(del);
+    }
+    ul.appendChild(li);
+  }
+  const ex = $<HTMLTextAreaElement>("s-excludes");
+  if (document.activeElement !== ex && ex.dataset.dirty !== "1") ex.value = settings.excludes.join("\n");
+  $<HTMLInputElement>("s-hotkey-on").checked = settings.hotkey_enabled;
+  if (document.activeElement !== $("s-hotkey")) $<HTMLInputElement>("s-hotkey").value = hotkeyDraft || settings.hotkey;
+}
+
+async function saveSearchSettings(next: SearchSettings) {
+  try {
+    searchView = await invoke<SearchView>("search_set_settings", { settings: next });
+    $("s-state").textContent = "저장했습니다";
+    $<HTMLTextAreaElement>("s-excludes").dataset.dirty = "";
+    hotkeyDraft = "";
+    renderSearchSettings();
+  } catch (e) {
+    $("s-state").textContent = errText(e);
+    if (searchView) $<HTMLInputElement>("s-hotkey-on").checked = searchView.settings.hotkey_enabled;
+  }
+}
+
+$("s-add-root").onclick = async () => {
+  const sel = await open({ directory: true, multiple: true });
+  if (!sel || !searchView) return;
+  const add = Array.isArray(sel) ? sel : [sel];
+  const base = searchView.settings.roots.length ? searchView.settings.roots : [];
+  saveSearchSettings({ ...searchView.settings, roots: [...base, ...add.filter((a) => !base.includes(a))] });
+};
+$("s-reset-roots").onclick = () => { if (searchView) saveSearchSettings({ ...searchView.settings, roots: [] }); };
+$("s-rescan").onclick = async () => { await invoke("search_rescan"); $("s-state").textContent = "다시 색인을 시작했습니다"; };
+$<HTMLTextAreaElement>("s-excludes").oninput = () => { $<HTMLTextAreaElement>("s-excludes").dataset.dirty = "1"; };
+$("s-save-excludes").onclick = () => {
+  if (!searchView) return;
+  const excludes = $<HTMLTextAreaElement>("s-excludes").value.split("\n").map((x) => x.trim()).filter(Boolean);
+  saveSearchSettings({ ...searchView.settings, excludes });
+};
+$<HTMLInputElement>("s-hotkey").addEventListener("keydown", (e) => {
+  e.preventDefault();
+  if (["Control", "Alt", "Shift", "Meta"].includes(e.key)) return;
+  const mods = [e.ctrlKey && "Ctrl", e.altKey && "Alt", e.shiftKey && "Shift", e.metaKey && "Super"].filter(Boolean) as string[];
+  if (!mods.length) { $("s-state").textContent = "Ctrl·Alt·Shift 중 하나와 함께 누르세요"; return; }
+  const key = e.code.startsWith("Key") ? e.code.slice(3) : e.code.startsWith("Digit") ? e.code.slice(5) : e.code;
+  hotkeyDraft = [...mods, key].join("+");
+  $<HTMLInputElement>("s-hotkey").value = hotkeyDraft;
+});
+$("s-hotkey-save").onclick = () => {
+  if (!searchView) return;
+  const hk = hotkeyDraft || searchView.settings.hotkey;
+  if (!hk) { $("s-state").textContent = "단축키를 먼저 누르세요"; return; }
+  saveSearchSettings({ ...searchView.settings, hotkey: hk, hotkey_enabled: true });
+};
+$<HTMLInputElement>("s-hotkey-on").onchange = () => {
+  if (!searchView) return;
+  const on = $<HTMLInputElement>("s-hotkey-on").checked;
+  const hk = hotkeyDraft || searchView.settings.hotkey;
+  if (on && !hk) { $("s-state").textContent = "아래 칸을 누르고 쓸 단축키를 누른 뒤 [단축키 저장]"; $<HTMLInputElement>("s-hotkey-on").checked = false; return; }
+  saveSearchSettings({ ...searchView.settings, hotkey: hk, hotkey_enabled: on });
+};
+
 // ---------- 공통 ----------
 
 $("pick-files").onclick = async () => {
@@ -749,11 +1098,17 @@ getCurrentWebview().onDragDropEvent((ev) => {
   const p = ev.payload;
   if (p.type === "enter" || p.type === "over") dropEl.classList.add("over");
   else dropEl.classList.remove("over");
-  if (p.type === "drop" && tab !== "watch" && tab !== "tools") addPaths(p.paths);
+  if (p.type === "drop" && tab !== "watch" && tab !== "tools" && tab !== "search") addPaths(p.paths);
 });
 
-// 시작 탭: 실행 인자 --tab=image 등(화면 점검용), 없으면 파일 탭
-setTab("files");
+// 시작 탭: 실행 인자 --tab=image 등(화면 점검용), 없으면 검색 탭
+setTab("search");
 invoke<string | null>("startup_tab").then((t) => {
   if (t && (TABS as string[]).includes(t)) setTab(t as Tab);
 }).catch(() => {});
+invoke<string | null>("startup_query").then((q) => {
+  if (q) { qEl.value = q; runSearch(); }
+}).catch(() => {});
+listen<string>("goto-tab", (ev) => {
+  if ((TABS as string[]).includes(ev.payload)) setTab(ev.payload as Tab);
+});
