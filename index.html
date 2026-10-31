@@ -7,54 +7,103 @@
     <link rel="stylesheet" href="/src/styles.css" />
   </head>
   <body>
+    <nav id="tabs" class="tabs">
+      <button type="button" data-tab="files" class="active">파일명·zip·PDF</button>
+      <button type="button" data-tab="image">이미지</button>
+      <button type="button" data-tab="media">영상·소리</button>
+      <button type="button" data-tab="doc">문서</button>
+      <button type="button" data-tab="watch">감시 폴더</button>
+      <button type="button" data-tab="tools">도구 설정</button>
+    </nav>
     <main>
-      <section id="drop" class="drop">
-        <p class="drop-title">파일이나 폴더를 여기에 끌어다 놓으세요</p>
-        <p class="hint">PDF · zip · 폴더</p>
-        <div class="row">
-          <button id="pick-files" type="button">파일 고르기</button>
-          <button id="pick-folder" type="button">폴더 고르기</button>
-          <button id="clear" type="button" class="ghost">목록 비우기</button>
+      <div id="work">
+        <section id="drop" class="drop">
+          <p class="drop-title">파일이나 폴더를 여기에 끌어다 놓으세요</p>
+          <p id="drop-hint" class="hint">PDF · zip · 폴더</p>
+          <div class="row">
+            <button id="pick-files" type="button">파일 고르기</button>
+            <button id="pick-folder" type="button">폴더 고르기</button>
+            <button id="clear" type="button" class="ghost">목록 비우기</button>
+          </div>
+        </section>
+
+        <section>
+          <h2>선택한 항목</h2>
+          <ul id="items" class="items"><li class="empty">아직 없습니다</li></ul>
+        </section>
+
+        <section>
+          <h2>작업</h2>
+          <div class="row" id="op-row">
+            <select id="op">
+              <option value="nfc">파일명 한글 깨짐 고치기 (폴더, NFD→NFC)</option>
+              <option value="zip">맥에서 만든 zip 풀기 (한글 이름 고침)</option>
+              <option value="merge">PDF 합치기 (목록 순서대로)</option>
+              <option value="split">PDF 나누기</option>
+              <option value="rotate">PDF 페이지 회전</option>
+              <option value="delete">PDF 페이지 삭제</option>
+              <option value="reorder">PDF 페이지 순서 변경</option>
+            </select>
+          </div>
+          <div id="opts" class="opts"></div>
+        </section>
+
+        <section>
+          <h2>저장 위치</h2>
+          <div class="row">
+            <span id="outdir" class="outdir">원본과 같은 폴더 (기본)</span>
+            <button id="pick-out" type="button">다른 폴더 고르기</button>
+            <button id="reset-out" type="button" class="ghost">기본으로</button>
+          </div>
+          <p class="hint">원본은 바꾸거나 덮어쓰지 않습니다. 같은 이름이 있으면 “이름 (1)”처럼 새 이름으로 저장합니다.</p>
+        </section>
+
+        <div class="row run-row">
+          <button id="run" type="button" class="primary">실행</button>
+          <button id="cancel" type="button" hidden>취소</button>
+          <span id="busy" class="busy" hidden>작업 중…</span>
         </div>
-      </section>
-
-      <section>
-        <h2>선택한 항목</h2>
-        <ul id="items" class="items"><li class="empty">아직 없습니다</li></ul>
-      </section>
-
-      <section>
-        <h2>작업</h2>
-        <div class="row">
-          <select id="op">
-            <option value="nfc">파일명 한글 깨짐 고치기 (폴더, NFD→NFC)</option>
-            <option value="zip">맥에서 만든 zip 풀기 (한글 이름 고침)</option>
-            <option value="merge">PDF 합치기 (목록 순서대로)</option>
-            <option value="split">PDF 나누기</option>
-            <option value="rotate">PDF 페이지 회전</option>
-            <option value="delete">PDF 페이지 삭제</option>
-            <option value="reorder">PDF 페이지 순서 변경</option>
-          </select>
-        </div>
-        <div id="opts" class="opts"></div>
-      </section>
-
-      <section>
-        <h2>저장 위치</h2>
-        <div class="row">
-          <span id="outdir" class="outdir">원본과 같은 폴더 (기본)</span>
-          <button id="pick-out" type="button">다른 폴더 고르기</button>
-          <button id="reset-out" type="button" class="ghost">기본으로</button>
-        </div>
-        <p class="hint">원본은 바꾸거나 덮어쓰지 않습니다. 같은 이름이 있으면 “이름 (1)”처럼 새 이름으로 저장합니다.</p>
-      </section>
-
-      <div class="row run-row">
-        <button id="run" type="button" class="primary">실행</button>
-        <span id="busy" class="busy" hidden>작업 중…</span>
+        <div id="progress" class="progress" hidden><div id="progress-bar"></div><span id="progress-text"></span></div>
       </div>
 
-      <section>
+      <div id="watch-panel" hidden>
+        <h2>감시 폴더</h2>
+        <p class="hint">폴더에 새 파일이 들어오면 자동으로 변환해 하위 폴더에 저장합니다. 앱이 켜져 있는 동안만 동작합니다.
+          복사 중인 파일은 크기가 멈출 때까지 기다리고, 한 번 처리한 파일은 다시 처리하지 않습니다(앱을 다시 켜도).</p>
+        <ul id="rules" class="items"></ul>
+        <h2>규칙 추가</h2>
+        <div class="opts">
+          <div class="row">
+            <button id="w-folder" type="button">감시할 폴더 고르기</button>
+            <span id="w-folder-path" class="outdir">(아직 고르지 않음)</span>
+          </div>
+          <label>변환
+            <select id="w-op">
+              <option value="image:jpg">사진 → JPG (HEIC 포함)</option>
+              <option value="image:png">사진 → PNG</option>
+              <option value="image:webp">사진 → WebP</option>
+              <option value="media:mp4">영상 → MP4</option>
+              <option value="media:messenger">영상 → 메신저용 (25MB, 720p)</option>
+              <option value="media:mp3">영상·소리 → MP3</option>
+              <option value="doc:pdf">문서 → PDF (Pages·Word·한셀 등)</option>
+            </select>
+          </label>
+          <label>저장할 하위 폴더 <input type="text" id="w-sub" value="변환됨" /></label>
+          <div class="row"><button id="w-add" type="button" class="primary">규칙 추가</button></div>
+        </div>
+        <h2>감시 기록</h2>
+        <pre id="watch-log" class="log"></pre>
+      </div>
+
+      <div id="tools-panel" hidden>
+        <h2>도구 설정</h2>
+        <p class="hint">영상·소리·HEIC 변환에는 ffmpeg, 문서 변환에는 LibreOffice가 필요합니다(앱에 들어 있지 않음).
+          PATH와 흔한 설치 위치에서 자동으로 찾고, 못 찾으면 직접 위치를 지정할 수 있습니다.</p>
+        <div id="tool-list"></div>
+        <div class="row"><button id="tools-refresh" type="button">다시 찾기</button></div>
+      </div>
+
+      <section id="result-section">
         <h2>결과</h2>
         <pre id="log" class="log"></pre>
       </section>

@@ -8,6 +8,9 @@ use filetool_core::pdf::{self, SplitMode};
 use filetool_core::samples::{self, nfd};
 use filetool_core::{nfc, paths, zipnfc, Result};
 
+mod conv;
+mod selftest1b;
+
 const USAGE: &str = "사용법:
   filetool-cli nfc-preview <폴더>
   filetool-cli nfc-apply <폴더>
@@ -19,7 +22,13 @@ const USAGE: &str = "사용법:
   filetool-cli pdf-rotate <pdf> <페이지|all> <90|180|270> [출력.pdf]
   filetool-cli pdf-delete <pdf> <페이지> [출력.pdf]
   filetool-cli pdf-reorder <pdf> <새순서> [출력.pdf]
-  filetool-cli selftest <빈 폴더>   샘플을 만들어 모든 작업을 점검";
+  filetool-cli tools                                   ffmpeg/LibreOffice 찾은 위치·버전
+  filetool-cli image <jpg|png|webp|bmp|tif|gif> [--quality N] [--max-side N] [--no-exif] [--out 폴더] <파일...>
+  filetool-cli media <mp4|messenger|mp3|m4a|gif> [--max-mb N] [--height N] [--start 초] [--dur 초] [--width N] [--fps N] [--out 폴더] <파일...>
+  filetool-cli doc <pdf|docx|xlsx|pptx> [--out 폴더] <파일...>
+  filetool-cli watch <폴더> <image:jpg|media:mp4|doc:pdf …> [--sub 변환됨] [--seconds N]   감시 폴더를 N초 동안 돌림
+  filetool-cli selftest <빈 폴더> [--apple <Pages·Numbers·Keynote 샘플 폴더>]   샘플을 만들어 모든 작업을 점검
+공통 옵션: --ffmpeg <경로> --soffice <경로>  (없으면 앱 설정 → PATH → 설치 폴더 순으로 찾음)";
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -44,6 +53,9 @@ fn opt_path(args: &[String], i: usize) -> Option<PathBuf> {
 
 fn run(args: &[String]) -> Result<ExitCode> {
     let cmd = args.first().map(String::as_str).unwrap_or("");
+    if let Some(code) = conv::run(cmd, args)? {
+        return Ok(code);
+    }
     match cmd {
         "nfc-preview" | "nfc-apply" => {
             let plan = nfc::plan_folder(Path::new(arg(args, 1)?))?;
@@ -121,7 +133,12 @@ fn run(args: &[String]) -> Result<ExitCode> {
             pdf::reorder(&p, arg(args, 2)?, &out)?;
             println!("완료 -> {}", out.display());
         }
-        "selftest" => return selftest(Path::new(arg(args, 1)?)),
+        "selftest" => {
+            let dir = PathBuf::from(arg(args, 1)?);
+            let code_1a = selftest(&dir.join("1a"))?;
+            let code_1b = selftest1b::run(&dir.join("1b"), args)?;
+            return Ok(if code_1a == ExitCode::SUCCESS && code_1b == ExitCode::SUCCESS { ExitCode::SUCCESS } else { ExitCode::from(1) });
+        }
         _ => {
             println!("{USAGE}");
             return Ok(ExitCode::from(2));
