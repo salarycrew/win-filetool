@@ -16,6 +16,7 @@ mod selftest1c;
 mod svc2c;
 
 const USAGE: &str = "사용법:
+  filetool-cli --version                              앱 버전
   filetool-cli nfc-preview <폴더>
   filetool-cli nfc-apply <폴더>
   filetool-cli zip-extract <zip> [출력폴더]
@@ -70,6 +71,10 @@ fn opt_path(args: &[String], i: usize) -> Option<PathBuf> {
 
 fn run(args: &[String]) -> Result<ExitCode> {
     let cmd = args.first().map(String::as_str).unwrap_or("");
+    if matches!(cmd, "--version" | "-V") {
+        println!("filetool-cli {}", env!("CARGO_PKG_VERSION"));
+        return Ok(ExitCode::SUCCESS);
+    }
     if let Some(code) = conv::run(cmd, args)? {
         return Ok(code);
     }

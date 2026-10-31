@@ -1,3 +1,4 @@
+import { getVersion } from "@tauri-apps/api/app";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
@@ -600,6 +601,8 @@ autostartEl.onchange = async () => {
 
 async function loadTools() {
   ensureStatusTimer();
+  getVersion().then((v) => ($("app-version").textContent = `파일 도구 ${v}`))
+    .catch((e) => ($("app-version").textContent = `버전 확인 실패: ${errText(e)}`));
   invoke<AutostartStatus>("autostart_get").then(showAutostart).catch((e) => ($("autostart-state").textContent = errText(e)));
   invoke<string>("pdfium_status")
     .then((p) => ($("pdfium-state").textContent = `✓ PDF→이미지 렌더러(PDFium): ${p}`))
