@@ -1,6 +1,6 @@
 # win-filetool 설계
 
-상태: 1a(브랜치 `salarycrew/stage1a`) + 1b(`salarycrew/stage1b`) + 1c(`salarycrew/stage1c`, main 병합) + 2a 구현(`salarycrew/stage2a`) + 2b-core(`salarycrew/stage2b`). **스택 확정: Tauri 2** (Rust 코어 + 웹 UI).
+상태: 1a(브랜치 `salarycrew/stage1a`) + 1b(`salarycrew/stage1b`) + 1c(`salarycrew/stage1c`, main 병합) + 2a 구현(`salarycrew/stage2a`) + 2b-core(`salarycrew/stage2b`) + 2c(`salarycrew/stage2c`). **스택 확정: Tauri 2** (Rust 코어 + 웹 UI).
 
 ## 단계 나누기
 
@@ -11,7 +11,7 @@
 | **1c** | PDF 압축, 이미지↔PDF, 설치 파일(NSIS, 사용자별)·아이콘, 감시 폴더용 윈도 시작 시 실행 + 트레이, 한 번만 실행 | 완료(아래) |
 | **2a** | Everything식 전체 파일 즉시 검색 — **관리자 권한 없이**: 폴더 병렬 훑기 색인, 저장·불러오기, `ReadDirectoryChangesW` 실시간 갱신, 질의 언어(NFC/NFD·초성), 검색 탭·트레이·전역 단축키, CLI `index`/`search` | 완료(아래 "2a") |
 | **2b-core** | NTFS 빠른 색인: `$MFT` 직접 읽기(`MftSource`), USN 저널 따라잡기·따라가기, 색인 형식 v2 — **이미 관리자 권한으로 실행됐을 때만 자동**, CLI `--source`·`usn-catchup` | 완료(아래 "2b-core") |
-| 2b-UX | 일반 사용자가 빠른 길을 쓰는 방법(UAC 도우미 / 설치 서비스 …) | 사용자 결정 대기(아래 "권한 상승 방안") |
+| **2c** | 일반 사용자가 빠른 길을 쓰는 방법 = **선택 설치 Windows 서비스**(사용자 결정 10-31, 방안 C): `filetool-svc.exe`가 MFT·저널을 맡고 앱·CLI는 이름 있는 파이프로 묻는다. 앱 설치는 그대로 사용자별·관리자 불필요, 서비스는 [설정]에서 UAC 1번으로 설치/제거 | 완료(아래 "2c") |
 
 범위 밖: PDF·문서 본문 텍스트 수정(사용자 확정).
 
@@ -52,6 +52,10 @@ crates/core   filetool-core  — Tauri 비의존 코어. Linux에서 cargo test�
   search/query.rs   질의 언어 해석·컴파일·실행(여러 스레드), 정렬, 결과 줄
   search/service.rs 불러오기 → 감시 → 배경 스캔 → 0.3초 모아 반영 → 저장. 앱·CLI 공용
   search/text.rs    비교 키(NFC + 소문자), 초성, 와일드카드
+  -- 2c --
+  search/svcproto.rs 서비스 파이프 프로토콜(틀·봉투·버전·한도), 요청 처리(Handler/Session), 가시성 규칙(Visibility/ResultFilter), 클라이언트(플랫폼 무관, 시험 가능)
+  search/svcpipe.rs  Windows: 파이프 서버(DACL·원격 거부·첫 인스턴스), 호출자 확인(흉내 내기 토큰), 클라이언트(서버 pid = SCM 서비스 pid 확인, 겹친 I/O 시간 제한), SCM 조회
+crates/svc    filetool-svc.exe — 빠른 검색 서비스(install/uninstall/status/run). 코어의 SearchService + 파이프 서버
 crates/cli    filetool-cli.exe — 같은 코어를 명령줄로(tools/image/media/doc/watch 포함). `selftest <빈 폴더> [--apple <폴더>]`로 실제 디스크에서 전 작업 점검
 src-tauri     win-filetool.exe — Tauri 2 앱. 명령마다 spawn_blocking으로 돌려 창이 멈추지 않음. 1c: 트레이, 한 번만 실행(single-instance 플러그인), `--autostart`.
               오류는 코어의 한국어 메시지를 그대로 화면 결과 칸에 표시
@@ -70,6 +74,7 @@ src/, index.html  Vite + TypeScript(프레임워크 없음). 창 제목 "파일 
 - 1c: `pdfium-render` 0.9.4(MIT/Apache-2.0, 기능 `pdfium_7881`·`image_025`·`thread_safe`) + 동봉하는 `pdfium.dll`(아래), `winreg`(MIT, Windows에서만), `tauri` 기능 `tray-icon`, `tauri-plugin-single-instance` 2
 - 2a: `memchr`(이름 훑기 memmem), `chrono`(dm: 지역 날짜), `windows-sys` 0.61(FindFirstFileExW·ReadDirectoryChangesW·드라이브 종류, Windows에서만),
   `notify` 8(Linux·시험용 실시간 알림, Windows 빌드에는 안 들어감), `tauri-plugin-global-shortcut` 2(전역 단축키)
+- 2c: 새 외부 크레이트 없음. `windows-sys` 기능 추가(Pipes·Services·Threading·Security_Authorization, 서비스는 Authentication_Identity(LSA), 앱은 UI_Shell(ShellExecuteExW)), 서비스·CLI에 `chrono`(기록 시각)
 
 ## 1b 변환
 
@@ -227,7 +232,9 @@ qpdf·Ghostscript를 쓰지 않은 이유: 동봉하면 크기·라이선스(Gho
 | 윈도 시작 시 실행 | `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` 값 `win-filetool` |
 | 웹뷰 데이터 | `%LOCALAPPDATA%\kr.salarycrew.winfiletool\` |
 | 작업 임시 파일 | `%TEMP%\win-filetool\…`(작업이 끝나면 지움) |
-| 설치 위치(설치 파일) | `%LOCALAPPDATA%\파일 도구\` (win-filetool.exe, pdfium.dll, licenses, uninstall.exe) |
+| 설치 위치(설치 파일) | `%LOCALAPPDATA%\파일 도구\` (win-filetool.exe, pdfium.dll, licenses, uninstall.exe, 2c부터 filetool-svc.exe — 서비스 설치 단계가 여기서 Program Files로 복사) |
+| 2c 서비스 실행 파일 | `%ProgramFiles%\파일 도구 서비스\filetool-svc.exe` (SYSTEM·관리자 전체, Users 읽기·실행만) |
+| 2c 서비스 색인·기록 | `%ProgramData%\kr.salarycrew.winfiletool\index\index-v2.bin`, `service.log`(1 MB 넘으면 `service.old.log`) — SYSTEM·관리자만 |
 
 제거 프로그램은 앱 파일·시작 메뉴·Run 값을 지운다. 설정 폴더는 Tauri 제거 화면의 "앱 데이터 삭제"를 고르면 지워진다(조용히 제거할 때는 남음).
 
@@ -367,7 +374,7 @@ MFT 읽기가 중간에 실패하면 그 루트는 폴더 훑기로 한다.
 - 크기·시각: 2a(FindFirstFile)는 **디렉터리 항목에 복사해 둔 값**(NTFS가 늦게 고침, 하드 링크는 마지막으로 연 링크만 최신)을, MFT는 파일 레코드의 값(정본)을 쓴다. 그래서 열려 있는 로그·DB 파일, 하드 링크(WinSxS↔System32)는 값이 다를 수 있다.
 - 스캔 도중 생기고 없어진 파일, 볼륨 마운트 지점 아래(다른 볼륨)는 양쪽 모두 넣지 않는다.
 
-### 권한 상승 방안 (사용자가 고를 것 — 구현 안 함)
+### 권한 상승 방안 (2b 때 정리 — 사용자가 10-31에 **C**를 골라 2c에서 구현, 아래 "2c")
 
 | 방안 | 어떻게 | 좋은 점 | 나쁜 점 |
 |---|---|---|---|
@@ -401,3 +408,112 @@ MFT 읽기가 중간에 실패하면 그 루트는 폴더 훑기로 한다.
 
 - `FSCTL_GET_NTFS_FILE_RECORD`는 **캐시의 레코드를 fixup이 풀린 채로** 준다. 섹터 끝은 진짜 데이터이고 배열 값은 마지막으로 디스크에 쓸 때의 것이라,
   디스크 읽기처럼 엄격히 검사하면 방금 바뀐 레코드(예: 옮긴 폴더)를 "깨짐 → 지워짐"으로 오판했다. 캐시 레코드는 모든 섹터 끝이 시퀀스 번호일 때만 되돌린다(`parse_cached_record`).
+
+## 2c — 빠른 검색 서비스(선택 설치, 사용자 결정 방안 C)
+
+범위: 관리자 권한 없이 실행한 앱도 MFT/USN 빠른 길을 쓰게 한다. **앱 설치는 지금처럼 사용자별·관리자 불필요**로 두고, 서비스는 [설정] > 검색의
+"빠른 검색 서비스 설치 / 제거"로 따로(UAC 1번) 넣고 뺀다. 서비스가 없거나 멈추면 앱은 아무 알림 없이 2a/2b 길(관리자면 MFT, 아니면 폴더 훑기)로 돈다.
+
+### 구조
+
+```
+win-filetool.exe (사용자, Medium)                       filetool-svc.exe (서비스 FileToolSvc, LocalSystem)
+ ├ 앱 색인(SearchService): 서비스가 맡지 않은 루트만      ├ SearchService: NTFS 고정 드라이브 전체(볼륨이 열리는 것), source auto → MFT
+ │   (폴더 루트, NTFS가 아닌 드라이브, 서비스 없을 때 전부)  │   색인 %ProgramData%\kr.salarycrew.winfiletool\index\index-v2.bin (2b v2 형식)
+ ├ Remote: 1초마다 status(없으면 2초마다 다시 연결)        │   시작: 저장한 색인 불러오기 → 저널 따라잡기(2b try_catch_up 그대로) / 없으면 MFT 전체 읽기
+ │   서비스가 다 색인한 루트 = "covered" → 앱 색인에서 뺌    │   켜져 있는 동안 USN 저널 0.5초마다 → 0.3초 모아 반영, 10분마다·멈출 때 저장
+ └ 질의: 서비스(앞) + 앱 색인(뒤) 결과를 이어 붙임   ⇄ 파이프 \\.\pipe\kr.salarycrew.winfiletool.search ⇄  └ 파이프 서버(연결마다 스레드, 최대 16) + 가시성 거르기
+filetool-cli search --via service / svc-status / svc-watch    (같은 클라이언트)
+```
+
+- 앱은 시작할 때 최대 1.5초 서비스를 기다려 본 뒤 앱 색인을 시작한다(서비스가 맡을 루트는 처음부터 빼서 다시 훑지 않게). 그 뒤 감시 스레드가
+  서비스가 생기거나(설치·시작) 사라지면(멈춤·제거·파이프 오류) 앱 색인 루트를 바꾼다(`SearchService::reconfigure`). 서비스가 사라지면 그 드라이브를
+  앱이 다시 훑는다(desktop C:\ 관리자 아님 3.9초). 질의·줄 요청이 실패해도 앱 색인만으로 답하고 다음 상태 확인 때 루트가 돌아온다.
+- 서비스가 아직 처음 색인 중(`ready`가 아니거나 루트가 스캔 중)이면 맡긴 것으로 보지 않는다(앱 색인이 그대로 답함).
+- 결과 순서: **서비스 결과 전체(정렬됨) 뒤에 앱 색인 결과(정렬됨)**. 두 원본을 섞어 한 번에 정렬하지 않는다(보통은 서비스가 모든 루트를 맡아 한쪽만 있음).
+- 상태 줄: 서비스가 맡은 루트는 "C:\ 빠른 색인(서비스)"(마우스를 올리면 "빠른 검색 서비스(pid …)가 색인… · 다른 사용자의 프로필 폴더 제외"), 항목 수·실시간 반영 수는 둘을 더함.
+  버전·세대도 둘을 더한 값이라 어느 쪽이 바뀌어도 화면이 다시 검색한다(색인이 바뀌었는지는 상태 폴링으로 안다 — 알림 푸시는 없음).
+
+### 파이프 프로토콜 (`search/svcproto.rs`, 버전 1)
+
+- 틀: `u32` 길이(LE) + JSON. 봉투 `{"v":1,"op":…}`. 버전이 다르면 `version` 오류, 모르는 op·깨진 JSON은 `bad_request`. 첫 요청은 반드시 `hello`(아니면 `hello_first`).
+- 요청: `hello{client}` → `hello{server, protocol, client{user, sid, admin, visibility}}` · `status` → 항목 수·준비·버전/세대·루트별 원본·스캔 통계·따라잡기 결과·시작→준비 시간·클라이언트 수 ·
+  `query{q, sort, desc, limit, excludes}` → `{total, millis, generation, version, rows(첫 limit줄)}`(결과 번호는 연결에 둔다) · `rows{offset, limit}` → `{rows, stale}`(세대가 바뀌었으면 stale = 다시 질의).
+  **쓰기·지우기·열기·실행 요청은 없다.**
+- 한도: 요청 틀 64 KiB(넘으면 본문을 읽지 않고 `limit` 오류 후 끊음), 질의 4,096 바이트, 사용자 제외 패턴 64개·각 520 바이트, 한 번에 줄 1,000개(넘으면 줄임),
+  동시 연결 16(파이프 인스턴스 수), 응답 16 MiB(클라이언트 쪽). 클라이언트 요청 하나 10초 시간 제한(겹친 I/O, 넘으면 끊고 앱 색인으로).
+- 질의 언어·정렬은 앱과 같은 코드(`query::run`/`sort`). 사용자의 "제외할 폴더" 중 서비스 기본 목록에 없는 것은 결과에서 거른다(폴더와 그 아래, 질의마다 위 폴더를 따라 올라가며 확인 + 메모).
+
+### 파이프 보안
+
+- DACL(SDDL) `D:P(A;;GA;;;SY)(A;;GA;;;BA)(A;;0x12019b;;;IU)`: SYSTEM·관리자 전체, **대화형 사용자(IU)는 읽기·쓰기만**(`0x12019b` = FILE_GENERIC_READ|WRITE에서
+  `FILE_CREATE_PIPE_INSTANCE`(=APPEND_DATA) 뺌 → 일반 사용자는 같은 이름의 서버 인스턴스를 더 만들 수 없다). 상속 없음(`P`). 그 밖(네트워크·일괄 로그온의 일반 사용자, 익명)은 항목이 없어 거부.
+- `PIPE_REJECT_REMOTE_CLIENTS`: 다른 PC(SMB)에서 오는 연결은 받지 않는다. 처음 만든 인스턴스는 `FILE_FLAG_FIRST_PIPE_INSTANCE`(이름을 먼저 차지한 프로세스가 있으면 실패 → 5초마다 다시, 기록에 남김).
+- **네트워크 로그온 SID(NU) 거부는 두지 않았다**: 처음엔 `(D;;GA;;;NU)`를 넣었는데 desktop의 ssh 세션(관리자)도 네트워크 로그온이라 막혔다(오류 5). 관리자는 어차피 볼륨을 직접 읽을 수 있고,
+  일반 사용자의 ssh 세션 토큰에는 IU가 없어 그대로 막히므로 뺐다.
+- 호출자: 서비스는 첫 요청을 읽은 뒤 `ImpersonateNamedPipeClient` → `OpenThreadToken` → `RevertToSelf`로 사용자 SID·그룹을 읽는다(안 되면 `GetNamedPipeClientProcessId` → 프로세스 토큰).
+  클라이언트는 `SECURITY_SQOS_PRESENT | SECURITY_IDENTIFICATION`으로 열어 서비스가 **확인만** 하고 그 사용자로 행동할 수 없게 한다.
+  관리자 = 토큰에 Administrators(S-1-5-32-544)가 **켜져** 있음(권한 상승 안 된 관리자 계정의 Medium 토큰은 그 그룹이 deny-only라 일반 사용자로 본다) 또는 SYSTEM.
+- 가짜 서버 막기: 클라이언트는 연결한 뒤 `GetNamedPipeServerProcessId`가 SCM(`QueryServiceStatusEx`)이 아는 FileToolSvc 프로세스 번호와 같은지 확인하고, 다르면 연결하지 않는다.
+
+### 가시성 (다른 사용자의 파일 이름)
+
+서비스는 볼륨의 **모든** 이름을 본다(권한 없는 폴더까지). 그래서 질의마다 호출자에 따라 거른다:
+
+- **관리자(권한 상승된 토큰)**: 모두 보인다(관리자는 볼륨을 직접 읽을 수 있으므로 더 숨길 이유가 없음).
+- **그 밖**: 프로필 폴더들의 부모(`ProfileList\ProfilesDirectory`, 보통 `C:\Users`) **바로 아래 폴더는 자기 프로필(`ProfileList\<SID>\ProfileImagePath`)과 `Public`만 보이고 나머지는 숨긴다** —
+  다른 사용자, `Default`, 프로필 목록에 없는 폴더(예: 관리자가 만든 `C:\Users\wft2c-other`)도. 프로필 목록의 다른 경로(`C:\Windows\ServiceProfiles\LocalService`,
+  `…\system32\config\systemprofile` 등 C:\Users 밖)도 숨긴다. 숨긴 폴더는 이름 자체와 그 아래 전부가 빠지고, 결과 수에도 들어가지 않는다(숨긴 수도 알려 주지 않음).
+- 규칙은 질의 때마다 색인에서 다시 찾는다(폴더 이름이 바뀌어도 맞음). 2a 기본 제외 목록(`$Recycle.Bin`, `System Volume Information`, `?:\Windows\WinSxS`)은 서비스가 색인할 때 이미 뺀다.
+- **숨기지 않는 것**(알고 둔 것): C:\Users 밖의 권한 없는 폴더 이름(예: `C:\Windows\System32\config\…`, 다른 앱의 `C:\ProgramData\…` 하위) — 2a 폴더 훑기(관리자 아님)는 이런 폴더 1,169개를
+  못 들어가지만 서비스 길에서는 이름이 보인다. 내용은 여전히 열 수 없다(파일 열기는 사용자 권한으로).
+
+### 계정·권한
+
+- **LocalSystem**으로 등록하되 서비스 SID(UNRESTRICTED)를 켜고 **필요한 권한만**(`SeChangeNotifyPrivilege`, `SeBackupPrivilege`, `SeManageVolumePrivilege`) 남긴다(`sc qprivs`로 확인).
+  실패 시 10초·60초 뒤 다시 시작, 지연된 자동 시작.
+- **가상 계정(`NT SERVICE\FileToolSvc`)은 시도했지만 안 된다**(`install --account virtual`로 남겨 둠, 시험용): LSA로 `SeBackupPrivilege`·`SeManageVolumePrivilege`를 주고 시작할 때 켜도(`AdjustTokenPrivileges` 확인),
+  `\\.\C:`를 `GENERIC_READ`로 여는 것이 **접근 거부(오류 5)** — 백업 의미(`FILE_FLAG_BACKUP_SEMANTICS`)로 다시 열어도 같음(desktop). 볼륨 장치의 보안 설명자가 이 계정을 허용하지 않는 것으로 보인다(볼륨 DACL 자체는 읽어 보지 않음).
+  볼륨 DACL을 바꾸는 것은 시스템 변경이라 하지 않았다. 그래서 기본은 LocalSystem.
+- 처음 전체 읽기(저장한 색인이 없을 때)만 프로세스 배경 모드(`PROCESS_MODE_BACKGROUND_BEGIN`: 아주 낮은 I/O·CPU 우선순위)로 돌리고 준비되면 끈다.
+  저장한 색인을 불러오는 다시 시작은 보통 우선순위(배경 모드로 불러오면 111 MB에 13.2초 → 끄니 0.8초).
+
+### 설치 / 제거 (`filetool-svc install|uninstall|status`)
+
+- **설치(관리자)**: ① 이미 있으면 멈춤 ② `%ProgramFiles%\파일 도구 서비스\`를 만들고 DACL `D:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;0x1200a9;;;BU)`(Users 읽기·실행만)로 바꾼 뒤
+  자신을 복사(`.new`에 쓰고 바꿔치기) ③ 그 경로를 `"…\filetool-svc.exe" run`으로 등록(있으면 설정 바꿈) + 설명·지연 시작·SID·권한·실패 동작
+  ④ `%ProgramData%\kr.salarycrew.winfiletool\`(+ `index\`)를 SYSTEM·관리자만(`D:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)`)으로. 이미 있는데 소유자가 SYSTEM·관리자가 아니면
+  (일반 사용자가 먼저 만들어 둔 폴더 — 소유자는 DACL을 다시 바꿀 수 있으므로) 지우고 새로 만든다 ⑤ 시작 → 실행 중 확인 → 파이프로 상태를 받아 출력.
+  다시 설치(갱신)는 색인을 지우지 않는다. `--report <파일>`이면 출력을 파일에도 쓴다(앱이 창 없이 UAC로 띄운 실행의 결과를 읽으려고).
+- **왜 Program Files로 복사하나**: 앱 폴더(`%LOCALAPPDATA%\파일 도구\`)는 사용자가 쓸 수 있다. 거기 있는 exe를 서비스(LocalSystem)로 등록하면 사용자가 exe를 바꿔치기해
+  SYSTEM 권한을 얻는다(권한 상승). 그래서 관리자만 쓸 수 있는 곳에 복사해 그 경로를 등록한다. desktop에서 일반 사용자가 그 폴더에 쓰기·exe 바꿔치기 → 거부 확인.
+- **제거(관리자)**: 멈춤(최대 60초) → `DeleteService` → (가상 계정이면 LSA 권한 거둠) → 등록이 사라질 때까지 기다림 → ProgramData 폴더 → Program Files 폴더 지움.
+  Program Files 안의 자신으로 제거하면 실행 중인 exe는 지울 수 없어 다시 시작할 때 지우도록 예약(`MoveFileEx` DELAY_UNTIL_REBOOT)한다. 앱의 단추·설치 파일은 앱 폴더의 사본으로 지우므로 바로 다 지워진다.
+- `status`(관리자 아니어도 됨): SCM 상태·시작 유형·계정·실행 파일, 서비스 폴더·자료 폴더·파이프의 SDDL, 파이프로 받은 색인 상태.
+- **앱 [설정] > 검색 > 빠른 검색 서비스**: 설치 상태 글 + "설치(다시 설치)" / "제거" 단추. 단추는 앱 옆 `filetool-svc.exe`를 `ShellExecuteExW("runas", "install|uninstall --report %TEMP%\win-filetool\svc-setup.txt")`로
+  실행하고(UAC 창 1번, 창은 숨김) 끝날 때까지 기다린 뒤 보고서 글을 결과 칸에 보여 준다. UAC에서 [아니요]면 "관리자 권한 확인(UAC)을 취소했습니다". 실행할 명령 줄은 단추 아래에 그대로 보인다.
+- **앱 제거(NSIS)**: 제거 프로그램이 `HKLM\SYSTEM\CurrentControlSet\Services\FileToolSvc`를 보고 서비스가 있으면 "함께 제거할까요?(관리자 권한 확인 창)"를 묻는다.
+  [예] → 앱 폴더의 `filetool-svc.exe uninstall`을 runas로. [아니요]·조용히 제거(`/S`)는 서비스를 남긴다(서비스 exe는 Program Files에 따로 있어 계속 돈다 —
+  나중에 관리자 명령 프롬프트에서 `"C:\Program Files\파일 도구 서비스\filetool-svc.exe" uninstall`). desktop에서는 `/S` 경로만 확인(서비스가 남음), 묻는 창은 누를 수 없어 확인 못 함.
+
+### 위협 메모
+
+| 위협 | 막는 것 | 남는 것 |
+|---|---|---|
+| 일반 사용자가 서비스 exe를 바꿔 SYSTEM으로 실행 | exe는 Program Files(관리자만 쓰기)에서 실행, 경로를 따옴표로 등록 | 설치 단계 자체는 앱 폴더(사용자 쓰기 가능)의 exe를 UAC로 실행한다 — 같은 사용자의 악성 코드가 그 exe를 미리 바꿔 두면 사용자가 UAC에 [예]를 누를 때 관리자 권한을 얻는다(사용자별 설치 프로그램이 UAC를 쓸 때의 일반적 한계, UAC 창에 서명 없는 게시자로 보임) |
+| 색인 파일을 직접 읽어 가시성 우회 | ProgramData 폴더 SYSTEM·관리자만, 먼저 만들어 둔 폴더는 지우고 새로 | — |
+| 가짜 파이프 서버(이름 선점)로 앱에 거짓 결과 | 서버 pid = SCM 서비스 pid 확인, 서비스 쪽 첫 인스턴스 플래그, IU에 인스턴스 만들기 권한 없음 | 서비스가 멈춘 사이 선점하면 앱은 "서비스 아님"으로 연결하지 않고 앱 색인으로 동작 |
+| 다른 PC에서 파이프로 목록 빼내기 | `PIPE_REJECT_REMOTE_CLIENTS` + DACL에 네트워크 사용자 항목 없음 | 관리자 ssh(로컬 네트워크 로그온)는 들어옴(관리자라 의미 없음) |
+| 다른 사용자 파일 이름 노출 | 가시성 규칙(다른 프로필 폴더 숨김) | C:\Users 밖 권한 없는 폴더의 이름은 보임(위) |
+| 서비스로 파일을 열거나 지우기 | 프로토콜에 그런 요청이 없음(질의·상태만) | — |
+| 요청으로 서비스 마비(DoS) | 요청 64 KiB·질의 4 KB·줄 1,000·연결 16, 쓰기 요청 없음 | 대화형 사용자가 연결 16개를 붙잡거나 무거운 질의를 반복하면 다른 사용자의 질의가 늦어질 수 있다(같은 PC 사용자 사이) |
+| 백신 오탐 | — | 서명하지 않은 서비스 exe(코드 서명은 범위 밖) |
+
+### 잰 값 (2c, 2026-10-31, desktop C:\ 181만 항목, 캐시 따뜻함)
+
+- 설치 1.78 초(파이프 응답까지). **처음 색인(배경 모드)**: MFT 스캔 9.3~15.6 초, 이름 순위·저장(111 MB)까지 **준비 28.4~33.7 초**(같은 때 관리자 CLI `--source mft` 보통 우선순위 3.7~5.6 초).
+  항목 1,814,549(서비스) vs 1,814,553(CLI MFT, 같은 순간이 아님 — 차이는 서로의 색인 폴더 2개와 그 사이 바뀐 로그 파일).
+- **다시 시작**: 멈춤 0.53 초, 시작 → 준비 **1.00 초**(불러오기 0.80 초 + 저널 따라잡기 0.04 초, 멈춘 동안 만든 파일 반영).
+- 질의(일반 사용자, 파이프 왕복): `notepad.exe` 중간 3.7 ms(3.3~4.0), `보고서` 3.9 ms, `ext:jpg;png;heic`(16만 개) 15.6 ms, 경로 낱말 8.3 ms, 연결 1.2~1.4 ms.
+- 실시간(서비스 저널 → 일반 사용자 질의, 50 ms 폴링): 만들기 0.67 초, 이름 바꾸기 0.68 초, 지우기 0.64 초.
+- 앱(Medium): 창 뒤 1.2 초에 "C:\ 빠른 색인(서비스)", 서비스 멈춤 → 0.28 초 뒤 "C:\ 일반 색인"(앱이 C:\ 훑기 3.9 초), 다시 시작 → 1.5 초 뒤 다시 서비스. 오류 표시 없음.

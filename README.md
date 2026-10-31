@@ -1,6 +1,6 @@
 # win-filetool
 
-Windows용 파일 도구 앱(창 제목 "파일 도구"). 파일 변환(이미지·문서·영상·PDF)과 맥↔윈도 호환 처리, Everything식 전체 파일 즉시 검색(2a, 관리자 권한 없음; 2b 관리자일 때 NTFS 빠른 색인)을 한곳에 모은다.
+Windows용 파일 도구 앱(창 제목 "파일 도구"). 파일 변환(이미지·문서·영상·PDF)과 맥↔윈도 호환 처리, Everything식 전체 파일 즉시 검색(2a, 관리자 권한 없음; 2b 관리자일 때 NTFS 빠른 색인; 2c 선택 설치 서비스로 일반 사용자도 빠른 색인)을 한곳에 모은다.
 
 스택: **Tauri 2** (Rust 코어 + Vite/TypeScript 웹 UI). 설계·단계 구분은 [docs/design.md](docs/design.md).
 
@@ -87,16 +87,36 @@ ffmpeg와 LibreOffice는 앱에 들어 있지 않다. 따로 설치하거나(관
   **저널 따라잡기 0.04 초**(전체 다시 스캔 없음), 켜져 있는 동안 변경 반영 약 0.7 초
 - 관리자가 아니거나, 폴더를 색인할 곳으로 골랐거나, NTFS가 아닌 드라이브(USB의 exFAT 등)는 조용히 2a 길. 상태 줄에 드라이브마다
   "빠른 색인(MFT)" / "일반 색인"이 보이고, 마우스를 올리면 이유가 나온다
-- 일반 사용자가 UAC 없이 빠른 길을 쓰는 방법(도우미 / 서비스 등)은 아직 정하지 않았다 — [docs/design.md](docs/design.md) "권한 상승 방안"
+- 일반 사용자가 빠른 길을 쓰는 방법은 2c의 **빠른 검색 서비스**(아래)
 - 명령줄: `filetool-cli index C:\ --source auto|mft|walk`(mft인데 관리자가 아니면 한국어 안내 후 종료 코드 2),
   `filetool-cli usn-catchup`(저장한 색인을 저널로 따라잡고 저장)
+
+## 2c에서 되는 것: 빠른 검색 서비스 (선택 설치)
+
+- 앱은 지금처럼 **관리자 권한 없이** 설치·실행한다. 여기에 더해 [설정] > 검색 > **빠른 검색 서비스 설치**를 누르면(관리자 권한 확인(UAC) 창 1번)
+  Windows 서비스 "파일 도구 빠른 검색 서비스"(`FileToolSvc`)가 NTFS 드라이브의 파일 목록(MFT)을 읽고 USN 저널로 바뀐 것을 따라간다.
+  앱은 서비스가 답하면 그 드라이브를 서비스에 묻고(상태 줄 "C:\ 빠른 색인(서비스)"), 폴더로 고른 루트·NTFS가 아닌 드라이브는 지금처럼 스스로 색인한다.
+- 서비스가 없거나 멈추면 앱은 아무 알림 없이 스스로 색인한다(관리자가 아니면 2a 폴더 훑기). 서비스가 다시 돌면 몇 초 안에 다시 서비스를 쓴다.
+- 서비스는 컴퓨터를 켤 때 조금 늦게(지연된 자동 시작) 시작하고, 처음 전체 읽기는 낮은 디스크 우선순위로 한다(desktop C:\ 181만 항목: 준비까지 약 30초).
+  그다음부터는 저장한 색인 + 저널 따라잡기로 1초 안에 준비된다. 질의는 파이프 왕복 포함 약 4 ms(일반 사용자), 새 파일은 약 0.7초 안에 결과에 나온다.
+- **무엇이 보이나**: 서비스는 볼륨의 모든 파일 이름을 읽는다. 관리자 권한으로 실행한 앱·명령에는 전부 보여 주고, 그 밖의 사용자에게는
+  **다른 사용자의 프로필 폴더**(`C:\Users\<다른 사람>`, `C:\Users` 아래 자기 폴더와 `Public` 말고 전부, 서비스 계정 프로필)는 결과에서 뺀다.
+  2a 기본 제외 목록(`$Recycle.Bin` 등)과 [설정]의 "제외할 폴더"도 적용된다. C:\Users 밖에서 권한이 없어 열 수 없는 폴더(예: `C:\Windows\System32\config`)의 **이름**은 보인다(내용은 여전히 못 엶).
+- 서비스는 검색(이름·크기·날짜 목록)에만 답한다. 파일을 열거나 바꾸거나 지우는 요청은 없다. 다른 PC에서는 연결할 수 없다.
+- **제거**: [설정] > 검색 > **빠른 검색 서비스 제거**(UAC 1번) → 서비스, `C:\Program Files\파일 도구 서비스\`, `C:\ProgramData\kr.salarycrew.winfiletool\`을 모두 지운다.
+  앱을 제거할 때 서비스가 있으면 함께 지울지 묻는다([예] → UAC). 조용히 제거(`/S`)하거나 [아니요]를 고르면 서비스는 남는다 →
+  나중에 관리자 명령 프롬프트에서 `"C:\Program Files\파일 도구 서비스\filetool-svc.exe" uninstall`.
+- 명령줄(관리자): `filetool-svc install` / `uninstall` / `status`(상태는 관리자 아니어도 됨). 앱 쪽: `filetool-cli svc-status`, `filetool-cli search "<질의>" --via service`,
+  `filetool-cli svc-watch "<질의>"`(결과가 바뀔 때마다 시각 출력).
+- 자세한 구조·파이프 프로토콜·보안(ACL)·위협 메모: [docs/design.md](docs/design.md) "2c".
 
 ## 설치 / 제거
 
 - **설치 파일**: `파일도구_0.1.0_x64-setup.exe` 실행 → 관리자 권한 없이 `%LOCALAPPDATA%\파일 도구\`에 설치, 시작 메뉴에 "파일 도구".
   조용히 설치: `파일도구_0.1.0_x64-setup.exe /S`
 - **제거**: [설정 > 앱 > 설치된 앱]에서 "파일 도구" 제거, 또는 `%LOCALAPPDATA%\파일 도구\uninstall.exe` (조용히: `/S`).
-  앱 파일·시작 메뉴·"윈도우 시작 시 실행" 값을 지운다. 설정 폴더는 제거 화면에서 "앱 데이터 삭제"를 고를 때만 지운다
+  앱 파일·시작 메뉴·"윈도우 시작 시 실행" 값을 지운다. 설정 폴더는 제거 화면에서 "앱 데이터 삭제"를 고를 때만 지운다.
+  빠른 검색 서비스(2c)가 설치돼 있으면 함께 지울지 묻는다(위)
 - **휴대용**: `win-filetool-0.1.0-portable.zip`을 풀고 `win-filetool.exe` 실행(`pdfium.dll`이 같은 폴더에 있어야 PDF→이미지가 됨)
 - 서명하지 않은 프로그램이라 처음 실행할 때 SmartScreen("Windows의 PC 보호")이 뜰 수 있다 → [추가 정보] → [실행]
 
@@ -106,6 +126,7 @@ ffmpeg와 LibreOffice는 앱에 들어 있지 않다. 따로 설치하거나(관
 - 검색 색인: `%LOCALAPPDATA%\kr.salarycrew.winfiletool\index\index-v2.bin`
 - 윈도우 시작 시 실행: 레지스트리 `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` 값 `win-filetool`
 - 작업 중 임시 파일: `%TEMP%\win-filetool\` (끝나면 지움)
+- 빠른 검색 서비스(2c, 설치했을 때): 실행 파일 `C:\Program Files\파일 도구 서비스\filetool-svc.exe`, 색인·기록 `C:\ProgramData\kr.salarycrew.winfiletool\`(관리자만 읽음)
 
 ## 빌드 (K12 Linux → Windows exe)
 
@@ -124,8 +145,9 @@ cargo test -p filetool-core
 - `파일도구_0.1.0_x64-setup.exe` — 사용자별 설치 파일(NSIS, 한국어)
 - `win-filetool-0.1.0-portable\` (+ `.zip`) — `win-filetool.exe`(앱, WebView2 런타임 필요), `pdfium.dll`, `licenses\`,
   `filetool-cli.exe`(같은 코어의 명령줄 도구: `selftest <빈 폴더>`로 점검, `tools`, `image`/`media`/`doc`/`watch`,
-  1c `pdf-compress`/`img2pdf`/`pdf2img`/`pdf-images`/`autostart`, 2a `index`/`search`/`search-live`)
+  1c `pdf-compress`/`img2pdf`/`pdf2img`/`pdf-images`/`autostart`, 2a `index`/`search`/`search-live`, 2c `svc-status`/`search --via service`/`svc-watch`),
+  `filetool-svc.exe`(2c 빠른 검색 서비스 — 설치 파일에도 들어 있음)
 
-desktop 배치 위치: `C:\Users\user\dev\win-filetool-builds\<단계>\` (1a, 1b, 1c, 2a).
+desktop 배치 위치: `C:\Users\user\dev\win-filetool-builds\<단계>\` (1a, 1b, 1c, 2a, 2b, 2c).
 
 검색 벤치마크(합성 100만 항목): `cargo test --release -p filetool-core --test search_bench -- --ignored --nocapture`
