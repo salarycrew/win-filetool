@@ -53,7 +53,7 @@ mod win {
     };
     use windows_sys::Win32::Storage::FileSystem::MoveFileExW;
     use windows_sys::Win32::System::Services::*;
-    use windows_sys::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken, SetPriorityClass};
+    use windows_sys::Win32::System::Threading::{GetCurrentProcess, OpenProcess, OpenProcessToken, SetPriorityClass, WaitForSingleObject};
 
     const DISPLAY_NAME: &str = "파일 도구 빠른 검색 서비스";
     const DESCRIPTION: &str =
@@ -228,16 +228,51 @@ mod win {
         state(s) == want
     }
 
+    fn service_pid(s: &Sc) -> u32 {
+        let mut st = SERVICE_STATUS_PROCESS::default();
+        let mut need = 0u32;
+        unsafe { QueryServiceStatusEx(s.0, SC_STATUS_PROCESS_INFO, &mut st as *mut _ as *mut u8, std::mem::size_of_val(&st) as u32, &mut need) };
+        st.dwProcessId
+    }
+
     fn stop_service(s: &Sc) -> Result<(), String> {
         if state(s) == SERVICE_STOPPED {
             return Ok(());
         }
+        let pid = service_pid(s);
         let mut st: SERVICE_STATUS = unsafe { std::mem::zeroed() };
         unsafe { ControlService(s.0, SERVICE_CONTROL_STOP, &mut st) };
         if !wait_state(s, SERVICE_STOPPED, Duration::from_secs(60)) {
             return Err("서비스가 60초 안에 멈추지 않았습니다".into());
         }
+        // 0.2.1: SCM이 "멈춤"이라 해도 프로세스는 잠깐 더 살아 있다(실행 파일이 잠긴 채) → 끝날 때까지 기다린다.
+        // 안 기다리면 다시 설치(갱신)에서 새 exe로 바꾸다 "액세스가 거부되었습니다(os error 5)"
+        if pid != 0 {
+            const SYNCHRONIZE: u32 = 0x0010_0000;
+            let h = unsafe { OpenProcess(SYNCHRONIZE, 0, pid) };
+            if !h.is_null() {
+                unsafe { WaitForSingleObject(h, 30_000) };
+                unsafe { CloseHandle(h) };
+            }
+        }
         Ok(())
+    }
+
+    /// 새 exe를 옆에 복사해 두고 바꿔 넣는다. 막 멈춘 서비스·백신 검사가 잠깐 잡고 있을 수 있어 10초까지 다시 해 본다
+    fn replace_exe(src: &Path, dir: &Path, dst: &Path) -> Result<(), String> {
+        let tmp = dir.join(format!("{EXE_NAME}.new"));
+        std::fs::copy(src, &tmp).map_err(|e| format!("{}: {e}", tmp.display()))?;
+        let t0 = Instant::now();
+        loop {
+            match std::fs::rename(&tmp, dst) {
+                Ok(()) => return Ok(()),
+                Err(e) if t0.elapsed() < Duration::from_secs(10) && matches!(e.raw_os_error(), Some(5 | 32)) => std::thread::sleep(Duration::from_millis(250)),
+                Err(e) => {
+                    let _ = std::fs::remove_file(&tmp);
+                    return Err(format!("{}: {e}", dst.display()));
+                }
+            }
+        }
     }
 
     fn multi_sz(items: &[&str]) -> Vec<u16> {
@@ -394,9 +429,14 @@ mod win {
         set_dacl(&dir, INSTALL_DIR_SDDL)?;
         let same = src.canonicalize().ok() == dst.canonicalize().ok();
         if !same {
-            let tmp = dir.join(format!("{EXE_NAME}.new"));
-            std::fs::copy(&src, &tmp).map_err(|e| format!("{}: {e}", tmp.display()))?;
-            std::fs::rename(&tmp, &dst).map_err(|e| format!("{}: {e}", dst.display()))?;
+            if let Err(e) = replace_exe(&src, &dir, &dst) {
+                // 갱신하다 실패하면 멈춰 둔 이전 서비스를 다시 켜 둔다(멈춘 채로 두지 않음)
+                if let Some(s) = &existing {
+                    let back = unsafe { StartServiceW(s.0, 0, std::ptr::null()) } != 0;
+                    say!("      바꾸지 못함 → 이전 서비스 {}", if back { "다시 시작함" } else { "다시 시작 못 함" });
+                }
+                return Err(e.into());
+            }
         }
         set_dacl(&dir, INSTALL_DIR_SDDL)?;
 
