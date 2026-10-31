@@ -8,12 +8,13 @@
   </head>
   <body>
     <nav id="tabs" class="tabs">
-      <button type="button" data-tab="files" class="active">파일명·zip·PDF</button>
+      <button type="button" data-tab="files" class="active">파일명·zip</button>
+      <button type="button" data-tab="pdf">PDF</button>
       <button type="button" data-tab="image">이미지</button>
       <button type="button" data-tab="media">영상·소리</button>
       <button type="button" data-tab="doc">문서</button>
       <button type="button" data-tab="watch">감시 폴더</button>
-      <button type="button" data-tab="tools">도구 설정</button>
+      <button type="button" data-tab="tools">설정</button>
     </nav>
     <main>
       <div id="work">
@@ -68,8 +69,11 @@
 
       <div id="watch-panel" hidden>
         <h2>감시 폴더</h2>
-        <p class="hint">폴더에 새 파일이 들어오면 자동으로 변환해 하위 폴더에 저장합니다. 앱이 켜져 있는 동안만 동작합니다.
-          복사 중인 파일은 크기가 멈출 때까지 기다리고, 한 번 처리한 파일은 다시 처리하지 않습니다(앱을 다시 켜도).</p>
+        <p class="hint">폴더에 새 파일이 들어오면 자동으로 변환해 하위 폴더에 저장합니다. 앱이 켜져 있는 동안 동작하며,
+          켜진 규칙이 있으면 창을 닫아도 알림 영역(트레이)에 남아 계속 감시합니다(트레이 메뉴: 열기 / 감시 일시정지 / 끝내기).
+          복사 중인 파일은 크기가 멈출 때까지 기다리고, 한 번 처리한 파일은 다시 처리하지 않습니다(앱을 다시 켜도).
+          컴퓨터를 켤 때 자동으로 감시하려면 [설정]에서 “윈도우 시작 시 실행”을 켜세요.</p>
+        <label><input type="checkbox" id="w-paused" /> 감시 일시정지</label>
         <ul id="rules" class="items"></ul>
         <h2>규칙 추가</h2>
         <div class="opts">
@@ -96,10 +100,14 @@
       </div>
 
       <div id="tools-panel" hidden>
-        <h2>도구 설정</h2>
+        <h2>윈도우 시작</h2>
+        <label><input type="checkbox" id="autostart" /> 윈도우 시작 시 실행 (감시 폴더용 — 창 없이 알림 영역에서 시작)</label>
+        <p id="autostart-state" class="hint"></p>
+        <h2>외부 도구</h2>
         <p class="hint">영상·소리·HEIC 변환에는 ffmpeg, 문서 변환에는 LibreOffice가 필요합니다(앱에 들어 있지 않음).
           PATH와 흔한 설치 위치에서 자동으로 찾고, 못 찾으면 직접 위치를 지정할 수 있습니다.</p>
         <div id="tool-list"></div>
+        <p id="pdfium-state" class="hint"></p>
         <div class="row"><button id="tools-refresh" type="button">다시 찾기</button></div>
       </div>
 

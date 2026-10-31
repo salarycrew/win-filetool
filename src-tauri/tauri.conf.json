@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "win-filetool",
+  "productName": "파일 도구",
   "mainBinaryName": "win-filetool",
   "version": "0.1.0",
   "identifier": "kr.salarycrew.winfiletool",
@@ -20,7 +20,8 @@
         "height": 860,
         "minWidth": 640,
         "minHeight": 560,
-        "dragDropEnabled": true
+        "dragDropEnabled": true,
+        "visible": false
       }
     ],
     "security": {
@@ -29,7 +30,32 @@
   },
   "bundle": {
     "active": true,
-    "targets": ["nsis"],
-    "icon": ["icons/32x32.png", "icons/128x128.png", "icons/icon.ico"]
+    "targets": [
+      "nsis"
+    ],
+    "publisher": "salarycrew",
+    "shortDescription": "파일 변환·PDF·감시 폴더 도구",
+    "copyright": "salarycrew",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.ico"
+    ],
+    "resources": {
+      "../third_party/pdfium/win-x64/bin/pdfium.dll": "pdfium.dll",
+      "../third_party/pdfium/win-x64/licenses/": "licenses/pdfium/"
+    },
+    "windows": {
+      "nsis": {
+        "installMode": "currentUser",
+        "languages": [
+          "Korean"
+        ],
+        "displayLanguageSelector": false,
+        "installerIcon": "icons/icon.ico",
+        "installerHooks": "windows/installer-hooks.nsh"
+      }
+    }
   }
 }

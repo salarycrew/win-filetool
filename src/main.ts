@@ -24,7 +24,13 @@ type Op =
   | { kind: "doc"; target: "pdf" | "docx" | "xlsx" | "pptx" };
 interface WatchRule { id: string; folder: string; op: Op; out_subfolder: string; enabled: boolean }
 interface WatchEvent { rule_id: string; input: string; ok: boolean; output: string | null; message: string }
-type Tab = "files" | "image" | "media" | "doc" | "watch" | "tools";
+type Tab = "files" | "pdf" | "image" | "media" | "doc" | "watch" | "tools";
+interface CompressOut { input: string; output: string | null; before: number; after: number; pages: number; note: string }
+interface Img2PdfOut { output: string; note: string }
+interface RenderOut { folder: string; pages: { page: number; output: string; width: number; height: number }[]; note: string }
+interface ExtractOut { folder: string | null; files: string[]; note: string }
+interface AutostartStatus { enabled: boolean; value: string | null; matches_exe: boolean; supported: boolean }
+const TABS: Tab[] = ["files", "pdf", "image", "media", "doc", "watch", "tools"];
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 const itemsEl = $<HTMLUListElement>("items");
@@ -69,11 +75,15 @@ const fileName = (p: string) => p.split(/[\\/]/).pop() ?? p;
 
 // ---------- 탭 ----------
 
-const OPS: Record<"files" | "image" | "media" | "doc", [string, string][]> = {
-  files: [
-    ["nfc", "파일명 한글 깨짐 고치기 (폴더, NFD→NFC)"], ["zip", "맥에서 만든 zip 풀기 (한글 이름 고침)"],
-    ["merge", "PDF 합치기 (목록 순서대로)"], ["split", "PDF 나누기"], ["rotate", "PDF 페이지 회전"],
-    ["delete", "PDF 페이지 삭제"], ["reorder", "PDF 페이지 순서 변경"],
+// [값, 이름, 묶음(optgroup)]
+const OPS: Record<"files" | "pdf" | "image" | "media" | "doc", [string, string, string?][]> = {
+  files: [["nfc", "파일명 한글 깨짐 고치기 (폴더, NFD→NFC)"], ["zip", "맥에서 만든 zip 풀기 (한글 이름 고침)"]],
+  pdf: [
+    ["merge", "PDF 합치기 (목록 순서대로)", "페이지"], ["split", "PDF 나누기", "페이지"], ["rotate", "페이지 회전", "페이지"],
+    ["delete", "페이지 삭제", "페이지"], ["reorder", "페이지 순서 변경", "페이지"],
+    ["compress", "PDF 용량 줄이기 (사진 다시 압축)", "압축"],
+    ["img2pdf", "이미지 여러 장 → PDF 하나 (목록 순서대로)", "이미지→PDF"],
+    ["pdf2img", "쪽마다 그림으로 (PNG·JPG)", "PDF→이미지"], ["pdfimages", "들어 있는 사진만 꺼내기", "PDF→이미지"],
   ],
   image: [["img", "이미지 형식 바꾸기 · 크기 줄이기 (HEIC 포함)"]],
   media: [
@@ -83,7 +93,8 @@ const OPS: Record<"files" | "image" | "media" | "doc", [string, string][]> = {
   doc: [["pdf", "PDF로 바꾸기"], ["office", "MS Office 형식으로 (Pages→Word, Numbers→Excel, Keynote→PowerPoint)"]],
 };
 const DROP_HINT: Record<string, string> = {
-  files: "PDF · zip · 폴더",
+  files: "zip · 폴더",
+  pdf: "PDF · (이미지→PDF는 JPG · PNG · WebP · BMP · TIFF · HEIC)",
   image: "JPG · PNG · WebP · BMP · TIFF · GIF · HEIC(아이폰 사진)",
   media: "MOV · MKV · AVI · WebM · MP4 · 소리 파일",
   doc: "Word · Excel · PowerPoint · 한글(HWP 97) · ODF · Pages · Numbers · Keynote",
@@ -98,7 +109,12 @@ function setTab(t: Tab) {
   $("tools-panel").hidden = t !== "tools";
   $("result-section").hidden = t === "watch";
   if (work) {
-    opEl.innerHTML = OPS[t as keyof typeof OPS].map(([v, l]) => `<option value="${v}">${l}</option>`).join("");
+    let html = "", group: string | undefined;
+    for (const [v, l, g] of OPS[t as keyof typeof OPS]) {
+      if (g !== group) { if (group) html += "</optgroup>"; if (g) html += `<optgroup label="${g}">`; group = g; }
+      html += `<option value="${v}">${l}</option>`;
+    }
+    opEl.innerHTML = html + (group ? "</optgroup>" : "");
     $("op-row").hidden = t === "image";
     $("drop-hint").textContent = DROP_HINT[t];
     renderOpts();
@@ -163,13 +179,17 @@ function autoPickTab() {
   const kinds = new Set(items.map((i) => i.kind));
   if (kinds.size !== 1) return;
   const only = [...kinds][0];
+  // PDF 탭의 [이미지→PDF]에서는 사진을 넣어도 탭을 바꾸지 않는다
+  if (tab === "pdf" && opEl.value === "img2pdf" && (only === "image" || only === "heic")) return;
   const target: Tab | null =
-    only === "image" || only === "heic" ? "image" : only === "video" || only === "audio" ? "media" : only === "document" ? "doc" : only === "dir" || only === "zip" || only === "pdf" ? "files" : null;
+    only === "image" || only === "heic" ? "image" : only === "video" || only === "audio" ? "media" : only === "document" ? "doc" : only === "pdf" ? "pdf" : only === "dir" || only === "zip" ? "files" : null;
   if (target && target !== tab && tab !== "watch" && tab !== "tools") setTab(target);
   if (tab === "files") {
     if (only === "dir") opEl.value = "nfc";
     else if (only === "zip") opEl.value = "zip";
-    else if (only === "pdf" && !opEl.value.match(/merge|split|rotate|delete|reorder/)) opEl.value = items.length > 1 ? "merge" : "split";
+    renderOpts();
+  } else if (tab === "pdf" && only === "pdf") {
+    if (opEl.value === "img2pdf") opEl.value = items.length > 1 ? "merge" : "compress";
     renderOpts();
   }
 }
@@ -182,7 +202,7 @@ function renderOpts() {
   const pagesInput = (id: string, label: string, ph: string) =>
     `<label>${label} <input type="text" id="${id}" placeholder="${ph}" /></label>`;
   let html = "";
-  if (tab === "files") {
+  if (tab === "files" || tab === "pdf") {
     switch (op) {
       case "nfc":
         html = `<p class="hint">먼저 <b>미리보기</b>로 바뀔 이름을 확인한 뒤 <b>실행</b>을 누르면 적용합니다. 같은 이름이 이미 있으면 건너뜁니다.</p>
@@ -209,6 +229,32 @@ function renderOpts() {
       case "reorder":
         html = `${pagesInput("order", "새 순서", "예: 3,1,2 또는 5-1 (모든 쪽을 한 번씩)")}`;
         break;
+      case "compress":
+        html = `<label>정도 <select id="c-preset">
+            <option value="screen">화면용 — 가장 작게 (사진 96 DPI, 품질 55)</option>
+            <option value="normal" selected>보통 — 메일·메신저용 (150 DPI, 품질 70)</option>
+            <option value="print">인쇄용 — 화질 우선 (300 DPI, 품질 85)</option></select></label>
+          <p class="hint">들어 있는 사진만 줄입니다. 글자·선·표는 그대로입니다. 결과가 원본보다 작지 않으면 새 파일을 만들지 않습니다.
+            암호가 걸린 PDF는 줄일 수 없습니다. 결과: 이름_압축.pdf</p>`;
+        break;
+      case "img2pdf":
+        html = `<label>쪽 크기 <select id="i-page">
+            <option value="image">이미지 크기 그대로</option>
+            <option value="a4_portrait" selected>A4 세로에 맞춤</option>
+            <option value="a4_landscape">A4 가로에 맞춤</option></select></label>
+          <label>여백 <select id="i-margin"><option value="0">없음</option><option value="10" selected>10mm</option><option value="20">20mm</option></select></label>
+          <p class="hint">넣은 이미지가 목록 순서대로 한 쪽씩 들어갑니다(▲▼로 순서 조정). 사진 방향(EXIF)은 바르게 돌려 넣고,
+            JPG는 다시 압축하지 않아 화질이 그대로입니다. HEIC는 ffmpeg가 필요합니다. 결과: 첫이미지_외N장.pdf</p>`;
+        break;
+      case "pdf2img":
+        html = `<label>형식 <select id="r-fmt"><option value="png">PNG (선명, 큼)</option><option value="jpg">JPG (작음)</option></select></label>
+          <label>해상도 <select id="r-dpi"><option value="72">72 DPI (화면)</option><option value="150" selected>150 DPI (보통)</option><option value="300">300 DPI (인쇄)</option></select></label>
+          ${pagesInput("r-pages", "쪽", "예: 1-3,5 (비우면 전체)")}
+          <p class="hint">결과는 원본 옆 “이름_쪽이미지” 폴더에 이름_p01.png … 로 저장합니다.</p>`;
+        break;
+      case "pdfimages":
+        html = `<p class="hint">PDF 안에 들어 있는 사진을 다시 압축하지 않고 꺼냅니다(JPG는 그대로, 그 밖은 PNG). 결과: “이름_추출이미지” 폴더</p>`;
+        break;
     }
   } else if (tab === "image") {
     html = `<label>바꿀 형식 <select id="img-fmt">
@@ -218,7 +264,7 @@ function renderOpts() {
       <label>긴 변 최대 <select id="img-max"><option value="">원본 크기 그대로</option><option value="3840">3840px (4K)</option>
         <option value="2560">2560px</option><option value="1920" >1920px</option><option value="1280">1280px</option><option value="800">800px</option></select></label>
       <label><input type="checkbox" id="img-exif" checked /> 촬영 날짜 등 사진 정보(EXIF) 유지 (JPG·PNG로 바꿀 때)</label>
-      <p class="hint">HEIC(아이폰 사진)는 ffmpeg로 풉니다([도구 설정] 확인). 움직이는 GIF는 첫 장면만 씁니다. 사진 방향은 바르게 돌려 저장합니다.</p>`;
+      <p class="hint">HEIC(아이폰 사진)는 ffmpeg로 풉니다([설정] 확인). 움직이는 GIF는 첫 장면만 씁니다. 사진 방향은 바르게 돌려 저장합니다.</p>`;
   } else if (tab === "media") {
     switch (op) {
       case "messenger":
@@ -233,10 +279,10 @@ function renderOpts() {
           <label>초당 장면 <select id="g-fps"><option value="10">10</option><option value="12" selected>12</option><option value="15">15</option></select></label>`;
         break;
       default:
-        html = `<p class="hint">ffmpeg로 변환합니다([도구 설정] 확인). 긴 영상은 시간이 걸리며 [취소]로 멈출 수 있습니다.</p>`;
+        html = `<p class="hint">ffmpeg로 변환합니다([설정] 확인). 긴 영상은 시간이 걸리며 [취소]로 멈출 수 있습니다.</p>`;
     }
   } else if (tab === "doc") {
-    html = `<p class="hint">LibreOffice로 변환합니다(앱에 들어 있지 않음 — [도구 설정] 확인).
+    html = `<p class="hint">LibreOffice로 변환합니다(앱에 들어 있지 않음 — [설정] 확인).
       ${op === "office" ? "Pages→DOCX, Numbers→XLSX, Keynote→PPTX. 복잡한 서식은 달라질 수 있습니다." : "Word·Excel·PowerPoint·ODF·Pages·Numbers·Keynote → PDF. HWP는 오래된 한글 97 형식만 됩니다."}</p>`;
   }
   optsEl.innerHTML = html;
@@ -263,7 +309,7 @@ function setBusy(b: boolean) {
 function need(kind: Kind, min = 1): Item[] {
   const list = items.filter((i) => i.kind === kind);
   if (list.length < min) {
-    const what = kind === "dir" ? "폴더" : kind === "zip" ? "zip 파일" : "PDF";
+    const what = kind === "dir" ? "폴더" : kind === "zip" ? "zip 파일" : kind === "image" ? "이미지" : "PDF";
     throw new Error(min > 1 ? `${what}을(를) ${min}개 이상 넣어 주세요` : `${what}을(를) 먼저 넣어 주세요`);
   }
   return list;
@@ -345,7 +391,7 @@ async function run(previewOnly = false) {
   setBusy(true);
   cancelled = false;
   try {
-    if (tab !== "files") {
+    if (tab !== "files" && tab !== "pdf") {
       await runBatch();
       return;
     }
@@ -427,6 +473,65 @@ async function run(previewOnly = false) {
         }
         break;
       }
+      case "compress": {
+        const list = need("pdf");
+        const preset = val("c-preset");
+        let saved = 0;
+        for (let i = 0; i < list.length; i++) {
+          if (cancelled) { log(`취소: 남은 ${list.length - i}개는 처리하지 않았습니다`, "err"); break; }
+          showProgress(i + 1, list.length, fileName(list[i].path), null);
+          try {
+            const r = await invoke<CompressOut>("pdf_compress", { path: list[i].path, preset, outDir });
+            if (r.output) saved += r.before - r.after;
+            log(r.output ? `✓ ${fileName(r.input)} → ${r.output}  (${r.note})` : `= ${fileName(r.input)}: ${r.note}`, r.output ? "ok" : undefined);
+          } catch (e) {
+            log(`✗ ${fileName(list[i].path)}: ${errText(e)}`, "err");
+          }
+        }
+        if (list.length > 1) log(`끝: 모두 ${(saved / 1048576).toFixed(1)} MB 줄임`, "ok");
+        break;
+      }
+      case "img2pdf": {
+        const imgs = items.filter((i) => i.kind === "image" || i.kind === "heic");
+        if (imgs.length === 0) throw new Error("PDF로 묶을 이미지를 먼저 넣어 주세요");
+        const skipped = items.filter((i) => i.kind !== "image" && i.kind !== "heic");
+        skipped.forEach((s) => log(`[건너뜀] 이미지가 아님: ${fileName(s.path)}`));
+        currentJob = jobSeq++;
+        showProgress(1, 1, `이미지 ${imgs.length}장`, 0);
+        const r = await invoke<Img2PdfOut>("images_to_pdf", {
+          job: currentJob, paths: imgs.map((i) => i.path), outDir,
+          opts: { page: val("i-page"), margin_mm: Number(val("i-margin") || 0) },
+        });
+        log(`✓ 이미지 ${imgs.length}장 → ${r.output}  (${r.note})`, "ok");
+        break;
+      }
+      case "pdf2img": {
+        const list = need("pdf");
+        const opts = { format: val("r-fmt"), dpi: Number(val("r-dpi")), quality: 90, pages: val("r-pages") || null };
+        for (let i = 0; i < list.length; i++) {
+          if (cancelled) { log(`취소: 남은 ${list.length - i}개는 처리하지 않았습니다`, "err"); break; }
+          currentJob = jobSeq++;
+          showProgress(i + 1, list.length, fileName(list[i].path), 0);
+          try {
+            const r = await invoke<RenderOut>("pdf_to_images", { job: currentJob, path: list[i].path, opts, outDir });
+            log(`✓ ${fileName(list[i].path)} → ${r.folder}  (${r.note})`, "ok");
+          } catch (e) {
+            log(`✗ ${fileName(list[i].path)}: ${errText(e)}`, "err");
+          }
+        }
+        break;
+      }
+      case "pdfimages": {
+        for (const it of need("pdf")) {
+          try {
+            const r = await invoke<ExtractOut>("pdf_extract_images", { path: it.path, outDir });
+            log(r.folder ? `✓ ${fileName(it.path)} → ${r.folder}  (${r.note})` : `= ${fileName(it.path)}: ${r.note}`, r.folder ? "ok" : undefined);
+          } catch (e) {
+            log(`✗ ${fileName(it.path)}: ${errText(e)}`, "err");
+          }
+        }
+        break;
+      }
     }
   } catch (e) {
     log(`오류: ${errText(e)}`, "err");
@@ -452,7 +557,28 @@ cancelBtn.onclick = async () => {
 
 // ---------- 도구 설정 ----------
 
+const autostartEl = $<HTMLInputElement>("autostart");
+
+function showAutostart(st: AutostartStatus) {
+  autostartEl.checked = st.enabled;
+  autostartEl.disabled = !st.supported;
+  $("autostart-state").textContent = !st.supported
+    ? "Windows에서만 쓸 수 있습니다."
+    : st.enabled
+      ? `켜짐 — 로그인하면 창 없이 알림 영역에서 시작해 켜진 감시 폴더 규칙을 돌립니다.${st.matches_exe ? "" : " ※ 등록된 경로가 지금 앱 위치와 다릅니다. 껐다 다시 켜면 고쳐집니다."} (HKCU\\…\\Run: ${st.value ?? ""})`
+      : "꺼짐 (기본). 관리자 권한 없이 현재 사용자에게만 등록합니다.";
+}
+
+autostartEl.onchange = async () => {
+  try { showAutostart(await invoke<AutostartStatus>("autostart_set", { enabled: autostartEl.checked })); }
+  catch (e) { log(errText(e), "err"); autostartEl.checked = !autostartEl.checked; }
+};
+
 async function loadTools() {
+  invoke<AutostartStatus>("autostart_get").then(showAutostart).catch((e) => ($("autostart-state").textContent = errText(e)));
+  invoke<string>("pdfium_status")
+    .then((p) => ($("pdfium-state").textContent = `✓ PDF→이미지 렌더러(PDFium): ${p}`))
+    .catch((e) => ($("pdfium-state").textContent = `✗ PDF→이미지 렌더러(PDFium): ${errText(e)}`));
   const el = $("tool-list");
   el.innerHTML = '<p class="hint">찾는 중…</p>';
   try {
@@ -531,9 +657,14 @@ function watchLine(ev: WatchEvent) {
   log(ev.ok ? `✓ ${fileName(ev.input)} → ${ev.output}  (${ev.message})` : `✗ ${fileName(ev.input)}: ${ev.message}`, ev.ok ? "ok" : "err", watchLog);
 }
 
+const pausedEl = $<HTMLInputElement>("w-paused");
+pausedEl.onchange = () => invoke<boolean>("watch_set_paused", { paused: pausedEl.checked }).catch(() => {});
+listen<boolean>("watch-paused", (ev) => (pausedEl.checked = ev.payload));
+
 async function loadWatch() {
   try {
-    const v = await invoke<{ rules: WatchRule[]; log: WatchEvent[] }>("watch_get");
+    const v = await invoke<{ rules: WatchRule[]; log: WatchEvent[]; paused: boolean }>("watch_get");
+    pausedEl.checked = v.paused;
     rules = v.rules;
     watchLog.innerHTML = "";
     v.log.forEach(watchLine);
@@ -624,5 +755,5 @@ getCurrentWebview().onDragDropEvent((ev) => {
 // 시작 탭: 실행 인자 --tab=image 등(화면 점검용), 없으면 파일 탭
 setTab("files");
 invoke<string | null>("startup_tab").then((t) => {
-  if (t && ["files", "image", "media", "doc", "watch", "tools"].includes(t)) setTab(t as Tab);
+  if (t && (TABS as string[]).includes(t)) setTab(t as Tab);
 }).catch(() => {});

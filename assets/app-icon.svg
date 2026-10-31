@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+  <!-- 파일 도구 아이콘 원본(하나뿐). 16px에서도 보이도록 굵은 도형 세 개만: 파란 바탕, 흰 문서, 주황 변환 화살표.
+       scripts/make-icons.sh가 여기서 src-tauri/icons/* (ico 16~256 포함)를 만든다. -->
+  <rect x="24" y="24" width="976" height="976" rx="190" fill="#2563EB"/>
+  <path d="M232 150 H592 L780 338 V860 H232 Z" fill="#FFFFFF"/>
+  <path d="M592 150 V338 H780 Z" fill="#BFDBFE"/>
+  <circle cx="736" cy="752" r="236" fill="#F59E0B" stroke="#2563EB" stroke-width="44"/>
+  <path d="M612 752 H846 M762 664 L852 752 L762 840" stroke="#FFFFFF" stroke-width="72" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>
