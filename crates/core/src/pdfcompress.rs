@@ -428,6 +428,20 @@ pub fn human(n: u64) -> String {
     }
 }
 
+/// 줄어든 비율(소수 한 자리, 예: "99.7%"). 결과가 0 바이트일 때만 "100%"이고,
+/// 반올림하면 100이 되는 경우(99.96% 등)는 "99.9%"로 둔다. 늘어났거나 같으면 "0.0%".
+pub fn reduction_pct(before: u64, after: u64) -> String {
+    if before == 0 || after >= before {
+        return "0.0%".into();
+    }
+    if after == 0 {
+        return "100%".into();
+    }
+    let pct = 100.0 - after as f64 * 100.0 / before as f64;
+    let tenths = ((pct * 10.0).round() as i64).clamp(0, 999);
+    format!("{}.{}%", tenths / 10, tenths % 10)
+}
+
 /// PDF 하나 압축. 결과 이름은 `이름_압축.pdf`(있으면 `(1)`), 원본보다 작지 않으면 새 파일을 만들지 않는다.
 pub fn compress(input: &Path, out_dir: Option<&Path>, preset: CompressPreset) -> Result<CompressOut> {
     let before = std::fs::metadata(input).map_err(crate::error::io_err(input))?.len();
@@ -453,8 +467,25 @@ pub fn compress(input: &Path, out_dir: Option<&Path>, preset: CompressPreset) ->
     }
     let path = output_path(input, out_dir, "_압축", "pdf");
     write_new(&path, &bytes)?;
-    let pct = 100.0 - after as f64 * 100.0 / before as f64;
-    out.note = format!("{} → {} ({pct:.0}% 줄어듦, {}, {pages}쪽). {img_note}", human(before), human(after), preset.label());
+    out.note = format!("{} → {} ({} 줄어듦, {}, {pages}쪽). {img_note}", human(before), human(after), reduction_pct(before, after), preset.label());
     out.output = Some(path);
     Ok(out)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::reduction_pct;
+
+    #[test]
+    fn reduction_one_decimal_never_100_unless_empty() {
+        assert_eq!(reduction_pct(1000, 3), "99.7%");
+        assert_eq!(reduction_pct(100_000, 1), "99.9%"); // 99.999% → 100으로 반올림하지 않음
+        assert_eq!(reduction_pct(10_000_000, 1), "99.9%");
+        assert_eq!(reduction_pct(1000, 0), "100%");
+        assert_eq!(reduction_pct(1000, 500), "50.0%");
+        assert_eq!(reduction_pct(1000, 999), "0.1%");
+        assert_eq!(reduction_pct(100_000, 99_999), "0.0%");
+        assert_eq!(reduction_pct(1000, 1000), "0.0%");
+        assert_eq!(reduction_pct(0, 0), "0.0%");
+    }
 }
