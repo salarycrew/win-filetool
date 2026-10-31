@@ -125,6 +125,10 @@ pub fn run(cmd: &str, args: &[String]) -> Result<Option<ExitCode>> {
                     None => println!("없음  {:?}  {}\n      {}\n      내려받기: {}", st.tool, st.label, st.guidance.unwrap_or(""), st.download_url),
                 }
             }
+            match filetool_core::pdfrender::pdfium_status() {
+                Ok(p) => println!("있음  PDFium  {}", p.display()),
+                Err(e) => println!("없음  PDFium  {e}"),
+            }
             Ok(Some(ExitCode::SUCCESS))
         }
         "image" | "media" | "doc" => {
