@@ -1,0 +1,13 @@
+[package]
+name = "filetool-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "win-filetool 코어 작업을 명령줄에서 실행하는 동반 도구(점검·자동화용)"
+
+[[bin]]
+name = "filetool-cli"
+path = "src/main.rs"
+
+[dependencies]
+filetool-core = { path = "../core" }

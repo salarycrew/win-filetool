@@ -1,0 +1,18 @@
+//! win-filetool 코어. Tauri에 의존하지 않으므로 Linux에서도 `cargo test`로 검증한다.
+//!
+//! - [`nfc`]: 폴더 안 NFD 파일명을 NFC로 바꾸기 (미리보기 → 적용, 충돌은 건너뛰고 보고)
+//! - [`zipnfc`]: 맥에서 만든 zip을 NFC 이름으로 풀기 / NFC 이름으로 다시 압축
+//! - [`pdf`]: PDF 합치기·나누기·회전·페이지 삭제·순서 변경 (순수 Rust, lopdf)
+//!
+//! 원본은 절대 덮어쓰지 않는다. 출력 경로가 이미 있으면 [`paths::unique_path`]로
+//! ` (1)`, ` (2)` …를 붙인 새 이름을 쓴다.
+
+pub mod error;
+pub mod nfc;
+pub mod pages;
+pub mod paths;
+pub mod pdf;
+pub mod samples;
+pub mod zipnfc;
+
+pub use error::{Error, Result};
