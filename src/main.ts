@@ -59,10 +59,30 @@ const KIND_LABEL: Record<Kind, string> = {
   dir: "폴더", zip: "zip", pdf: "PDF", image: "이미지", heic: "HEIC", video: "영상", audio: "소리", document: "문서", other: "기타", missing: "없음",
 };
 
-function log(text: string, cls?: "ok" | "err", el: HTMLElement = logEl) {
+// ux3: 결과 줄의 [폴더 열기] — 파일 하나면 그 파일을 선택한 채로, 여러 파일을 만든 작업이면 그 폴더를 연다
+type OpenTarget = { select: string } | { dir: string };
+const dirOf = (p: string) => p.replace(/[\\/][^\\/]*$/, "");
+
+function log(text: string, cls?: "ok" | "err", el: HTMLElement = logEl, target?: OpenTarget) {
   const line = document.createElement("div");
   if (cls) line.className = cls;
   line.textContent = text;
+  if (target) {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "open-btn";
+    b.textContent = "폴더 열기";
+    b.title = "select" in target ? `${target.select} — 폴더를 열고 이 파일을 선택` : target.dir;
+    b.onclick = async () => {
+      try {
+        if ("select" in target) await invoke("open_folder", { path: target.select });
+        else await invoke("open_dir", { path: target.dir });
+      } catch (e) {
+        log(errText(e), "err", el);
+      }
+    };
+    line.appendChild(b);
+  }
   el.appendChild(line);
   el.scrollTop = el.scrollHeight;
 }
@@ -100,8 +120,9 @@ const DROP_HINT: Record<string, string> = {
   doc: "Word · Excel · PowerPoint · 한글(HWP 97) · ODF · Pages · Numbers · Keynote",
 };
 
-function setTab(t: Tab) {
+function setTab(t: Tab, remember = true) {
   tab = t;
+  if (remember) invoke("ui_set", { patch: { tab: t } }).catch(() => {});
   document.querySelectorAll<HTMLButtonElement>("#tabs button").forEach((b) => b.classList.toggle("active", b.dataset.tab === t));
   const work = t !== "watch" && t !== "tools" && t !== "search";
   document.querySelector("main")!.hidden = t === "search";
@@ -381,7 +402,7 @@ async function runBatch() {
     try {
       const r = await invoke<ConvertOut>("convert_one", { job: currentJob, path: it.path, op: thisOp, outDir });
       ok++;
-      log(`✓ ${fileName(it.path)} → ${r.output}  (${r.note}, ${((performance.now() - t0) / 1000).toFixed(1)}초)`, "ok");
+      log(`✓ ${fileName(it.path)} → ${r.output}  (${r.note}, ${((performance.now() - t0) / 1000).toFixed(1)}초)`, "ok", logEl, { select: r.output });
     } catch (e) {
       fail++;
       log(`✗ ${fileName(it.path)}: ${errText(e)}`, "err");
@@ -415,7 +436,7 @@ async function run(previewOnly = false) {
             continue;
           }
           const rep = await invoke<ApplyReport>("nfc_apply", { folder: it.path });
-          log(`[적용] ${it.path}: ${rep.renamed.length}개 이름 바꿈, 충돌로 건너뜀 ${rep.collisions.length}개, 실패 ${rep.failed.length}개`, rep.failed.length ? "err" : "ok");
+          log(`[적용] ${it.path}: ${rep.renamed.length}개 이름 바꿈, 충돌로 건너뜀 ${rep.collisions.length}개, 실패 ${rep.failed.length}개`, rep.failed.length ? "err" : "ok", logEl, { dir: it.path });
           rep.failed.forEach(([p, e]) => log(`  실패: ${p} — ${e}`, "err"));
           pendingPlan = null;
         }
@@ -426,19 +447,19 @@ async function run(previewOnly = false) {
         for (const it of need("zip")) {
           const r = await invoke<{ extract: ExtractReport; rezip: RezipReport | null }>("zip_extract", { zip: it.path, outDir, rezip });
           const e = r.extract;
-          log(`[zip 풀기] ${it.path} → ${e.out_dir}`, "ok");
+          log(`[zip 풀기] ${it.path} → ${e.out_dir}`, "ok", logEl, { dir: e.out_dir });
           log(`  파일 ${e.files.length}개, 폴더 ${e.dirs}개, 한글 이름 고침 ${e.normalized}개, 맥 전용 파일 제외 ${e.skipped_mac.length}개`);
           if (e.cp949_names) log(`  윈도(CP949) 이름으로 읽은 항목 ${e.cp949_names}개`);
           e.collisions.forEach((c) => log(`  [건너뜀] 이미 있음: ${c}`, "err"));
           e.unsafe_names.forEach((c) => log(`  [건너뜀] 안전하지 않은 경로: ${c}`, "err"));
-          if (r.rezip) log(`  새 zip: ${r.rezip.output} (항목 ${r.rezip.entries}개)`, "ok");
+          if (r.rezip) log(`  새 zip: ${r.rezip.output} (항목 ${r.rezip.entries}개)`, "ok", logEl, { select: r.rezip.output });
         }
         break;
       }
       case "merge": {
         const pdfs = need("pdf", 2);
         const r = await invoke<{ output: string; pages: number }>("pdf_merge", { paths: pdfs.map((p) => p.path), outDir });
-        log(`[합치기] ${pdfs.length}개 → ${r.output} (${r.pages}쪽)`, "ok");
+        log(`[합치기] ${pdfs.length}개 → ${r.output} (${r.pages}쪽)`, "ok", logEl, { select: r.output });
         break;
       }
       case "split": {
@@ -447,7 +468,7 @@ async function run(previewOnly = false) {
         if (!every && !val("ranges")) throw new Error("나눌 범위를 적어 주세요 (예: 1-3,5)");
         for (const it of need("pdf")) {
           const outs = await invoke<string[]>("pdf_split", { path: it.path, mode, outDir });
-          log(`[나누기] ${it.path} → ${outs.length}개 파일`, "ok");
+          log(`[나누기] ${it.path} → ${outs.length}개 파일`, "ok", logEl, outs.length === 1 ? { select: outs[0] } : outs.length ? { dir: dirOf(outs[0]) } : undefined);
           outs.forEach((o) => log(`  ${o}`));
         }
         break;
@@ -456,7 +477,7 @@ async function run(previewOnly = false) {
         const degrees = Number((document.getElementById("deg") as HTMLSelectElement).value);
         for (const it of need("pdf")) {
           const out = await invoke<string>("pdf_rotate", { path: it.path, pages: val("pages") || "all", degrees, outDir });
-          log(`[회전 ${degrees}°] → ${out}`, "ok");
+          log(`[회전 ${degrees}°] → ${out}`, "ok", logEl, { select: out });
         }
         break;
       }
@@ -464,7 +485,7 @@ async function run(previewOnly = false) {
         if (!val("pages")) throw new Error("지울 페이지를 적어 주세요 (예: 2,4-6)");
         for (const it of need("pdf")) {
           const r = await invoke<{ output: string; pages: number }>("pdf_delete", { path: it.path, pages: val("pages"), outDir });
-          log(`[페이지 삭제] → ${r.output} (남은 ${r.pages}쪽)`, "ok");
+          log(`[페이지 삭제] → ${r.output} (남은 ${r.pages}쪽)`, "ok", logEl, { select: r.output });
         }
         break;
       }
@@ -472,7 +493,7 @@ async function run(previewOnly = false) {
         if (!val("order")) throw new Error("새 순서를 적어 주세요 (예: 3,1,2)");
         for (const it of need("pdf")) {
           const out = await invoke<string>("pdf_reorder", { path: it.path, order: val("order"), outDir });
-          log(`[순서 변경] → ${out}`, "ok");
+          log(`[순서 변경] → ${out}`, "ok", logEl, { select: out });
         }
         break;
       }
@@ -486,7 +507,7 @@ async function run(previewOnly = false) {
           try {
             const r = await invoke<CompressOut>("pdf_compress", { path: list[i].path, preset, outDir });
             if (r.output) saved += r.before - r.after;
-            log(r.output ? `✓ ${fileName(r.input)} → ${r.output}  (${r.note})` : `= ${fileName(r.input)}: ${r.note}`, r.output ? "ok" : undefined);
+            log(r.output ? `✓ ${fileName(r.input)} → ${r.output}  (${r.note})` : `= ${fileName(r.input)}: ${r.note}`, r.output ? "ok" : undefined, logEl, r.output ? { select: r.output } : undefined);
           } catch (e) {
             log(`✗ ${fileName(list[i].path)}: ${errText(e)}`, "err");
           }
@@ -505,7 +526,7 @@ async function run(previewOnly = false) {
           job: currentJob, paths: imgs.map((i) => i.path), outDir,
           opts: { page: val("i-page"), margin_mm: Number(val("i-margin") || 0) },
         });
-        log(`✓ 이미지 ${imgs.length}장 → ${r.output}  (${r.note})`, "ok");
+        log(`✓ 이미지 ${imgs.length}장 → ${r.output}  (${r.note})`, "ok", logEl, { select: r.output });
         break;
       }
       case "pdf2img": {
@@ -517,7 +538,7 @@ async function run(previewOnly = false) {
           showProgress(i + 1, list.length, fileName(list[i].path), 0);
           try {
             const r = await invoke<RenderOut>("pdf_to_images", { job: currentJob, path: list[i].path, opts, outDir });
-            log(`✓ ${fileName(list[i].path)} → ${r.folder}  (${r.note})`, "ok");
+            log(`✓ ${fileName(list[i].path)} → ${r.folder}  (${r.note})`, "ok", logEl, r.pages.length === 1 ? { select: r.pages[0].output } : { dir: r.folder });
           } catch (e) {
             log(`✗ ${fileName(list[i].path)}: ${errText(e)}`, "err");
           }
@@ -528,7 +549,7 @@ async function run(previewOnly = false) {
         for (const it of need("pdf")) {
           try {
             const r = await invoke<ExtractOut>("pdf_extract_images", { path: it.path, outDir });
-            log(r.folder ? `✓ ${fileName(it.path)} → ${r.folder}  (${r.note})` : `= ${fileName(it.path)}: ${r.note}`, r.folder ? "ok" : undefined);
+            log(r.folder ? `✓ ${fileName(it.path)} → ${r.folder}  (${r.note})` : `= ${fileName(it.path)}: ${r.note}`, r.folder ? "ok" : undefined, logEl, r.folder ? { dir: r.folder } : undefined);
           } catch (e) {
             log(`✗ ${fileName(it.path)}: ${errText(e)}`, "err");
           }
@@ -658,7 +679,8 @@ function opLabel(op: Op): string {
 }
 
 function watchLine(ev: WatchEvent) {
-  log(ev.ok ? `✓ ${fileName(ev.input)} → ${ev.output}  (${ev.message})` : `✗ ${fileName(ev.input)}: ${ev.message}`, ev.ok ? "ok" : "err", watchLog);
+  log(ev.ok ? `✓ ${fileName(ev.input)} → ${ev.output}  (${ev.message})` : `✗ ${fileName(ev.input)}: ${ev.message}`, ev.ok ? "ok" : "err", watchLog,
+    ev.ok && ev.output ? { select: ev.output } : undefined);
 }
 
 const pausedEl = $<HTMLInputElement>("w-paused");
@@ -843,6 +865,20 @@ function renderRows() {
         const sp = document.createElement("span");
         sp.className = c;
         sp.textContent = t;
+        if (c === "c-name") {
+          const k = iconKey(r);
+          const url = iconCache.get(k);
+          if (url) {
+            const img = document.createElement("img");
+            img.className = "ico";
+            img.src = url;
+            img.alt = "";
+            sp.prepend(img);
+            sp.classList.add("has-ico");
+          } else if (url === undefined) {
+            iconWant.add(k);
+          }
+        }
         if (c === "c-folder" || c === "c-name") sp.title = c === "c-name" ? r.path : r.folder;
         div.appendChild(sp);
       }
@@ -853,6 +889,31 @@ function renderRows() {
   }
   rowsEl.replaceChildren(frag);
   if (missing.length) fetchRows(missing[0], missing[missing.length - 1] + 1);
+  if (iconWant.size && !iconBusy) fetchIcons();
+}
+
+// ux3: 파일 아이콘 — 보이는 줄의 확장자만, 확장자마다 한 번(앱이 켜져 있는 동안 기억). 없으면(null) 글자 아이콘 그대로
+const iconCache = new Map<string, string | null>();
+const iconWant = new Set<string>();
+let iconBusy = false;
+function iconKey(r: Row): string {
+  if (r.is_dir) return "/dir";
+  const dot = r.name.lastIndexOf(".");
+  return dot > 0 && dot < r.name.length - 1 ? r.name.slice(dot + 1).toLowerCase() : "";
+}
+async function fetchIcons() {
+  const keys = [...iconWant];
+  iconWant.clear();
+  iconBusy = true;
+  try {
+    const got = await invoke<Record<string, string | null>>("file_icons", { keys });
+    for (const k of keys) iconCache.set(k, got[k] ?? null);
+  } catch {
+    for (const k of keys) iconCache.set(k, null);
+  } finally {
+    iconBusy = false;
+  }
+  renderRows();
 }
 
 async function fetchRows(from: number, to: number) {
@@ -958,15 +1019,58 @@ document.addEventListener("mousedown", (e) => { if (!ctxEl.contains(e.target as 
 document.querySelectorAll<HTMLButtonElement>("#res-head button").forEach((b) => {
   b.onclick = () => {
     const k = b.dataset.sort as SortKey;
+    if (Date.now() - resizedAt < 300) return; // 열 너비를 끈 직후의 클릭은 정렬로 보지 않음
     if (k === sortKey) sortDesc = !sortDesc; else { sortKey = k; sortDesc = k === "size" || k === "modified"; }
-    document.querySelectorAll<HTMLButtonElement>("#res-head button").forEach((x) => {
-      x.classList.toggle("sorted", x.dataset.sort === sortKey);
-      x.classList.toggle("desc", x.dataset.sort === sortKey && sortDesc);
-    });
+    showSort();
+    invoke("ui_set", { patch: { sort_key: sortKey, sort_desc: sortDesc } }).catch(() => {});
     runSearch();
   };
 });
-document.querySelector<HTMLButtonElement>('#res-head button[data-sort="name"]')!.classList.add("sorted");
+function showSort() {
+  document.querySelectorAll<HTMLButtonElement>("#res-head button").forEach((x) => {
+    x.classList.toggle("sorted", x.dataset.sort === sortKey);
+    x.classList.toggle("desc", x.dataset.sort === sortKey && sortDesc);
+  });
+}
+showSort();
+
+// ux3: 열 너비 — 머리글 오른쪽 끝을 끌어 바꿈(이름·크기·날짜는 px, 폴더 열은 남는 만큼), 다시 켜도 기억
+const COLS = ["name", "size", "modified"] as const;
+let colWidths: number[] | null = null;
+let resizedAt = 0;
+function applyCols() {
+  const css = colWidths ? `${colWidths[0]}px minmax(120px, 1fr) ${colWidths[1]}px ${colWidths[2]}px` : "";
+  $("search-panel").style.setProperty("--res-cols", css || "");
+}
+document.querySelectorAll<HTMLButtonElement>("#res-head button").forEach((b) => {
+  const idx = COLS.indexOf(b.dataset.sort as (typeof COLS)[number]);
+  if (idx < 0) return; // 폴더 열은 남는 만큼
+  const grip = document.createElement("span");
+  grip.className = "grip";
+  grip.title = "끌어서 열 너비 바꾸기";
+  b.appendChild(grip);
+  grip.addEventListener("mousedown", (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const heads = [...document.querySelectorAll<HTMLButtonElement>("#res-head button")];
+    const cur = COLS.map((c) => heads.find((h) => h.dataset.sort === c)!.getBoundingClientRect().width);
+    const x0 = e.clientX, w0 = cur[idx];
+    const move = (ev: MouseEvent) => {
+      const w = Math.max(60, Math.min(1200, Math.round(w0 + ev.clientX - x0)));
+      colWidths = cur.map((v, j) => (j === idx ? w : Math.round(v)));
+      applyCols();
+      renderRows();
+    };
+    const up = () => {
+      document.removeEventListener("mousemove", move);
+      document.removeEventListener("mouseup", up);
+      resizedAt = Date.now();
+      if (colWidths) invoke("ui_set", { patch: { col_widths: colWidths } }).catch(() => {});
+    };
+    document.addEventListener("mousemove", move);
+    document.addEventListener("mouseup", up);
+  });
+});
 
 async function refreshStatus() {
   try {
@@ -1055,9 +1159,12 @@ async function refreshSvc() {
   inst.textContent = i.installed ? "빠른 검색 서비스 다시 설치(갱신)" : "빠른 검색 서비스 설치";
   inst.disabled = svcBusy || !p.exe;
   un.disabled = svcBusy || !p.exe || !i.installed;
+  // ux3: 실행할 명령 줄은 [자세히] 안에(문제 해결용), 실행 파일이 없다는 안내는 바로 보이게
+  $("svc-details").hidden = !p.exe;
   $("svc-cmd").textContent = p.exe
-    ? `단추를 누르면 관리자 권한으로 실행합니다: ${i.installed ? p.uninstall_cmd + "  (제거)  /  " : ""}${p.install_cmd}  (설치)`
-    : "이 앱 폴더에는 filetool-svc.exe가 없습니다(설치 파일로 설치하면 들어 있습니다).";
+    ? `단추를 누르면 관리자 권한으로 다음 명령을 실행합니다. ${i.installed ? `제거: ${p.uninstall_cmd}  /  ` : ""}설치: ${p.install_cmd}`
+    : "";
+  if (!p.exe) $("svc-state").textContent = t + " · 이 앱 폴더에는 filetool-svc.exe가 없습니다(설치 파일로 설치하면 들어 있습니다).";
 }
 async function svcSetup(install: boolean) {
   if (svcBusy) return;
@@ -1156,14 +1263,26 @@ getCurrentWebview().onDragDropEvent((ev) => {
   if (p.type === "drop" && tab !== "watch" && tab !== "tools" && tab !== "search") addPaths(p.paths);
 });
 
-// 시작 탭: 실행 인자 --tab=image 등(화면 점검용), 없으면 검색 탭
-setTab("search");
-invoke<string | null>("startup_tab").then((t) => {
-  if (t && (TABS as string[]).includes(t)) setTab(t as Tab);
-}).catch(() => {});
-invoke<string | null>("startup_query").then((q) => {
+// 시작 탭: 실행 인자 --tab=image 등(화면 점검용) > 지난번 탭(ux3, 설정 파일) > 검색 탭.
+// 정렬·열 너비도 지난번 것으로(ux3)
+interface UiState { tab?: string; sort_key?: string; sort_desc?: boolean; col_widths?: number[] }
+setTab("search", false);
+(async () => {
+  const [ui, t, q] = await Promise.all([
+    invoke<UiState>("ui_get").catch(() => ({}) as UiState),
+    invoke<string | null>("startup_tab").catch(() => null),
+    invoke<string | null>("startup_query").catch(() => null),
+  ]);
+  if (ui.sort_key && ["name", "path", "size", "modified"].includes(ui.sort_key)) {
+    sortKey = ui.sort_key as SortKey;
+    sortDesc = !!ui.sort_desc;
+    showSort();
+  }
+  if (ui.col_widths && ui.col_widths.length === 3) { colWidths = ui.col_widths; applyCols(); }
+  const start = t && (TABS as string[]).includes(t) ? t : ui.tab && (TABS as string[]).includes(ui.tab) ? ui.tab : "search";
+  if (start !== "search") setTab(start as Tab, false);
   if (q) { qEl.value = q; runSearch(); }
-}).catch(() => {});
+})();
 listen<string>("goto-tab", (ev) => {
   if ((TABS as string[]).includes(ev.payload)) setTab(ev.payload as Tab);
 });

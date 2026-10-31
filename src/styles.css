@@ -66,7 +66,7 @@ input[type="range"] { min-width: 160px; }
 .search-bar input:focus { outline: 2px solid #93c5fd; border-color: #2563eb; }
 .q-info { color: #6b7280; font-size: 12px; white-space: nowrap; }
 .q-info.err { color: #b91c1c; white-space: normal; }
-.res-head, .res-row { display: grid; grid-template-columns: minmax(160px, 2fr) minmax(160px, 3fr) 90px 130px; }
+.res-head, .res-row { display: grid; grid-template-columns: var(--res-cols, minmax(160px, 2fr) minmax(160px, 3fr) 90px 130px); }
 .res-head { margin-top: 8px; border: 1px solid #dde1e6; border-bottom: 0; border-radius: 6px 6px 0 0; background: #eef1f5; }
 .res-head button { border: 0; border-right: 1px solid #dde1e6; border-radius: 0; background: transparent; text-align: left; padding: 5px 8px; font-size: 12px; color: #374151; }
 .res-head button:last-child { border-right: 0; }
@@ -97,3 +97,16 @@ textarea { font: 12px Consolas, "D2Coding", monospace; padding: 6px 8px; border:
 #s-hotkey { min-width: 280px; }
 
 .svc-out { white-space: pre-wrap; font-size: 12px; background: #f4f6f8; border-radius: 6px; padding: 8px; max-height: 220px; overflow: auto; }
+
+/* ux3: 설정 글·자세히·결과 줄의 [폴더 열기]·아이콘·열 너비 */
+.hint-inline { color: #6b7280; font-size: 12px; font-weight: normal; }
+code { font-family: Consolas, "D2Coding", monospace; font-size: 12px; background: #eef1f5; border-radius: 3px; padding: 0 3px; white-space: nowrap; }
+.svc-details { margin: 2px 0 8px; }
+.svc-details summary { cursor: pointer; color: #4b5563; font-size: 12px; width: max-content; }
+.svc-details .hint { word-break: break-all; margin-top: 4px; }
+.log .open-btn { margin-left: 8px; padding: 0 8px; font-size: 11px; line-height: 18px; border-radius: 4px; border: 1px solid #4b5563; background: #1f2937; color: #e5e7eb; font-family: "Malgun Gothic", "맑은 고딕", system-ui, sans-serif; vertical-align: baseline; }
+.log .open-btn:hover:not(:disabled) { background: #374151; }
+.res-row .c-name .ico { width: 16px; height: 16px; vertical-align: -3px; margin-right: 5px; }
+.res-row .c-name.has-ico::before { content: none; }
+.res-head button { position: relative; }
+.res-head .grip { position: absolute; top: 0; right: -4px; width: 8px; height: 100%; cursor: col-resize; z-index: 1; }

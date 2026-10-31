@@ -5035,6 +5035,7 @@ name = "win-filetool"
 version = "0.1.0"
 dependencies = [
  "filetool-core",
+ "image",
  "serde",
  "tauri",
  "tauri-build",

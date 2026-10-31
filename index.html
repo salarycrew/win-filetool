@@ -137,7 +137,7 @@
           <button id="s-reset-roots" type="button" class="ghost">모든 고정 드라이브로</button>
           <button id="s-rescan" type="button">지금 다시 색인</button>
         </div>
-        <label class="col">제외할 폴더 (한 줄에 하나 — <code>\</code>가 있으면 전체 경로, 없으면 폴더 이름. <code>*</code> <code>?</code> 가능)
+        <label class="col" for="s-excludes"><span>제외할 폴더 <span class="hint-inline">— 한 줄에 하나. <code>\</code>가 들어 있으면 전체 경로에, 없으면 폴더 이름에 맞춥니다(<code>*</code> <code>?</code> 사용 가능, 예: <code>node_modules</code>, <code>D:\Backup</code>).</span></span>
           <textarea id="s-excludes" rows="4" spellcheck="false"></textarea></label>
         <div class="row"><button id="s-save-excludes" type="button">제외 목록 저장 (다시 색인)</button></div>
         <label><input type="checkbox" id="s-hotkey-on" /> 전역 단축키로 검색 열기</label>
@@ -155,7 +155,10 @@
           <button id="svc-install" type="button">빠른 검색 서비스 설치</button>
           <button id="svc-uninstall" type="button" class="ghost">빠른 검색 서비스 제거</button>
         </div>
-        <p id="svc-cmd" class="hint"></p>
+        <details id="svc-details" class="svc-details">
+          <summary>자세히</summary>
+          <p id="svc-cmd" class="hint"></p>
+        </details>
         <pre id="svc-out" class="svc-out" hidden></pre>
         <h2>외부 도구</h2>
         <p class="hint">영상·소리·HEIC 변환에는 ffmpeg, 문서 변환에는 LibreOffice가 필요합니다(앱에 들어 있지 않음).

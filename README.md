@@ -111,6 +111,18 @@ ffmpeg와 LibreOffice는 앱에 들어 있지 않다. 따로 설치하거나(관
   `filetool-cli svc-watch "<질의>"`(결과가 바뀔 때마다 시각 출력).
 - 자세한 구조·파이프 프로토콜·보안(ACL)·위협 메모: [docs/design.md](docs/design.md) "2c".
 
+## ux3에서 바뀐 것: 쓰기 편하게
+
+- **작업 결과마다 [폴더 열기]**: PDF·이미지·영상·소리·문서·파일명·zip 결과 줄과 감시 폴더 기록 줄 끝의 단추. 파일 하나를 만든 작업은
+  탐색기에서 그 파일을 선택한 채로 열고, 여러 파일을 만든 작업(나누기, 쪽마다 그림, 사진 꺼내기, zip 풀기, 이름 고치기)은 그 폴더를 연다
+- **다시 켜도 그대로**: 마지막 탭, 창 위치·크기(최대화 포함, 모니터를 뺐으면 보이는 모니터 안으로 옮김), 검색 정렬 열·방향, 결과 열 너비
+  (머리글 오른쪽 끝을 끌어서 바꿈)를 설정 파일(`settings.json`의 `ui`)에 기억한다
+- **검색 결과에 실제 파일 아이콘**: 확장자마다 Windows 셸 아이콘을 한 번만 받아 기억한다(파일을 열지 않음). 폴더는 폴더 아이콘.
+  결과가 100만 개가 넘어도 보이는 줄의 아이콘만 요청한다
+- **검색 묶기 `<…>`**: `<보고서|회의록> ext:pdf` (위 표)
+- PDF 용량 줄이기 결과는 소수 한 자리(`99.7% 줄어듦`), 결과가 0 바이트가 아니면 100%로 반올림하지 않는다
+- [설정] > 검색: "제외할 폴더" 설명 글이 한 줄로 보이고, 빠른 검색 서비스 단추가 실행할 명령 줄은 **자세히**를 눌러야 보인다(문제 해결용)
+
 ## 설치 / 제거
 
 - **설치 파일**: `파일도구_0.1.0_x64-setup.exe` 실행 → 관리자 권한 없이 `%LOCALAPPDATA%\파일 도구\`에 설치, 시작 메뉴에 "파일 도구".
@@ -123,7 +135,7 @@ ffmpeg와 LibreOffice는 앱에 들어 있지 않다. 따로 설치하거나(관
 
 ### 설정이 있는 곳
 
-- 설정(도구 경로·감시 규칙·검색 루트·제외·단축키): `%APPDATA%\kr.salarycrew.winfiletool\settings.json` (감시 기록 `watch-state.json`도 같은 폴더)
+- 설정(도구 경로·감시 규칙·검색 루트·제외·단축키, ux3 화면 상태 `ui`): `%APPDATA%\kr.salarycrew.winfiletool\settings.json` (감시 기록 `watch-state.json`도 같은 폴더)
 - 검색 색인: `%LOCALAPPDATA%\kr.salarycrew.winfiletool\index\index-v2.bin`
 - 윈도우 시작 시 실행: 레지스트리 `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` 값 `win-filetool`
 - 작업 중 임시 파일: `%TEMP%\win-filetool\` (끝나면 지움)

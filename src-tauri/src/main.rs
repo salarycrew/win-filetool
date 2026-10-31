@@ -12,6 +12,7 @@
 //! 2c: 빠른 검색 서비스(`filetool-svc`, 선택 설치)가 답하면 그 서비스가 색인한 드라이브는 서비스에 묻고(상태 줄 "빠른 색인(서비스)"),
 //!     나머지 루트만 앱이 색인한다. 서비스가 없거나 멈추면 조용히 앱 색인으로. [설정] > 검색에서 설치/제거(UAC 1번).
 
+mod icons;
 mod remote;
 
 use std::collections::{HashMap, VecDeque};
@@ -34,7 +35,7 @@ use filetool_core::search::query::{Row, SortKey};
 use filetool_core::search::service::{default_index_dir, RootStatus, SearchConfig, SearchResult, SearchService, SearchStatus};
 use filetool_core::search::svcproto::SERVICE_SOURCE_LABEL;
 use remote::{Remote, ServiceView};
-use filetool_core::settings::SearchSettings;
+use filetool_core::settings::{MonitorRect, SearchSettings, UiState, WindowGeom};
 use filetool_core::{autostart, nfc, paths, zipnfc};
 use serde::Serialize;
 use tauri::menu::{CheckMenuItem, Menu, MenuItem};
@@ -221,6 +222,8 @@ struct AppState {
     remote: Arc<Remote>,
     /// 지금 서비스에 묻는 루트(앱 색인에서는 뺌)
     covered: Mutex<Vec<PathBuf>>,
+    /// ux3: 창 위치·크기가 바뀐 시각(조용해지면 설정 파일에 저장)
+    ui_dirty: Mutex<Option<Instant>>,
 }
 
 /// 마지막 검색 결과: 앱 색인만, 또는 서비스(앞) + 앱 색인(뒤)
@@ -777,6 +780,133 @@ fn open_folder(path: String) -> CmdResult<()> {
     Ok(())
 }
 
+/// ux3: 폴더 자체를 연다(여러 파일을 만든 작업의 [폴더 열기])
+#[tauri::command]
+fn open_dir(path: String) -> CmdResult<()> {
+    if !Path::new(&path).is_dir() {
+        return Err(format!("폴더가 없습니다(옮겨졌거나 지워짐): {path}"));
+    }
+    #[cfg(windows)]
+    {
+        std::process::Command::new("explorer").arg(&path).spawn().map_err(|e| e.to_string())?;
+    }
+    #[cfg(not(windows))]
+    {
+        std::process::Command::new("xdg-open").arg(&path).spawn().map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+/// ux3: 검색 결과 아이콘(확장자마다 한 번, 캐시). 키: 소문자 확장자, "" = 확장자 없음, "/dir" = 폴더
+#[tauri::command]
+async fn file_icons(keys: Vec<String>) -> CmdResult<HashMap<String, Option<String>>> {
+    tauri::async_runtime::spawn_blocking(move || icons::icons(keys)).await.map_err(|e| e.to_string())
+}
+
+/// ux3: 기억한 화면 상태(탭·정렬·열 너비)
+#[tauri::command]
+fn ui_get(state: State<'_, AppState>) -> UiState {
+    state.settings.lock().unwrap().ui.clone()
+}
+
+#[derive(serde::Deserialize)]
+struct UiPatch {
+    tab: Option<String>,
+    sort_key: Option<String>,
+    sort_desc: Option<bool>,
+    col_widths: Option<Vec<u32>>,
+}
+
+/// ux3: 화면 상태 일부를 바꿔 저장(창 위치·크기는 창 이벤트에서)
+#[tauri::command]
+fn ui_set(patch: UiPatch, state: State<'_, AppState>) -> CmdResult<()> {
+    {
+        let mut s = state.settings.lock().unwrap();
+        if let Some(t) = patch.tab {
+            s.ui.tab = Some(t);
+        }
+        if let Some(k) = patch.sort_key {
+            s.ui.sort_key = Some(k);
+        }
+        if let Some(d) = patch.sort_desc {
+            s.ui.sort_desc = Some(d);
+        }
+        if let Some(c) = patch.col_widths {
+            s.ui.col_widths = c.into_iter().take(8).map(|w| w.clamp(40, 2000)).collect();
+        }
+    }
+    state.save()
+}
+
+/// ux3: 창 위치·크기를 기억(보이고 최소화가 아닐 때만, 최대화면 표시만 바꾸고 보통 크기는 그대로)
+fn record_geometry(w: &tauri::Window) {
+    let Some(state) = w.app_handle().try_state::<AppState>() else { return };
+    if !w.is_visible().unwrap_or(false) || w.is_minimized().unwrap_or(false) {
+        return;
+    }
+    let maximized = w.is_maximized().unwrap_or(false);
+    let mut s = state.settings.lock().unwrap();
+    let geom = if maximized {
+        s.ui.window.map(|g| WindowGeom { maximized: true, ..g })
+    } else {
+        match (w.outer_position(), w.inner_size()) {
+            (Ok(p), Ok(sz)) if sz.width > 0 && sz.height > 0 => {
+                Some(WindowGeom { x: p.x, y: p.y, width: sz.width, height: sz.height, maximized: false })
+            }
+            _ => None,
+        }
+    };
+    if geom.is_some() && geom != s.ui.window {
+        s.ui.window = geom;
+        drop(s);
+        *state.ui_dirty.lock().unwrap() = Some(Instant::now());
+    }
+}
+
+/// 창을 옮기거나 크기를 바꾸는 동안은 쓰지 않고, 0.8초 조용해지면 설정 파일에 저장
+fn start_ui_saver(app: AppHandle) {
+    std::thread::spawn(move || loop {
+        std::thread::sleep(Duration::from_millis(400));
+        let state = app.state::<AppState>();
+        let due = {
+            let mut d = state.ui_dirty.lock().unwrap();
+            match *d {
+                Some(t) if t.elapsed() >= Duration::from_millis(800) => {
+                    *d = None;
+                    true
+                }
+                _ => false,
+            }
+        };
+        if due {
+            let _ = state.save();
+        }
+    });
+}
+
+/// 기억한 창 위치·크기를 지금 연결된 모니터 안으로 맞춰 적용(창이 숨은 채일 때, 보이기 전에)
+fn restore_geometry(app: &tauri::App, g: WindowGeom) {
+    let Some(w) = app.get_webview_window("main") else { return };
+    let primary = w.primary_monitor().ok().flatten().map(|m| *m.position());
+    let mut mons: Vec<(bool, MonitorRect)> = w
+        .available_monitors()
+        .unwrap_or_default()
+        .iter()
+        .map(|m| {
+            let r = m.work_area();
+            (Some(*m.position()) == primary, MonitorRect { x: r.position.x, y: r.position.y, width: r.size.width, height: r.size.height })
+        })
+        .collect();
+    mons.sort_by_key(|(p, _)| !*p); // 주 모니터를 맨 앞(겹치는 곳이 없을 때 여기로)
+    let mons: Vec<MonitorRect> = mons.into_iter().map(|(_, m)| m).collect();
+    let g = g.clamp_to(&mons);
+    let _ = w.set_size(tauri::PhysicalSize::new(g.width, g.height));
+    let _ = w.set_position(tauri::PhysicalPosition::new(g.x, g.y));
+    if g.maximized {
+        let _ = w.maximize();
+    }
+}
+
 /// 시작할 때 검색 칸에 넣을 질의(`--search=…`, 화면 점검용)
 #[tauri::command]
 fn startup_query() -> Option<String> {
@@ -928,6 +1058,9 @@ fn main() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .on_window_event(|window, event| {
+            if window.label() == "main" && matches!(event, WindowEvent::Moved(_) | WindowEvent::Resized(_)) {
+                record_geometry(window);
+            }
             // 감시 규칙이 켜져 있으면 창을 닫아도 트레이에 남아 감시를 계속한다
             if let WindowEvent::CloseRequested { api, .. } = event {
                 if window.label() == "main" && window.app_handle().state::<AppState>().keep_in_tray() {
@@ -958,6 +1091,7 @@ fn main() {
             // 검색 서비스: 저장한 색인을 불러오고 배경에서 다시 스캔, 실시간 갱신(창이 없어도 트레이에서 계속)
             let search = SearchService::start(search_config(&settings.search, &covered));
             let search_settings = settings.search.clone();
+            let saved_geom = settings.ui.window;
             app.manage(AppState {
                 config_dir,
                 settings: Mutex::new(settings),
@@ -969,7 +1103,12 @@ fn main() {
                 results: Mutex::new(Results::Local { gen: 0, ids: Vec::new() }),
                 remote,
                 covered: Mutex::new(covered),
+                ui_dirty: Mutex::new(None),
             });
+            if let Some(g) = saved_geom {
+                restore_geometry(app, g);
+            }
+            start_ui_saver(app.handle().clone());
             start_service_monitor(app.handle().clone());
             if let Err(e) = apply_hotkey(app.handle(), &search_settings) {
                 eprintln!("{e}");
@@ -1018,6 +1157,10 @@ fn main() {
             svc_setup,
             open_path,
             open_folder,
+            open_dir,
+            file_icons,
+            ui_get,
+            ui_set,
             startup_query
         ])
         .build(tauri::generate_context!())
@@ -1026,6 +1169,9 @@ fn main() {
             // 끝낼 때 검색 색인 저장(다음 시작이 빠르게)
             if let RunEvent::Exit = ev {
                 let state = app.state::<AppState>();
+                if state.ui_dirty.lock().unwrap().take().is_some() {
+                    let _ = state.save();
+                }
                 let _ = state.search.save_now();
                 state.search.stop();
             }
