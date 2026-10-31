@@ -21,3 +21,7 @@ __pycache__/
 
 # tauri generated
 src-tauri/gen/
+
+# 받아 쓰는 바이너리 (scripts/fetch-pdfium.sh, scripts/fetch-nsis.sh)
+third_party/
+dist-win/

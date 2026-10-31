@@ -208,6 +208,12 @@ pub fn convert_raster(src: &Path, out_dir: Option<&Path>, opts: &ImageOpts) -> R
 /// 아이폰 사진은 대개 512px 타일을 이어 붙인 "grid" 이미지다. ffmpeg 버전에 따라 grid를 스스로
 /// 합쳐 주지 않으므로(8.0.1은 첫 타일만 냄), grid 배치·회전(irot/imir)은 직접 읽고 타일만 ffmpeg로 푼 뒤 합친다.
 pub fn convert_heif(ffmpeg: &Path, src: &Path, out_dir: Option<&Path>, opts: &ImageOpts, cancel: Option<&Cancel>) -> Result<ImageOut> {
+    let (img, exif) = load_heif(ffmpeg, src, cancel)?;
+    finish(src, out_dir, img, exif, opts)
+}
+
+/// HEIC/HEIF를 풀어 (회전까지 적용한 이미지, 회전 값을 지운 EXIF)로. 이미지→PDF도 이 경로를 쓴다.
+pub fn load_heif(ffmpeg: &Path, src: &Path, cancel: Option<&Cancel>) -> Result<(DynamicImage, Option<Vec<u8>>)> {
     let bytes = std::fs::read(src).map_err(io_err(src))?;
     let info = heif::HeifInfo::parse(&bytes);
     let mut exif = info.as_ref().and_then(|i| i.exif());
@@ -220,7 +226,7 @@ pub fn convert_heif(ffmpeg: &Path, src: &Path, out_dir: Option<&Path>, opts: &Im
         Some(g) => decode_grid(ffmpeg, src, &g, cancel)?,
         None => decode_single(ffmpeg, src, cancel)?,
     };
-    finish(src, out_dir, img, exif, opts)
+    Ok((img, exif))
 }
 
 fn ffmpeg_err(out: &process::RunOutput) -> Error {

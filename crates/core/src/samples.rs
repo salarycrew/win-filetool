@@ -262,3 +262,162 @@ pub fn make_test_video(ffmpeg: &Path, path: &Path, secs: u32, w: u32, h: u32) ->
         ],
     )
 }
+
+// ---------- 1c: PDF 압축·이미지↔PDF 점검용 ----------
+
+/// 사진처럼 압축이 잘 안 되는 그림(부드러운 그라데이션 + 잔무늬 잡음). 같은 인자면 항상 같은 픽셀.
+pub fn photo_like(w: u32, h: u32, seed: u32) -> image::RgbImage {
+    let mut s = seed.wrapping_mul(2654435761).wrapping_add(1);
+    image::RgbImage::from_fn(w, h, |x, y| {
+        s ^= s << 13;
+        s ^= s >> 17;
+        s ^= s << 5;
+        let n = (s % 48) as i32 - 24;
+        let fx = x as f32 / w as f32;
+        let fy = y as f32 / h as f32;
+        let r = (200.0 * fx + 30.0 * (fy * 9.0).sin()) as i32 + n;
+        let g = (180.0 * fy + 40.0 * (fx * 7.0).cos()) as i32 + n;
+        let b = (120.0 + 100.0 * (fx * fy * 5.0).sin()) as i32 - n;
+        image::Rgb([r.clamp(0, 255) as u8, g.clamp(0, 255) as u8, b.clamp(0, 255) as u8])
+    })
+}
+
+pub fn jpeg_bytes(img: &image::RgbImage, quality: u8) -> Result<Vec<u8>> {
+    use image::ImageEncoder;
+    let mut buf = Vec::new();
+    image::codecs::jpeg::JpegEncoder::new_with_quality(&mut buf, quality)
+        .write_image(img.as_raw(), img.width(), img.height(), image::ExtendedColorType::Rgb8)
+        .map_err(|e| Error::Invalid(e.to_string()))?;
+    Ok(buf)
+}
+
+/// 사진이 많은 A4 PDF: 쪽마다 글자(`label pN`) + 벡터 사각형 + 큰 JPEG 사진(`photo_px` 가로, 품질 95)을
+/// 가로 6인치(432pt)로 찍는다. 1쪽에는 무손실(Flate) RGB 그림 하나를 2인치로 더 넣는다.
+/// 같은 사진 객체를 두 쪽 이상에서 쓰지 않는다(쪽마다 다른 사진).
+pub fn make_photo_pdf(path: &Path, pages: u32, label: &str, photo_px: u32) -> Result<()> {
+    let mut doc = Document::with_version("1.4");
+    let pages_id = doc.new_object_id();
+    let font = doc.add_object(dictionary! { "Type" => "Font", "Subtype" => "Type1", "BaseFont" => "Helvetica" });
+    let ph = photo_px * 3 / 4;
+    let mut kids = Vec::new();
+    for i in 1..=pages {
+        let jpg = jpeg_bytes(&photo_like(photo_px, ph, i), 95)?;
+        let im = doc.add_object(
+            Stream::new(
+                dictionary! { "Type" => "XObject", "Subtype" => "Image", "Width" => photo_px as i64, "Height" => ph as i64,
+                    "ColorSpace" => "DeviceRGB", "BitsPerComponent" => 8, "Filter" => "DCTDecode" },
+                jpg,
+            )
+            .with_compression(false),
+        );
+        let mut xobj = dictionary! { "Ph" => im };
+        let mut ops = vec![
+            Operation::new("BT", vec![]),
+            Operation::new("Tf", vec!["F1".into(), 28.into()]),
+            Operation::new("Td", vec![72.into(), 760.into()]),
+            Operation::new("Tj", vec![Object::string_literal(format!("{label} p{i}"))]),
+            Operation::new("ET", vec![]),
+            // 벡터: 테두리 사각형
+            Operation::new("RG", vec![0.into(), 0.into(), 1.into()]),
+            Operation::new("w", vec![3.into()]),
+            Operation::new("re", vec![60.into(), 300.into(), 456.into(), 348.into()]),
+            Operation::new("S", vec![]),
+            Operation::new("q", vec![]),
+            Operation::new("cm", vec![432.into(), 0.into(), 0.into(), 324.into(), 72.into(), 312.into()]),
+            Operation::new("Do", vec![Object::Name(b"Ph".to_vec())]),
+            Operation::new("Q", vec![]),
+        ];
+        if i == 1 {
+            let raw = photo_like(600, 400, 99).into_raw();
+            let mut s = Stream::new(
+                dictionary! { "Type" => "XObject", "Subtype" => "Image", "Width" => 600, "Height" => 400,
+                    "ColorSpace" => "DeviceRGB", "BitsPerComponent" => 8 },
+                raw,
+            );
+            let _ = s.compress();
+            let fl = doc.add_object(s);
+            xobj.set("Fl", fl);
+            ops.extend([
+                Operation::new("q", vec![]),
+                Operation::new("cm", vec![144.into(), 0.into(), 0.into(), 96.into(), 72.into(), 120.into()]),
+                Operation::new("Do", vec![Object::Name(b"Fl".to_vec())]),
+                Operation::new("Q", vec![]),
+            ]);
+        }
+        let content = Content { operations: ops }.encode().map_err(|e| Error::Pdf { path: path.into(), message: e.to_string() })?;
+        let cid = doc.add_object(Stream::new(dictionary! {}, content));
+        let pid = doc.add_object(dictionary! {
+            "Type" => "Page", "Parent" => pages_id, "Contents" => cid,
+            "MediaBox" => vec![0.into(), 0.into(), 595.into(), 842.into()],
+            "Resources" => dictionary! { "Font" => dictionary! { "F1" => font }, "XObject" => xobj },
+        });
+        kids.push(Object::Reference(pid));
+    }
+    doc.objects.insert(pages_id, Object::Dictionary(dictionary! { "Type" => "Pages", "Kids" => kids, "Count" => pages as i64 }));
+    let catalog = doc.add_object(dictionary! { "Type" => "Catalog", "Pages" => pages_id });
+    doc.trailer.set("Root", catalog);
+    let mut bytes = Vec::new();
+    doc.save_to(&mut bytes).map_err(io_err(path))?;
+    crate::paths::write_new(path, &bytes)
+}
+
+/// 암호가 걸린 PDF(RC4 128, 열기 암호 `user_pw`, 빈 값이면 열기 암호 없이 권한 암호만).
+pub fn make_encrypted_pdf(path: &Path, user_pw: &str) -> Result<()> {
+    let tmp = crate::tempdir::JobDir::new("encgen")?;
+    let plain = tmp.path().join("plain.pdf");
+    make_pdf(&plain, 2, "SECRET")?;
+    let mut doc = Document::load(&plain).map_err(|e| Error::Pdf { path: plain.clone(), message: e.to_string() })?;
+    // 암호 키 계산에 문서 ID가 필요하다
+    let id = Object::String(b"win-filetool-enc".to_vec(), lopdf::StringFormat::Hexadecimal);
+    doc.trailer.set("ID", Object::Array(vec![id.clone(), id]));
+    let state = lopdf::EncryptionState::try_from(lopdf::EncryptionVersion::V2 {
+        document: &doc,
+        owner_password: "owner-pw",
+        user_password: user_pw,
+        key_length: 128,
+        permissions: lopdf::Permissions::all(),
+    })
+    .map_err(|e| Error::Invalid(e.to_string()))?;
+    doc.encrypt(&state).map_err(|e| Error::Invalid(e.to_string()))?;
+    let mut bytes = Vec::new();
+    doc.save_to(&mut bytes).map_err(io_err(path))?;
+    crate::paths::write_new(path, &bytes)
+}
+
+/// PDF 안 이미지 객체들의 (가로, 세로, 필터, 바이트 수) — 점검용
+pub fn pdf_images(path: &Path) -> Result<Vec<(u32, u32, String, usize)>> {
+    let doc = crate::pdf::load(path)?;
+    let mut v: Vec<(u32, u32, String, usize)> = doc
+        .objects
+        .values()
+        .filter_map(|o| o.as_stream().ok())
+        .filter(|s| s.dict.get(b"Subtype").and_then(Object::as_name).ok() == Some(b"Image".as_slice()))
+        .map(|s| {
+            let g = |k: &[u8]| s.dict.get(k).and_then(Object::as_i64).unwrap_or(0) as u32;
+            let f = s.dict.get(b"Filter").and_then(Object::as_name).map(|n| String::from_utf8_lossy(n).into_owned()).unwrap_or_default();
+            (g(b"Width"), g(b"Height"), f, s.content.len())
+        })
+        .collect();
+    v.sort();
+    Ok(v)
+}
+
+/// 각 쪽 콘텐츠 스트림(풀어 둔 바이트) — 압축 전후 글자·벡터가 그대로인지 비교용
+pub fn pdf_page_contents(path: &Path) -> Result<Vec<Vec<u8>>> {
+    let doc = crate::pdf::load(path)?;
+    Ok(doc.get_pages().values().map(|&pid| doc.get_page_content(pid)).collect())
+}
+
+/// 각 쪽 MediaBox (가로, 세로) pt
+pub fn pdf_page_sizes(path: &Path) -> Result<Vec<(f64, f64)>> {
+    let doc = crate::pdf::load(path)?;
+    Ok(doc
+        .get_pages()
+        .values()
+        .map(|&pid| {
+            let mb = doc.get_dictionary(pid).ok().and_then(|d| d.get(b"MediaBox").ok()).and_then(|o| o.as_array().ok()).cloned().unwrap_or_default();
+            let n = |i: usize| mb.get(i).and_then(|o| o.as_float().ok()).unwrap_or(0.0) as f64;
+            (n(2) - n(0), n(3) - n(1))
+        })
+        .collect())
+}

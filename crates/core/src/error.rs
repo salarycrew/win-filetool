@@ -19,7 +19,7 @@ pub enum Error {
     AlreadyExists(PathBuf),
     #[error("{0}")]
     Invalid(String),
-    #[error("{tool}을(를) 찾지 못했습니다. [도구 설정]에서 설치 상태를 확인하세요. {hint}")]
+    #[error("{tool}을(를) 찾지 못했습니다. [설정] 탭에서 설치 상태를 확인하세요. {hint}")]
     ToolMissing { tool: String, hint: String },
     #[error("{tool} 실행 실패: {message}")]
     Tool { tool: String, message: String },

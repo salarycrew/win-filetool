@@ -7,21 +7,27 @@
 //!   [`docs`]: 문서(LibreOffice headless), [`convert`]: 파일 하나 변환 진입점
 //! - [`tools`]: ffmpeg/LibreOffice 찾기, [`process`]: argv 실행·시간 제한·취소
 //! - [`watch`]: 감시 폴더, [`settings`]: 설정 저장
+//! - 1c: [`pdfcompress`]: PDF 압축, [`img2pdf`]: 이미지 → PDF, [`pdfrender`]: PDF → 이미지(PDFium)·이미지 꺼내기,
+//!   [`autostart`]: 윈도 시작 시 실행(HKCU Run)
 //!
 //! 원본은 절대 덮어쓰지 않는다. 출력 경로가 이미 있으면 [`paths::unique_path`]로
 //! ` (1)`, ` (2)` …를 붙인 새 이름을 쓴다.
 
+pub mod autostart;
 pub mod convert;
 pub mod docs;
 pub mod error;
 pub mod exif;
 pub mod heif;
 pub mod imageconv;
+pub mod img2pdf;
 pub mod media;
 pub mod nfc;
 pub mod pages;
 pub mod paths;
 pub mod pdf;
+pub mod pdfcompress;
+pub mod pdfrender;
 pub mod process;
 pub mod samples;
 pub mod settings;
