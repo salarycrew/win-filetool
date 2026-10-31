@@ -5,7 +5,8 @@ use std::process::ExitCode;
 use std::sync::RwLock;
 use std::time::{Duration, Instant};
 
-use filetool_core::search::index::{Index, INDEX_FILE};
+use filetool_core::search::index::{Index, SourceKind, INDEX_FILE};
+use filetool_core::search::mft::{self, FrnMap, MftSource, Plan, SourceMode};
 use filetool_core::search::query::{self, fmt_time, Query, QueryCtx, SortKey};
 use filetool_core::search::scan::{self, default_excludes, DirWalkSource, Excludes, ScanControl, ScanOpts};
 use filetool_core::search::service::{default_index_dir, SearchConfig, SearchService};
@@ -85,8 +86,15 @@ pub fn run(cmd: &str, args: &[String]) -> Result<Option<ExitCode>> {
         "index" => index(&Args::parse(&args[1..])).map(Some),
         "search" => search(&Args::parse(&args[1..])).map(Some),
         "search-live" => live(&Args::parse(&args[1..])).map(Some),
+        "usn-catchup" => usn_catchup(&Args::parse(&args[1..])).map(Some),
+        "index-compare" => index_compare(&Args::parse(&args[1..])).map(Some),
         _ => Ok(None),
     }
+}
+
+fn source_mode(a: &Args) -> Result<SourceMode> {
+    let v = a.get("--source").unwrap_or("auto");
+    SourceMode::parse(v).ok_or_else(|| Error::Invalid(format!("--source 값은 auto, mft, walk 중 하나입니다: {v}")))
 }
 
 /// `index <루트…>`: 스캔 + 저장, 항목 수·시간·크기 출력
@@ -94,15 +102,53 @@ fn index(a: &Args) -> Result<ExitCode> {
     let roots = a.roots();
     let dir = a.index_dir();
     let file = dir.join(INDEX_FILE);
+    let mode = source_mode(a)?;
     let opts = ScanOpts { excludes: Excludes::new(&a.excludes()), skip: vec![dir.clone()], threads: a.num("--threads", 0)? as usize };
+    // 길 고르기를 먼저(mft인데 안 되면 아무것도 하지 않고 끝)
+    let mut plans = Vec::new();
+    for r in &roots {
+        match mft::plan_for(r, mode) {
+            Ok(p) => plans.push(p),
+            Err(e) => {
+                eprintln!("빠른 색인(MFT)을 쓸 수 없습니다 — {e}");
+                eprintln!("관리자 권한 없이 색인하려면 --source walk 또는 auto를 쓰세요.");
+                return Ok(ExitCode::from(2));
+            }
+        }
+    }
     println!("제외: {:?}", a.excludes());
     let ix = RwLock::new(Index::new());
     let t0 = Instant::now();
-    for r in &roots {
+    for (r, plan) in roots.iter().zip(plans) {
         let ctl = ScanControl::default();
-        let st = scan::scan_root_into(&DirWalkSource, r, &ix, &opts, &ctl);
+        let (st, label) = match plan {
+            Plan::Mft(v) => {
+                let src = MftSource::new(v.reader(), v.cursor());
+                let st = scan::scan_root_into(&src, r, &ix, &opts, &ctl);
+                let info = src.last.lock().unwrap().clone();
+                let kind = ix.read().unwrap().root_by_path(r).map(|x| x.source).unwrap_or_default();
+                let mut label = format!("[{}]", kind.label());
+                if let Some(i) = info {
+                    label.push_str(&format!(
+                        " MFT 레코드 {} (쓰는 것 {}, 확장 {}, 깨짐 {}), 읽기 {} {:.2} 초 + 트리 {:.2} 초, 부모 없는 이름 {}",
+                        i.records_total, i.records_in_use, i.extension_records, i.bad_records, mb(i.bytes_read), i.read_ms as f64 / 1000.0, i.tree_ms as f64 / 1000.0, i.orphans
+                    ));
+                }
+                if let Some(c) = ix.read().unwrap().root_by_path(r).and_then(|x| x.usn) {
+                    label.push_str(&format!(" / 저널 ID {:#x} 다음 USN {}", c.journal_id, c.next_usn));
+                } else {
+                    label.push_str(" / USN 저널 없음");
+                }
+                (st, label)
+            }
+            Plan::Walk { reason } => {
+                let st = scan::scan_root_into(&DirWalkSource, r, &ix, &opts, &ctl);
+                let why = reason.map(|m| format!(" ({m})")).unwrap_or_default();
+                (st, format!("[{}]{why}", SourceKind::Walk.label()))
+            }
+        };
         println!(
-            "루트 {}: 폴더 {} / 파일 {} / 건너뜀 {} (권한 없음 {}, 연결 지점 {}) / 제외 {} / {:.2} 초",
+            "루트 {} {label}\n  폴더 {} / 파일 {} / 건너뜀 {} (권한 없음 {}, 연결 지점 {}) / 제외 {} / {:.2} 초",
             r.display(), st.dirs, st.files, st.denied + st.reparse, st.denied, st.reparse, st.excluded, st.millis as f64 / 1000.0
         );
     }
@@ -122,7 +168,7 @@ fn search(a: &Args) -> Result<ExitCode> {
     let q = a.rest.join(" ");
     let file = a.index_dir().join(INDEX_FILE);
     let t0 = Instant::now();
-    let ix = Index::load(&file)?;
+    let ix = Index::load_dir_file(&file)?;
     let load_ms = t0.elapsed().as_secs_f64() * 1000.0;
     let query = Query::parse(&q, &QueryCtx::local_now()).map_err(Error::Invalid)?;
     let t1 = Instant::now();
@@ -152,7 +198,8 @@ fn search(a: &Args) -> Result<ExitCode> {
 fn live(a: &Args) -> Result<ExitCode> {
     let q = a.get("--query").unwrap_or("").to_string();
     let secs = a.num("--seconds", 60)?;
-    let cfg = SearchConfig::new(a.roots(), a.excludes(), &a.index_dir());
+    let mut cfg = SearchConfig::new(a.roots(), a.excludes(), &a.index_dir());
+    cfg.source = source_mode(a)?;
     let svc = SearchService::start(cfg);
     let t0 = Instant::now();
     let mut last: Option<Vec<String>> = None;
@@ -165,6 +212,15 @@ fn live(a: &Args) -> Result<ExitCode> {
                 "[{:6.2}s] 준비됨: 항목 {} / 저장한 색인 불러오기 {} / 건너뜀 {}",
                 t0.elapsed().as_secs_f64(), st.entries, st.loaded_ms.map(|m| format!("{m} ms")).unwrap_or("없음".into()), st.skipped
             );
+            for r in &st.roots {
+                println!(
+                    "         루트 {} [{}]{}{}",
+                    r.path,
+                    r.source,
+                    r.source_note.as_ref().map(|m| format!(" ({m})")).unwrap_or_default(),
+                    r.catchup.as_ref().map(|m| format!(" {m}")).unwrap_or_default()
+                );
+            }
         }
         if let Ok((ids, r)) = svc.query(&q, SortKey::Name, false) {
             let rows = svc.rows(&ids[..ids.len().min(10)], r.generation).unwrap_or_default();
@@ -178,6 +234,153 @@ fn live(a: &Args) -> Result<ExitCode> {
     }
     let _ = svc.save_now();
     svc.stop();
+    Ok(ExitCode::SUCCESS)
+}
+
+/// `usn-catchup`: 저장한 색인의 MFT 루트마다 저장한 USN 뒤의 변경만 읽어 반영하고 저장한다.
+/// 저널이 바뀌었으면(다시 만들어짐·한 바퀴 돎) MFT 전체를 다시 읽는다.
+fn usn_catchup(a: &Args) -> Result<ExitCode> {
+    let dir = a.index_dir();
+    let file = dir.join(INDEX_FILE);
+    let t0 = Instant::now();
+    let ix = Index::load_dir_file(&file)?;
+    println!("색인 읽기 {:.0} ms (항목 {})", t0.elapsed().as_secs_f64() * 1000.0, ix.live_count());
+    let opts = ScanOpts { excludes: Excludes::new(&a.excludes()), skip: vec![dir.clone()], threads: 0 };
+    let roots: Vec<_> = ix.roots().iter().filter(|r| r.source == SourceKind::Mft).map(|r| (r.path.clone(), r.id, r.usn)).collect();
+    if roots.is_empty() {
+        eprintln!("MFT로 만든 루트가 없습니다. 먼저 관리자 권한으로 `filetool-cli index C:\\ --source mft`를 실행하세요.");
+        return Ok(ExitCode::from(2));
+    }
+    let index = RwLock::new(ix);
+    for (root, rid, cur) in roots {
+        let v = match mft::open_volume(&root) {
+            Ok(v) => v,
+            Err(e) => {
+                eprintln!("{}: 저널을 읽을 수 없습니다 — {e}", root.display());
+                return Ok(ExitCode::from(2));
+            }
+        };
+        let view = v.view();
+        let t1 = Instant::now();
+        let res = match cur {
+            Some(c) => mft::catch_up(&*view, &c).map_err(|e| e.to_string()),
+            None => Err("저장한 저널 위치가 없음".to_string()),
+        };
+        match res {
+            Ok((frns, newc, nrec)) => {
+                let read_ms = t1.elapsed().as_secs_f64() * 1000.0;
+                let mut map = FrnMap::empty(rid);
+                let st = mft::apply_changes(&index, &mut map, &root, &frns, &*view, &opts);
+                if let Some(r) = index.write().unwrap().roots_mut().iter_mut().find(|r| r.id == rid) {
+                    r.usn = Some(newc);
+                    r.last_scan = filetool_core::search::index::now_unix();
+                }
+                println!(
+                    "루트 {} [빠른 색인(MFT)] 저널 따라잡기: USN {} → {}, 기록 {nrec}건, 바뀐 파일 {}개 → 추가 {} / 삭제 {} / 변경 {} / 이동 {} / 부모 못 찾음 {}, 저널 읽기 {read_ms:.0} ms, 전체 {:.0} ms",
+                    root.display(),
+                    cur.map(|c| c.next_usn).unwrap_or(0),
+                    newc.next_usn,
+                    st.files,
+                    st.added,
+                    st.removed,
+                    st.updated,
+                    st.moved,
+                    st.unresolved,
+                    t1.elapsed().as_secs_f64() * 1000.0
+                );
+            }
+            Err(e) => {
+                println!("루트 {}: {e} → MFT 전체 다시 읽기", root.display());
+                let fresh = RwLock::new(Index::new());
+                let src = MftSource::new(v.reader(), v.cursor());
+                let st = scan::scan_root_into(&src, &root, &fresh, &opts, &ScanControl::default());
+                let fresh = fresh.into_inner().unwrap();
+                let mut g = index.write().unwrap();
+                let new = g.with_root_replaced(&fresh);
+                *g = new;
+                println!("  폴더 {} / 파일 {} / {:.2} 초", st.dirs, st.files, st.millis as f64 / 1000.0);
+            }
+        }
+    }
+    let ix = index.into_inner().unwrap();
+    let t2 = Instant::now();
+    let size = ix.save(&file)?;
+    println!("저장: 항목 {} / {:.0} ms / {} ({})", ix.live_count(), t2.elapsed().as_secs_f64() * 1000.0, mb(size), file.display());
+    Ok(ExitCode::SUCCESS)
+}
+
+/// `index-compare <색인 폴더 A> <색인 폴더 B> [--samples 20] [--spot 파일.tsv]`: 두 색인(예: MFT와 폴더 훑기)을 경로로 비교.
+/// 한쪽에만 있는 경로 수와 보기, 크기·시각이 다른 수와 보기, 맨 위 폴더별 차이. `--spot`이면 A에서 무작위 파일을 골라 (경로, 크기, 시각)을 TSV로.
+fn index_compare(a: &Args) -> Result<ExitCode> {
+    use std::collections::{BTreeMap, HashMap};
+    let (Some(da), Some(db)) = (a.rest.first(), a.rest.get(1)) else {
+        return Err(Error::Invalid("색인 폴더 두 개가 필요합니다".into()));
+    };
+    let samples = a.num("--samples", 20)? as usize;
+    let load = |d: &str| Index::load_dir_file(&Path::new(d).join(INDEX_FILE));
+    let (ia, ib) = (load(da)?, load(db)?);
+    let map = |ix: &Index| -> HashMap<String, (bool, u64, i64)> {
+        (0..ix.len() as u32)
+            .filter(|&i| ix.is_live(i) && ix.parent(i) != u32::MAX)
+            .map(|i| (ix.full_path(i).to_string_lossy().to_lowercase(), (ix.is_dir(i), ix.size(i), ix.mtime(i))))
+            .collect()
+    };
+    let (ma, mb_) = (map(&ia), map(&ib));
+    println!("A {da}: 항목 {} / B {db}: 항목 {}", ma.len(), mb_.len());
+    for (label, x, y) in [("A에만", &ma, &mb_), ("B에만", &mb_, &ma)] {
+        let mut only: Vec<&String> = x.keys().filter(|k| !y.contains_key(*k)).collect();
+        only.sort();
+        let mut by_top: BTreeMap<String, usize> = BTreeMap::new();
+        for k in &only {
+            let top: String = k.split('\\').take(3).collect::<Vec<_>>().join("\\");
+            *by_top.entry(top).or_default() += 1;
+        }
+        let mut tops: Vec<_> = by_top.into_iter().collect();
+        tops.sort_by(|p, q| q.1.cmp(&p.1));
+        println!("{label}: {}개 (위 폴더별 많은 순: {:?})", only.len(), &tops[..tops.len().min(12)]);
+        let step = (only.len() / samples.max(1)).max(1);
+        for k in only.iter().step_by(step).take(samples) {
+            println!("  {label} {k}");
+        }
+    }
+    let mut size_diff = Vec::new();
+    let mut time_diff = Vec::new();
+    for (k, va) in &ma {
+        if let Some(vb) = mb_.get(k) {
+            if !va.0 && va.1 != vb.1 {
+                size_diff.push(k);
+            }
+            if va.2 != vb.2 {
+                time_diff.push(k);
+            }
+        }
+    }
+    size_diff.sort();
+    time_diff.sort();
+    println!("둘 다 있음, 크기 다름(파일): {}개 / 수정 시각 다름: {}개", size_diff.len(), time_diff.len());
+    let step = (size_diff.len() / samples.max(1)).max(1);
+    for k in size_diff.iter().step_by(step).take(samples) {
+        println!("  크기 {k}: A {} / B {}", ma[*k].1, mb_[*k].1);
+    }
+    let step = (time_diff.len() / samples.max(1)).max(1);
+    for k in time_diff.iter().step_by(step).take(samples) {
+        println!("  시각 {k}: A {} / B {}", ma[*k].2, mb_[*k].2);
+    }
+    if let Some(spot) = a.get("--spot") {
+        // A의 파일 중 무작위(시각 기반 간단한 섞기)
+        let files: Vec<u32> = (0..ia.len() as u32).filter(|&i| ia.is_live(i) && !ia.is_dir(i)).collect();
+        let mut seed = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_nanos() as u64).unwrap_or(1) | 1;
+        let mut out = String::new();
+        for _ in 0..samples {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            let id = files[(seed % files.len() as u64) as usize];
+            out.push_str(&format!("{}\t{}\t{}\n", ia.full_path(id).display(), ia.size(id), ia.mtime(id)));
+        }
+        std::fs::write(spot, out).map_err(|e| Error::Invalid(e.to_string()))?;
+        println!("무작위 파일 {samples}개 → {spot}");
+    }
     Ok(ExitCode::SUCCESS)
 }
 
