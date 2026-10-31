@@ -102,6 +102,8 @@ pub struct ScanControl {
     pub cancel: AtomicBool,
     /// 지금까지 넣은 항목 수
     pub entries: AtomicU64,
+    /// 따로 만든 새 색인에 스캔 중(살아 있는 색인은 그대로 쓸 수 있음 → 실시간 변경을 바로 반영해도 됨)
+    pub background: AtomicBool,
 }
 
 /// 색인을 채우는 원본. `root_id`(이미 `target`에 있는 폴더 항목) 아래를 채운다.

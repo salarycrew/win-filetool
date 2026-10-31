@@ -596,6 +596,15 @@ pub struct Row {
     pub mtime: i64,
 }
 
+/// 유닉스 초 → 지역 시각 `2026-10-31 14:05`
+pub fn fmt_time(ts: i64) -> String {
+    use chrono::{Local, TimeZone};
+    match Local.timestamp_opt(ts, 0).single() {
+        Some(t) if ts > 0 => t.format("%Y-%m-%d %H:%M").to_string(),
+        _ => String::new(),
+    }
+}
+
 pub fn row(ix: &Index, id: u32) -> Row {
     let path = ix.full_path(id);
     let folder = path.parent().map(|p| p.to_string_lossy().into_owned()).unwrap_or_default();

@@ -272,9 +272,17 @@ impl SearchService {
                     let p = match &c {
                         Change::Path(p) | Change::Rescan(p) => p.clone(),
                     };
-                    let scanning_root = self.scanning.lock().unwrap().keys().find(|r| p.starts_with(r)).cloned();
+                    let scanning_root =
+                        self.scanning.lock().unwrap().iter().find(|(r, _)| p.starts_with(r)).map(|(r, c)| (r.clone(), c.background.load(Ordering::SeqCst)));
                     match scanning_root {
-                        Some(r) => deferred.entry(r).or_default().push(c),
+                        // 새 색인에 따로 스캔 중: 지금 색인에도 바로 반영하고, 바꿔 끼운 뒤 한 번 더
+                        Some((r, true)) => {
+                            deferred.entry(r).or_default().push(c.clone());
+                            pending.push(c);
+                            deadline.get_or_insert_with(|| Instant::now() + DEBOUNCE);
+                        }
+                        // 살아 있는 색인에 바로 채우는 중: 끝난 뒤 반영(부모가 아직 없을 수 있음)
+                        Some((r, false)) => deferred.entry(r).or_default().push(c),
                         None => {
                             pending.push(c);
                             deadline.get_or_insert_with(|| Instant::now() + DEBOUNCE);
@@ -379,6 +387,7 @@ impl SearchService {
                 .iter()
                 .map(|r| {
                     let c = Arc::new(ScanControl::default());
+                    c.background.store(index.read().unwrap().root_by_path(r).is_some(), Ordering::SeqCst);
                     s.insert(r.clone(), c.clone());
                     (r.clone(), c)
                 })
@@ -390,6 +399,7 @@ impl SearchService {
                 for (root, ctl) in ctls {
                     if !ctl.cancel.load(Ordering::SeqCst) {
                         let exists = index.read().unwrap().root_by_path(&root).is_some();
+                        ctl.background.store(exists, Ordering::SeqCst);
                         if exists {
                             let fresh = RwLock::new(Index::new());
                             scan::scan_root_into(&*src, &root, &fresh, &opts, &ctl);
