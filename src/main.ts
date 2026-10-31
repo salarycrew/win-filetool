@@ -736,7 +736,10 @@ listen<WatchEvent>("watch-event", (ev) => watchLine(ev.payload));
 interface Row { id: number; name: string; folder: string; path: string; is_dir: boolean; size: number; mtime: number }
 interface SearchResult { total: number; millis: number; generation: number; version: number }
 interface RootStats { dirs: number; files: number; denied: number; reparse: number; excluded: number; millis: number }
-interface RootStatus { path: string; scanning: boolean; scanned_so_far: number; last_scan: number; stats: RootStats }
+interface RootStatus {
+  path: string; scanning: boolean; scanned_so_far: number; last_scan: number; stats: RootStats;
+  source: string; source_note: string | null; catchup: string | null;
+}
 interface SearchStatus {
   entries: number; roots: RootStatus[]; loaded_ms: number | null; load_error: string | null; last_save: number; index_bytes: number;
   index_file: string; skipped: number; excluded: number; version: number; generation: number; ready: boolean; live_updates: number; memory_bytes: number;
@@ -973,6 +976,8 @@ async function refreshStatus() {
   parts.push(`건너뛴 폴더 ${nf.format(st.skipped)}개`);
   if (st.excluded) parts.push(`제외 ${nf.format(st.excluded)}개`);
   if (st.live_updates) parts.push(`실시간 반영 ${nf.format(st.live_updates)}건`);
+  // 2b: 루트마다 쓴 길(빠른 색인(MFT) / 일반 색인)
+  if (st.roots.length) parts.push(st.roots.map((r) => `${r.path} ${r.source}`).join(", "));
   const el = $("search-status");
   el.textContent = parts.join(" · ");
   if (scanning.length) {
@@ -981,7 +986,8 @@ async function refreshStatus() {
     sp.textContent = " · 스캔 중: " + scanning.map((r) => `${r.path} (${nf.format(r.scanned_so_far)})`).join(", ");
     el.appendChild(sp);
   }
-  if (st.load_error) el.title = st.load_error;
+  const notes = st.roots.flatMap((r) => [r.source_note, r.catchup].filter((x): x is string => !!x).map((m) => `${r.path}: ${m}`));
+  el.title = [st.load_error, ...notes].filter(Boolean).join("\n");
   // 색인이 바뀌었으면(스캔 진행·실시간 반영) 결과를 새로 고친다(너무 자주는 말고)
   if (tab === "search" && qEl.value.trim() && (st.version !== lastVersion || st.generation !== lastGeneration) && Date.now() - lastQueryAt > 900) {
     runSearch(true);
@@ -1006,7 +1012,7 @@ function renderSearchSettings() {
     const path = document.createElement("span");
     path.className = "path";
     path.style.direction = "ltr";
-    path.textContent = r + (rs && rs.last_scan ? `  ·  폴더 ${nf.format(rs.stats.dirs)} / 파일 ${nf.format(rs.stats.files)} / 건너뜀 ${nf.format(rs.stats.denied + rs.stats.reparse)} / ${(rs.stats.millis / 1000).toFixed(1)}초` : "");
+    path.textContent = r + (rs ? `  ·  ${rs.source}` : "") + (rs && rs.last_scan ? `  ·  폴더 ${nf.format(rs.stats.dirs)} / 파일 ${nf.format(rs.stats.files)} / 건너뜀 ${nf.format(rs.stats.denied + rs.stats.reparse)} / ${(rs.stats.millis / 1000).toFixed(1)}초` : "");
     li.append(kind, path);
     if (settings.roots.length) {
       const del = document.createElement("button");
