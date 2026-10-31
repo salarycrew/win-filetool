@@ -29,6 +29,10 @@ windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_Stora
 # 윈도 시작 시 실행(HKCU Run)
 winreg = "0.56"
 
+[target.'cfg(unix)'.dependencies]
+# 감시 잠금: 프로세스 단위 fcntl 잠금(flock은 fork한 자식이 붙잡을 수 있음)
+libc = "0.2.191"
+
 [target."cfg(not(windows))".dependencies]
 # 2a 실시간 갱신(Linux·테스트용 inotify). Windows는 ReadDirectoryChangesW를 직접 쓴다(오버플로를 알아야 해서)
 notify = { version = "8.2.1", default-features = false }

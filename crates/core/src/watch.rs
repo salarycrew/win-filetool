@@ -239,15 +239,68 @@ impl Watcher {
 
 /// 감시는 한 프로세스만: 설정 폴더의 잠금 파일을 잡은 앱만 규칙을 돌린다
 /// (창을 두 개 열어도 같은 파일을 두 번 변환하지 않게). 프로세스가 끝나면 자동으로 풀린다.
-pub struct WatchLock(#[allow(dead_code)] std::fs::File);
+///
+/// Windows: `LockFileEx`(std `try_lock`). 핸들은 상속되지 않으므로 자식 프로세스가 잠금을 붙잡지 않는다.
+/// Unix: `flock`은 열린 파일 설명에 붙어서, 다른 스레드가 자식 프로세스를 띄우는 순간(fork~exec 사이)
+/// 자식이 fd를 복사해 가면 놓은 뒤에도 잠금이 잠깐 남는다(ux3: 1b `watch_lock_single_holder`가 가끔 실패한 원인).
+/// 그래서 Unix는 프로세스 단위 `fcntl(F_SETLK)` 잠금(fork로 물려지지 않음)을 쓰고, 같은 프로세스 안의
+/// 두 번째 요청은 잡은 경로 목록으로 막는다(POSIX 잠금은 같은 프로세스끼리 충돌하지 않으므로).
+pub struct WatchLock {
+    file: Option<std::fs::File>,
+    #[cfg(unix)]
+    key: std::path::PathBuf,
+}
+
+#[cfg(unix)]
+static HELD: std::sync::Mutex<Vec<std::path::PathBuf>> = std::sync::Mutex::new(Vec::new());
 
 impl WatchLock {
     pub fn try_acquire(path: &Path) -> Option<Self> {
         if let Some(p) = path.parent() {
             let _ = std::fs::create_dir_all(p);
         }
-        let f = std::fs::OpenOptions::new().create(true).truncate(false).write(true).open(path).ok()?;
-        f.try_lock().ok()?;
-        Some(Self(f))
+        #[cfg(unix)]
+        {
+            use std::os::fd::AsRawFd;
+            let key = match (path.parent(), path.file_name()) {
+                (Some(d), Some(n)) => std::fs::canonicalize(if d.as_os_str().is_empty() { Path::new(".") } else { d }).ok()?.join(n),
+                _ => path.to_path_buf(),
+            };
+            // 목록을 잡은 채로 열고 잠근다: 같은 프로세스가 이미 잡은 파일을 다시 열었다 닫으면
+            // POSIX 잠금이 풀려 버리므로, 잡혀 있으면 열기 전에 돌아간다.
+            let mut held = HELD.lock().unwrap_or_else(|e| e.into_inner());
+            if held.contains(&key) {
+                return None;
+            }
+            let f = std::fs::OpenOptions::new().create(true).truncate(false).write(true).open(path).ok()?;
+            let mut fl: libc::flock = unsafe { std::mem::zeroed() };
+            fl.l_type = libc::F_WRLCK as _;
+            fl.l_whence = libc::SEEK_SET as _;
+            if unsafe { libc::fcntl(f.as_raw_fd(), libc::F_SETLK, &fl) } != 0 {
+                return None;
+            }
+            held.push(key.clone());
+            Some(Self { file: Some(f), key })
+        }
+        #[cfg(not(unix))]
+        {
+            let f = std::fs::OpenOptions::new().create(true).truncate(false).write(true).open(path).ok()?;
+            f.try_lock().ok()?;
+            Some(Self { file: Some(f) })
+        }
+    }
+}
+
+impl Drop for WatchLock {
+    fn drop(&mut self) {
+        #[cfg(unix)]
+        {
+            // 닫기(= 잠금 풀기)와 목록에서 빼기를 한 번에: 그 사이에 같은 프로세스가 새로 잡지 못하게
+            let mut held = HELD.lock().unwrap_or_else(|e| e.into_inner());
+            drop(self.file.take());
+            held.retain(|k| k != &self.key);
+        }
+        #[cfg(not(unix))]
+        drop(self.file.take());
     }
 }

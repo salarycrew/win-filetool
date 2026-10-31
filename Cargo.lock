@@ -1192,6 +1192,7 @@ dependencies = [
  "chrono",
  "encoding_rs",
  "image",
+ "libc",
  "libwebp-sys",
  "lopdf",
  "memchr",
