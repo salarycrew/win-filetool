@@ -1,6 +1,6 @@
 # win-filetool
 
-Windows용 파일 도구 앱(창 제목 "파일 도구"). 파일 변환(이미지·문서·영상·PDF)과 맥↔윈도 호환 처리, Everything식 전체 파일 즉시 검색(2a, 관리자 권한 없음)을 한곳에 모은다.
+Windows용 파일 도구 앱(창 제목 "파일 도구"). 파일 변환(이미지·문서·영상·PDF)과 맥↔윈도 호환 처리, Everything식 전체 파일 즉시 검색(2a, 관리자 권한 없음; 2b 관리자일 때 NTFS 빠른 색인)을 한곳에 모은다.
 
 스택: **Tauri 2** (Rust 코어 + Vite/TypeScript 웹 UI). 설계·단계 구분은 [docs/design.md](docs/design.md).
 
@@ -70,7 +70,7 @@ ffmpeg와 LibreOffice는 앱에 들어 있지 않다. 따로 설치하거나(관
 
 ### 색인이 있는 곳 · 제외할 폴더
 
-- 색인 파일: `%LOCALAPPDATA%\kr.salarycrew.winfiletool\index\index-v1.bin`(버전이 붙은 이진 파일, 임시 파일에 쓴 뒤 바꿔치기).
+- 색인 파일: `%LOCALAPPDATA%\kr.salarycrew.winfiletool\index\index-v2.bin`(2a의 `index-v1.bin`도 읽음. 버전이 붙은 이진 파일, 임시 파일에 쓴 뒤 바꿔치기).
   지워도 된다(다음 시작 때 다시 스캔). 스캔이 끝날 때, 바뀐 것이 있으면 10분마다, 앱을 끝낼 때 저장
 - **제외할 폴더**: [설정] > 검색 > "제외할 폴더"에 한 줄에 하나. `\`가 있으면 전체 경로에, 없으면 폴더 이름에 맞춘다(`*` `?` 가능, 대소문자 무시).
   기본값(지울 수 있음): `$Recycle.Bin`, `System Volume Information`, `?:\Windows\WinSxS`. 예: `node_modules`, `D:\Backup`, `*\AppData\Local\Temp`
@@ -78,6 +78,18 @@ ffmpeg와 LibreOffice는 앱에 들어 있지 않다. 따로 설치하거나(관
 - 열 수 없는 폴더(권한 없음)와 정션·심볼릭 링크(따라가면 고리가 생길 수 있음)는 건너뛰고 수만 센다. OneDrive 같은 클라우드 폴더는 들어간다
 - 명령줄: `filetool-cli index C:\ D:\`(스캔 + 저장, 항목 수·시간·크기), `filetool-cli search "보고서 ext:hwp"`(찾기 + 시간),
   `filetool-cli search-live C:\Users\me --query 보고서 --seconds 60`(앱과 같은 실시간 갱신을 돌리며 결과 변화 출력)
+
+## 2b-core에서 되는 것: 관리자 권한일 때 NTFS 빠른 색인
+
+- 앱(또는 CLI)이 **이미 관리자 권한으로** 실행됐고 색인할 곳이 **NTFS 드라이브 전체**(`C:\`)이면, 폴더를 하나씩 훑는 대신 NTFS의 파일 목록(`$MFT`)을
+  통째로 읽는다(권한 없는 폴더도 빠짐없이). 다음 시작 때는 **USN 저널**에서 그 뒤 바뀐 것만 읽고, 켜져 있는 동안도 저널로 실시간 반영한다.
+- desktop `C:\`(181만 항목, 디스크 캐시 따뜻함)에서 처음 전체 읽기는 3.8~4.0 초로 폴더 훑기와 비슷하다. 차이는 다음부터: 저장한 색인을 불러온 뒤
+  **저널 따라잡기 0.04 초**(전체 다시 스캔 없음), 켜져 있는 동안 변경 반영 약 0.7 초
+- 관리자가 아니거나, 폴더를 색인할 곳으로 골랐거나, NTFS가 아닌 드라이브(USB의 exFAT 등)는 조용히 2a 길. 상태 줄에 드라이브마다
+  "빠른 색인(MFT)" / "일반 색인"이 보이고, 마우스를 올리면 이유가 나온다
+- 일반 사용자가 UAC 없이 빠른 길을 쓰는 방법(도우미 / 서비스 등)은 아직 정하지 않았다 — [docs/design.md](docs/design.md) "권한 상승 방안"
+- 명령줄: `filetool-cli index C:\ --source auto|mft|walk`(mft인데 관리자가 아니면 한국어 안내 후 종료 코드 2),
+  `filetool-cli usn-catchup`(저장한 색인을 저널로 따라잡고 저장)
 
 ## 설치 / 제거
 
@@ -91,7 +103,7 @@ ffmpeg와 LibreOffice는 앱에 들어 있지 않다. 따로 설치하거나(관
 ### 설정이 있는 곳
 
 - 설정(도구 경로·감시 규칙·검색 루트·제외·단축키): `%APPDATA%\kr.salarycrew.winfiletool\settings.json` (감시 기록 `watch-state.json`도 같은 폴더)
-- 검색 색인: `%LOCALAPPDATA%\kr.salarycrew.winfiletool\index\index-v1.bin`
+- 검색 색인: `%LOCALAPPDATA%\kr.salarycrew.winfiletool\index\index-v2.bin`
 - 윈도우 시작 시 실행: 레지스트리 `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` 값 `win-filetool`
 - 작업 중 임시 파일: `%TEMP%\win-filetool\` (끝나면 지움)
 
