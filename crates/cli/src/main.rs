@@ -10,6 +10,7 @@ use filetool_core::{nfc, paths, zipnfc, Result};
 
 mod conv;
 mod pdf1c;
+mod search2a;
 mod selftest1b;
 mod selftest1c;
 
@@ -34,7 +35,10 @@ const USAGE: &str = "사용법:
   filetool-cli pdf2img <png|jpg> [--dpi 150] [--pages 1-3] [--quality N] [--out 폴더] <pdf...>
   filetool-cli pdf-images [--out 폴더] <pdf...>                          들어 있는 이미지 꺼내기
   filetool-cli autostart <on|off|status> [--exe win-filetool.exe]       윈도 시작 시 실행(HKCU Run)
-  filetool-cli selftest <빈 폴더> [--apple <Pages·Numbers·Keynote 샘플 폴더>]   샘플을 만들어 모든 작업을 점검
+  filetool-cli index [루트...] [--index-dir 폴더] [--exclude 패턴]... [--no-default-excludes]   검색 색인 만들기(루트 없으면 모든 고정 드라이브) + 저장
+  filetool-cli search <질의> [--limit 20] [--sort name|path|size|modified] [--desc] [--paths] [--index-dir 폴더]   저장한 색인에서 찾기
+  filetool-cli search-live [루트...] --query <질의> [--seconds 60] [--index-dir 폴더]   앱과 같은 검색 서비스(실시간 갱신)를 돌리며 결과 변화를 출력
+  filetool-cli selftest <빈 폴더> [--apple <Pages·Numbers·Keynote 샘플 폴더>] [--only 2a]   샘플을 만들어 모든 작업을 점검
 공통 옵션: --ffmpeg <경로> --soffice <경로>  (없으면 앱 설정 → PATH → 설치 폴더 순으로 찾음)";
 
 fn main() -> ExitCode {
@@ -64,6 +68,9 @@ fn run(args: &[String]) -> Result<ExitCode> {
         return Ok(code);
     }
     if let Some(code) = pdf1c::run(cmd, args)? {
+        return Ok(code);
+    }
+    if let Some(code) = search2a::run(cmd, args)? {
         return Ok(code);
     }
     match cmd {
@@ -145,11 +152,18 @@ fn run(args: &[String]) -> Result<ExitCode> {
         }
         "selftest" => {
             let dir = PathBuf::from(arg(args, 1)?);
+            // --only 2a: 검색만 점검
+            if args.iter().any(|a| a == "--only") && args.iter().any(|a| a == "2a") {
+                let code = search2a::selftest(&dir.join("2a"))?;
+                println!("전체: 2a {}", ok_word(code));
+                return Ok(code);
+            }
             let code_1a = selftest(&dir.join("1a"))?;
             let code_1b = selftest1b::run(&dir.join("1b"), args)?;
             let code_1c = selftest1c::run(&dir.join("1c"), args)?;
-            let all = [code_1a, code_1b, code_1c].iter().all(|c| *c == ExitCode::SUCCESS);
-            println!("전체: 1a {} / 1b {} / 1c {}", ok_word(code_1a), ok_word(code_1b), ok_word(code_1c));
+            let code_2a = search2a::selftest(&dir.join("2a"))?;
+            let all = [code_1a, code_1b, code_1c, code_2a].iter().all(|c| *c == ExitCode::SUCCESS);
+            println!("전체: 1a {} / 1b {} / 1c {} / 2a {}", ok_word(code_1a), ok_word(code_1b), ok_word(code_1c), ok_word(code_2a));
             return Ok(if all { ExitCode::SUCCESS } else { ExitCode::from(1) });
         }
         _ => {
