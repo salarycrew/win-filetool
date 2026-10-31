@@ -6,8 +6,10 @@
 //! - 지운 항목은 표시만 하고(F_DELETED) 다음 정리([`Index::compacted`]) 때 빠진다.
 //! - 루트(드라이브·지정 폴더)도 항목이다(F_ROOT). 이름은 경로 그대로(`C:\`), 검색 결과에는 나오지 않는다.
 //!
-//! 파일 형식(버전 1, 리틀 엔디언): `WFTIDX01` · 버전 u32 · 만든 시각 i64 · 루트 수 u32 · 루트들 ·
-//! 항목 수 u32 · parent[u32] · flags[u8] · size[u64] · mtime[i64] · name_len[u16] · 이름 바이트 · FNV-1a 64 검사합.
+//! 파일 형식(버전 2, 리틀 엔디언): `WFTIDX01` · 버전 u32 · 만든 시각 i64 · 루트 수 u32 · 루트들
+//! (경로, 번호, 마지막 스캔, 통계 6개, **v2: 원본 u8 · USN 커서 있음 u8 · 볼륨 일련번호 u64 · 저널 ID u64 · 다음 USN i64**) ·
+//! 항목 수 u32 · parent[u32] · flags[u8] · size[u64] · mtime[i64] · name_len[u16] · 이름 바이트 ·
+//! **v2: FRN 열 있음 u8 (+ frn[u64])** · FNV-1a 64 검사합. 버전 1 파일도 읽는다(원본 = 폴더 훑기, FRN 없음).
 //! 비교 키는 저장하지 않고 읽을 때 다시 만든다(파일을 작게).
 
 use std::io::{BufWriter, Read, Write};
@@ -25,8 +27,37 @@ pub const F_DELETED: u8 = 2;
 pub const F_ROOT: u8 = 4;
 
 const MAGIC: &[u8; 8] = b"WFTIDX01";
-pub const FORMAT_VERSION: u32 = 1;
-pub const INDEX_FILE: &str = "index-v1.bin";
+pub const FORMAT_VERSION: u32 = 2;
+pub const INDEX_FILE: &str = "index-v2.bin";
+/// 2a가 쓰던 파일. v2 파일이 없으면 이것을 읽고, v2를 저장하면 지운다
+pub const INDEX_FILE_V1: &str = "index-v1.bin";
+
+/// 루트를 채운 길
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize)]
+pub enum SourceKind {
+    /// 폴더 훑기(2a, 관리자 권한 불필요)
+    #[default]
+    Walk,
+    /// NTFS MFT 직접 읽기 + USN 저널(2b, 관리자 권한)
+    Mft,
+}
+
+impl SourceKind {
+    pub fn label(self) -> &'static str {
+        match self {
+            SourceKind::Walk => "일반 색인",
+            SourceKind::Mft => "빠른 색인(MFT)",
+        }
+    }
+}
+
+/// USN 저널 위치: 다음 시작 때 여기서부터 바뀐 것만 읽는다
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize)]
+pub struct UsnCursor {
+    pub volume_serial: u64,
+    pub journal_id: u64,
+    pub next_usn: i64,
+}
 
 /// 루트 하나를 스캔한 결과 요약
 #[derive(Debug, Clone, Default, Serialize, PartialEq)]
@@ -49,6 +80,8 @@ pub struct RootInfo {
     /// 마지막으로 끝까지 스캔한 시각(유닉스 초). 0 = 아직
     pub last_scan: i64,
     pub stats: RootStats,
+    pub source: SourceKind,
+    pub usn: Option<UsnCursor>,
 }
 
 /// 폴더 경로 키 캐시(경로 낱말 검색·폴더 정렬용). 번호 → 창고 위치
@@ -87,6 +120,8 @@ pub struct Index {
     size: Vec<u64>,
     mtime: Vec<i64>,
     flags: Vec<u8>,
+    /// NTFS 파일 참조 번호(MFT로 채운 항목만, 아니면 0). USN 저널의 변경을 항목에 잇는 데 쓴다
+    frn: Vec<u64>,
     roots: Vec<RootInfo>,
     deleted: usize,
     /// 번호가 바뀌면(정리·이어 붙이기) 올라간다. 화면은 이 값이 바뀌면 다시 검색한다
@@ -146,6 +181,11 @@ impl Index {
     }
 
     fn push_raw(&mut self, parent: u32, name: &str, flags: u8, size: u64, mtime: i64, key: Option<&str>) -> u32 {
+        self.push_raw_frn(parent, name, flags, size, mtime, key, 0)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn push_raw_frn(&mut self, parent: u32, name: &str, flags: u8, size: u64, mtime: i64, key: Option<&str>, frn: u64) -> u32 {
         let id = self.flags.len() as u32;
         self.name_off.push(self.names.len() as u32);
         let nl = name.len().min(u16::MAX as usize);
@@ -168,6 +208,7 @@ impl Index {
         self.size.push(size);
         self.mtime.push(mtime);
         self.flags.push(flags);
+        self.frn.push(frn);
         if parent != NONE {
             self.next_sib[id as usize] = self.first_child[parent as usize];
             self.first_child[parent as usize] = id;
@@ -184,13 +225,81 @@ impl Index {
         let name = path.to_string_lossy().into_owned();
         let key = root_key(path);
         let id = self.push_raw(NONE, &name, F_DIR | F_ROOT, 0, 0, Some(&key));
-        self.roots.push(RootInfo { path: path.to_path_buf(), id, last_scan: 0, stats: RootStats::default() });
+        self.roots.push(RootInfo {
+            path: path.to_path_buf(),
+            id,
+            last_scan: 0,
+            stats: RootStats::default(),
+            source: SourceKind::Walk,
+            usn: None,
+        });
         id
     }
 
     /// 자식 추가(중복 확인 없음 — 스캔용)
     pub fn push_child(&mut self, parent: u32, name: &str, is_dir: bool, size: u64, mtime: i64) -> u32 {
         self.push_raw(parent, name, if is_dir { F_DIR } else { 0 }, size, mtime, None)
+    }
+
+    /// 자식 추가 + NTFS 파일 참조 번호(MFT 원본용)
+    pub fn push_child_frn(&mut self, parent: u32, name: &str, is_dir: bool, size: u64, mtime: i64, frn: u64) -> u32 {
+        self.push_raw_frn(parent, name, if is_dir { F_DIR } else { 0 }, if is_dir { 0 } else { size }, mtime, None, frn)
+    }
+
+    #[inline]
+    pub fn frn(&self, id: u32) -> u64 {
+        self.frn[id as usize]
+    }
+
+    /// FRN이 하나라도 있는지(저장할 때 열을 쓸지)
+    pub fn has_frn(&self) -> bool {
+        self.frn.iter().any(|&f| f != 0)
+    }
+
+    /// 항목의 이름(대소문자만 바뀐 경우)·크기·시각 고치기
+    pub fn update_entry(&mut self, id: u32, name: &str, size: u64, mtime: i64) {
+        let i = id as usize;
+        if self.name(id) != name {
+            self.name_off[i] = self.names.len() as u32;
+            self.names.extend_from_slice(name.as_bytes());
+            self.name_len[i] = name.len().min(u16::MAX as usize) as u16;
+            let ko = self.keys.len();
+            let mut k = String::new();
+            fold_into(name, &mut k);
+            self.keys.extend_from_slice(k.as_bytes());
+            self.key_off[i] = ko as u32;
+            self.key_len[i] = (self.keys.len() - ko).min(u16::MAX as usize) as u16;
+        }
+        self.size[i] = if self.is_dir(id) { 0 } else { size };
+        self.mtime[i] = mtime;
+        self.version += 1;
+    }
+
+    /// 항목(과 아래)을 다른 부모 밑으로 옮긴다(이름도 바꿈). "부모 번호 < 자식 번호"를 지키려고 끝에 새로 복사하고
+    /// 옛 항목은 지움 표시. (옛 번호, 새 번호) 목록을 돌려준다(첫 쌍이 옮긴 항목).
+    pub fn relocate(&mut self, id: u32, new_parent: u32, new_name: &str) -> Vec<(u32, u32)> {
+        if !self.is_live(id) || !self.is_live(new_parent) || self.flags[id as usize] & F_ROOT != 0 {
+            return Vec::new();
+        }
+        let mut order = vec![id];
+        let mut i = 0;
+        while i < order.len() {
+            let x = order[i];
+            order.extend(self.children(x));
+            i += 1;
+        }
+        let mut map: std::collections::HashMap<u32, u32> = std::collections::HashMap::with_capacity(order.len());
+        let mut pairs = Vec::with_capacity(order.len());
+        for (k, &old) in order.iter().enumerate() {
+            let o = old as usize;
+            let (np, name) = if k == 0 { (new_parent, new_name.to_string()) } else { (map[&self.parent[o]], self.name(old).to_string()) };
+            let f = self.flags[o] & !F_DELETED;
+            let nid = self.push_raw_frn(np, &name, f, self.size[o], self.mtime[o], None, self.frn[o]);
+            map.insert(old, nid);
+            pairs.push((old, nid));
+        }
+        self.remove_subtree(id);
+        pairs
     }
 
     #[inline]
@@ -437,6 +546,7 @@ impl Index {
             + self.size.capacity() * 8
             + self.mtime.capacity() * 8
             + self.flags.capacity()
+            + self.frn.capacity() * 8
             + self.name_rank.lock().unwrap().as_ref().map(|r| r.capacity() * 4).unwrap_or(0)
     }
 
@@ -458,7 +568,7 @@ impl Index {
                 continue; // 뺀 루트 아래
             }
             let key = self.key_str(id as u32).to_string();
-            let nid = out.push_raw(np, self.name(id as u32), f, self.size[id], self.mtime[id], Some(&key));
+            let nid = out.push_raw_frn(np, self.name(id as u32), f, self.size[id], self.mtime[id], Some(&key), self.frn[id]);
             map[id] = nid;
         }
         for r in &self.roots {
@@ -486,7 +596,7 @@ impl Index {
                 continue;
             }
             let key = other.key_str(id as u32).to_string();
-            map[id] = self.push_raw(np, other.name(id as u32), f, other.size[id], other.mtime[id], Some(&key));
+            map[id] = self.push_raw_frn(np, other.name(id as u32), f, other.size[id], other.mtime[id], Some(&key), other.frn[id]);
         }
         for r in &other.roots {
             let mut r2 = r.clone();
@@ -530,6 +640,11 @@ impl Index {
             f.sync_all().map_err(io_err(&tmp))?;
         }
         std::fs::rename(&tmp, path).map_err(io_err(path))?;
+        if path.file_name().map(|n| n == INDEX_FILE).unwrap_or(false) {
+            if let Some(d) = path.parent() {
+                let _ = std::fs::remove_file(d.join(INDEX_FILE_V1));
+            }
+        }
         Ok(std::fs::metadata(path).map(|m| m.len()).unwrap_or(0))
     }
 
@@ -548,6 +663,11 @@ impl Index {
             for v in [s.dirs, s.files, s.denied, s.reparse, s.excluded, s.millis] {
                 w.write_all(&v.to_le_bytes())?;
             }
+            w.write_all(&[r.source as u8, r.usn.is_some() as u8])?;
+            let c = r.usn.unwrap_or_default();
+            w.write_all(&c.volume_serial.to_le_bytes())?;
+            w.write_all(&c.journal_id.to_le_bytes())?;
+            w.write_all(&c.next_usn.to_le_bytes())?;
         }
         let n = self.flags.len();
         w.write_all(&(n as u32).to_le_bytes())?;
@@ -577,10 +697,32 @@ impl Index {
             let o = self.name_off[id] as usize;
             w.write_all(&self.names[o..o + self.name_len[id] as usize])?;
         }
+        let has = self.has_frn();
+        w.write_all(&[has as u8])?;
+        if has {
+            buf.clear();
+            for v in &self.frn {
+                buf.extend_from_slice(&v.to_le_bytes());
+            }
+            w.write_all(&buf)?;
+        }
         Ok(())
     }
 
-    /// 저장한 파일 읽기. 형식·버전·검사합이 다르면 오류(→ 새로 스캔)
+    /// 색인 폴더에서 읽기: `index-v2.bin`, 없으면 2a의 `index-v1.bin`
+    pub fn load_dir_file(path: &Path) -> Result<Index> {
+        if !path.exists() {
+            if let Some(d) = path.parent() {
+                let v1 = d.join(INDEX_FILE_V1);
+                if v1.exists() {
+                    return Index::load(&v1);
+                }
+            }
+        }
+        Index::load(path)
+    }
+
+    /// 저장한 파일 읽기(버전 1·2). 형식·버전·검사합이 다르면 오류(→ 새로 스캔)
     pub fn load(path: &Path) -> Result<Index> {
         let mut bytes = Vec::new();
         std::fs::File::open(path).and_then(|mut f| f.read_to_end(&mut bytes)).map_err(io_err(path))?;
@@ -595,7 +737,8 @@ impl Index {
             return Err(bad("검사합"));
         }
         let mut r = Reader { b: body, i: 8 };
-        if r.u32().ok_or_else(|| bad("버전"))? != FORMAT_VERSION {
+        let ver = r.u32().ok_or_else(|| bad("버전"))?;
+        if ver != 1 && ver != FORMAT_VERSION {
             return Err(bad("버전"));
         }
         let _created = r.i64();
@@ -611,7 +754,20 @@ impl Index {
                 *x = r.u64().ok_or_else(|| bad("루트"))?;
             }
             let stats = RootStats { dirs: v[0], files: v[1], denied: v[2], reparse: v[3], excluded: v[4], millis: v[5] };
-            roots.push(RootInfo { path: PathBuf::from(p), id, last_scan, stats });
+            let (mut source, mut usn) = (SourceKind::Walk, None);
+            if ver >= 2 {
+                let sb = r.take(2).ok_or_else(|| bad("루트"))?;
+                source = if sb[0] == 1 { SourceKind::Mft } else { SourceKind::Walk };
+                let c = UsnCursor {
+                    volume_serial: r.u64().ok_or_else(|| bad("루트"))?,
+                    journal_id: r.u64().ok_or_else(|| bad("루트"))?,
+                    next_usn: r.i64().ok_or_else(|| bad("루트"))?,
+                };
+                if sb[1] == 1 {
+                    usn = Some(c);
+                }
+            }
+            roots.push(RootInfo { path: PathBuf::from(p), id, last_scan, stats, source, usn });
         }
         let n = r.u32().ok_or_else(|| bad("항목 수"))? as usize;
         let parent: Vec<u32> = r.take(n * 4).ok_or_else(|| bad("부모"))?.chunks_exact(4).map(|c| u32::from_le_bytes(c.try_into().unwrap())).collect();
@@ -624,6 +780,11 @@ impl Index {
         if std::str::from_utf8(&names).is_err() {
             return Err(bad("이름"));
         }
+        let frn: Vec<u64> = if ver >= 2 && r.take(1).ok_or_else(|| bad("FRN"))?[0] == 1 {
+            r.take(n * 8).ok_or_else(|| bad("FRN"))?.chunks_exact(8).map(|c| u64::from_le_bytes(c.try_into().unwrap())).collect()
+        } else {
+            vec![0; n]
+        };
         let mut ix = Index { names, roots, ..Default::default() };
         ix.name_off.reserve(n);
         ix.keys.reserve(total);
@@ -662,6 +823,7 @@ impl Index {
         ix.flags = flags;
         ix.size = size;
         ix.mtime = mtime;
+        ix.frn = frn;
         ix.deleted = ix.flags.iter().filter(|f| **f & F_DELETED != 0).count();
         ix.version = 1;
         Ok(ix)
