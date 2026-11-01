@@ -53,6 +53,19 @@ struct Style {
     based: Option<String>,
     outline: Option<u32>,
     num: Option<(String, u32)>,
+    /// 0.3.1: 글자 크기(반 포인트, `w:sz`)·굵게 — 제목 스타일이 없는 문서에서 제목을 짐작할 때
+    sz: Option<u32>,
+    bold: Option<bool>,
+    /// 기본 문단 스타일(`w:default="1"`)
+    default_para: bool,
+}
+
+/// 스타일 이름 `""`에 문서 기본값(docDefaults의 글자 크기)을 넣어 둔다
+const DOC_DEFAULTS: &str = "";
+
+/// `<w:b/>`, `<w:b w:val="0"/>` → 켬/끔
+fn on_off(e: &BytesStart) -> bool {
+    !matches!(attr(e, "w:val").as_deref(), Some("0" | "false" | "off"))
 }
 
 fn parse_styles(xml: &str) -> HashMap<String, Style> {
@@ -61,11 +74,34 @@ fn parse_styles(xml: &str) -> HashMap<String, Style> {
     let mut cur: Option<(String, Style)> = None;
     let mut num_id: Option<String> = None;
     let mut ilvl = 0;
+    let mut in_rpr = false;
+    let mut in_defaults = false;
+    let mut defaults = Style::default();
     loop {
         match r.read_event() {
+            Ok(Event::End(e)) if e.name().as_ref() == "w:rPr" => in_rpr = false,
+            Ok(Event::End(e)) if e.name().as_ref() == "w:rPrDefault" => in_defaults = false,
             Ok(Event::Start(e)) | Ok(Event::Empty(e)) => match e.name().as_ref() {
+                "w:rPr" => in_rpr = true,
+                "w:rPrDefault" => in_defaults = true,
+                "w:sz" if in_rpr => {
+                    let v = attr(&e, "w:val").and_then(|v| v.parse().ok());
+                    match cur.as_mut() {
+                        Some((_, s)) => s.sz = v,
+                        None if in_defaults => defaults.sz = v,
+                        None => {}
+                    }
+                }
+                "w:b" if in_rpr => {
+                    if let Some((_, s)) = cur.as_mut() {
+                        s.bold = Some(on_off(&e));
+                    }
+                }
                 "w:style" => {
-                    cur = attr(&e, "w:styleId").map(|id| (id, Style::default()));
+                    cur = attr(&e, "w:styleId").map(|id| {
+                        let default_para = attr(&e, "w:type").as_deref() == Some("paragraph") && matches!(attr(&e, "w:default").as_deref(), Some("1" | "true"));
+                        (id, Style { default_para, ..Style::default() })
+                    });
                     num_id = None;
                     ilvl = 0;
                 }
@@ -100,7 +136,28 @@ fn parse_styles(xml: &str) -> HashMap<String, Style> {
             _ => {}
         }
     }
+    m.insert(DOC_DEFAULTS.to_string(), defaults);
     m
+}
+
+/// 문단 스타일에서 글자 크기·굵게(basedOn을 따라가고, 없으면 기본 문단 스타일 → 문서 기본값 → 10pt)
+fn style_font(styles: &HashMap<String, Style>, id: Option<&str>) -> (u32, bool) {
+    let default_id = styles.iter().find(|(_, s)| s.default_para).map(|(k, _)| k.clone());
+    let mut sz = None;
+    let mut bold = None;
+    let mut cur = id.map(str::to_string).or(default_id.clone());
+    for _ in 0..12 {
+        let Some(s) = cur.as_deref().and_then(|k| styles.get(k)) else { break };
+        sz = sz.or(s.sz);
+        bold = bold.or(s.bold);
+        cur = s.based.clone();
+    }
+    if sz.is_none() {
+        if let Some(d) = default_id.as_deref().and_then(|k| styles.get(k)) {
+            sz = d.sz;
+        }
+    }
+    (sz.or_else(|| styles.get(DOC_DEFAULTS).and_then(|d| d.sz)).unwrap_or(20).max(1), bold.unwrap_or(false))
 }
 
 /// numId → (ilvl → 번호 목록인지)
@@ -269,6 +326,8 @@ struct PState {
     num: Option<(String, u32)>,
     outline: Option<u32>,
     pics: Vec<(String, i64, i64)>,
+    /// 0.3.1: 글자 덩어리(run)마다 (크기, 굵게, 글자 수) — 직접 준 서식만(없으면 문단 스타일)
+    runs: Vec<(Option<u32>, Option<bool>, usize)>,
 }
 
 /// docx를 블록 목록으로 읽는다. 두 번째 값은 사용자에게 알릴 참고 사항.
@@ -282,6 +341,9 @@ pub fn read_docx(path: &Path) -> Result<(Vec<DocBlock>, Vec<String>)> {
     let rels = read_part(&mut z, "word/_rels/document.xml.rels").map(|s| parse_rels(&s)).unwrap_or_default();
     let mut notes: Vec<String> = Vec::new();
     let mut out: Vec<DocBlock> = Vec::new();
+    // 0.3.1: 본문 문단의 글자 크기·굵게(블록 번호 → 서식). 제목 스타일이 없을 때 제목을 짐작하는 데만 쓴다
+    let mut feats: HashMap<usize, Feat> = HashMap::new();
+    let mut in_run_rpr = false;
     let mut r = Reader::from_str(&doc);
     let mut stack: Vec<PState> = Vec::new();
     let mut in_t = false;
@@ -323,6 +385,12 @@ pub fn read_docx(path: &Path) -> Result<(Vec<DocBlock>, Vec<String>)> {
         match ev {
             Event::Start(e) => match e.name().as_ref() {
                 "w:p" => stack.push(PState::default()),
+                "w:r" => {
+                    if let Some(p) = stack.last_mut() {
+                        p.runs.push((None, None, 0));
+                    }
+                }
+                "w:rPr" => in_run_rpr = true,
                 "w:t" => in_t = true,
                 "w:numPr" => {
                     in_numpr = true;
@@ -356,6 +424,16 @@ pub fn read_docx(path: &Path) -> Result<(Vec<DocBlock>, Vec<String>)> {
                 _ => {}
             },
             Event::Empty(e) => match e.name().as_ref() {
+                "w:sz" if in_run_rpr => {
+                    if let Some(run) = stack.last_mut().and_then(|p| p.runs.last_mut()) {
+                        run.0 = attr(&e, "w:val").and_then(|v| v.parse().ok());
+                    }
+                }
+                "w:b" if in_run_rpr => {
+                    if let Some(run) = stack.last_mut().and_then(|p| p.runs.last_mut()) {
+                        run.1 = Some(on_off(&e));
+                    }
+                }
                 "w:pStyle" => {
                     if let Some(p) = stack.last_mut() {
                         p.pstyle = attr(&e, "w:val");
@@ -396,7 +474,11 @@ pub fn read_docx(path: &Path) -> Result<(Vec<DocBlock>, Vec<String>)> {
             },
             Event::Text(t) if in_t => {
                 if let Some(p) = stack.last_mut() {
-                    p.text.push_str(&t.xml10_content());
+                    let t = t.xml10_content();
+                    if let Some(run) = p.runs.last_mut() {
+                        run.2 += t.chars().filter(|c| !c.is_whitespace()).count();
+                    }
+                    p.text.push_str(&t);
                 }
             }
             Event::GeneralRef(g) if in_t => {
@@ -418,6 +500,8 @@ pub fn read_docx(path: &Path) -> Result<(Vec<DocBlock>, Vec<String>)> {
             }
             Event::End(e) => match e.name().as_ref() {
                 "w:t" => in_t = false,
+                // 문단 표시(w:pPr 안)의 w:rPr도 여기서 닫힌다 — 그 안의 w:sz는 runs가 비어 있거나 앞 run이 이미 닫혀 영향이 적다
+                "w:rPr" => in_run_rpr = false,
                 "w:numPr" => {
                     in_numpr = false;
                     if let (Some(n), Some(p)) = (num_id_tmp.take(), stack.last_mut()) {
@@ -445,6 +529,7 @@ pub fn read_docx(path: &Path) -> Result<(Vec<DocBlock>, Vec<String>)> {
                             _ => {
                                 let n = p.num.clone().or_else(|| p.pstyle.as_deref().and_then(|s| style_num(&styles, s)));
                                 let list = n.filter(|(id, _)| id != "0").map(|(id, il)| (il, numbering.get(&id).and_then(|m| m.get(&il)).copied().unwrap_or(false)));
+                                feats.insert(out.len(), para_feat(&styles, p.pstyle.as_deref(), &p.runs));
                                 out.push(DocBlock::Para { text: t, list });
                             }
                         }
@@ -482,7 +567,182 @@ pub fn read_docx(path: &Path) -> Result<(Vec<DocBlock>, Vec<String>)> {
             _ => {}
         }
     }
+    if !out.iter().any(|b| matches!(b, DocBlock::Heading { level: 1.., .. })) {
+        let n = infer_headings(&mut out, &feats);
+        if n > 0 {
+            notes.push(format!("제목 스타일이 없어 글자 크기·굵기·번호로 제목 {n}개를 찾았습니다"));
+        }
+    }
     Ok((out, notes))
+}
+
+// ---------- 0.3.1: 제목 스타일이 없는 문서(한글에서 저장한 docx 등)에서 제목 짐작하기 ----------
+
+/// 문단 서식 요약: 가장 많은 글자의 크기(반 포인트), 거의 모든 글자가 굵은지
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub(crate) struct Feat {
+    pub size: u32,
+    pub bold: bool,
+}
+
+fn para_feat(styles: &HashMap<String, Style>, pstyle: Option<&str>, runs: &[(Option<u32>, Option<bool>, usize)]) -> Feat {
+    let (ssz, sbold) = style_font(styles, pstyle);
+    let mut by_size: HashMap<u32, usize> = HashMap::new();
+    let (mut bold, mut total) = (0usize, 0usize);
+    for &(sz, b, n) in runs {
+        if n == 0 {
+            continue;
+        }
+        *by_size.entry(sz.unwrap_or(ssz)).or_default() += n;
+        total += n;
+        if b.unwrap_or(sbold) {
+            bold += n;
+        }
+    }
+    let size = by_size.into_iter().max_by_key(|&(s, n)| (n, s)).map(|(s, _)| s).unwrap_or(ssz);
+    Feat { size, bold: total > 0 && bold * 10 >= total * 9 }
+}
+
+/// 제목 줄 종류. 앞에 있을수록 높은 단계(본문보다 큰 글자 → 장·로마 숫자 → □ → 1. → 1.1 → 가. → ① → (1) → 굵은 줄)
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub(crate) enum Kind {
+    /// 본문보다 큰 글자(큰 것부터 0, 1, …)
+    Size(u32),
+    Chapter,
+    Roman,
+    Square,
+    Arabic,
+    ArabicSub,
+    Hangul,
+    Circled,
+    Paren,
+    Bold,
+}
+
+const HANGUL_NUM: &str = "가나다라마바사아자차카타파하";
+
+/// 번호·기호로 시작하는 제목 꼴: "제1장", "Ⅰ.", "II.", "□", "1.", "1)", "1.1", "가.", "①", "➀", "(1)", "(가)"
+pub(crate) fn title_pattern(t: &str) -> Option<Kind> {
+    let t = t.trim_start();
+    let mut cs = t.chars();
+    let c0 = cs.next()?;
+    let rest = cs.as_str();
+    // 번호 뒤에는 글이 와야 함(날짜 "2. 16." 같은 숫자 줄은 아님)
+    let text_after = |r: &str| -> bool {
+        let r = r.trim_start();
+        r.chars().next().is_some_and(|c| !c.is_ascii_digit() && !matches!(c, '.' | ')' | '-' | '~' | ','))
+    };
+    match c0 {
+        '제' => {
+            let d: String = rest.chars().take_while(|c| c.is_ascii_digit()).collect();
+            let r = &rest[d.len()..];
+            (!d.is_empty() && d.len() <= 3 && r.starts_with(['장', '절', '편', '부'])).then_some(Kind::Chapter)
+        }
+        'Ⅰ'..='Ⅻ' => (rest.starts_with(['.', ' ', ')']) && text_after(rest.trim_start_matches(['.', ')']))).then_some(Kind::Roman),
+        '□' | '■' | '◆' | '◇' => text_after(rest).then_some(Kind::Square),
+        '①'..='⑳' | '❶'..='❿' | '➀'..='➉' | '➊'..='➓' => text_after(rest).then_some(Kind::Circled),
+        '(' => {
+            let inner: String = rest.chars().take_while(|&c| c != ')').collect();
+            let ok = (!inner.is_empty() && inner.len() <= 2 && inner.bytes().all(|b| b.is_ascii_digit())) || (inner.chars().count() == 1 && HANGUL_NUM.contains(inner.as_str()));
+            (ok && rest[inner.len()..].starts_with(')') && text_after(&rest[inner.len() + 1..])).then_some(Kind::Paren)
+        }
+        'I' | 'V' | 'X' => {
+            let r: String = t.chars().take_while(|c| matches!(c, 'I' | 'V' | 'X')).collect();
+            let tail = &t[r.len()..];
+            (r.len() <= 4 && tail.starts_with('.') && text_after(&tail[1..])).then_some(Kind::Roman)
+        }
+        c if c.is_ascii_digit() => {
+            let d: String = t.chars().take_while(|c| c.is_ascii_digit()).collect();
+            if d.len() > 2 {
+                return None; // "2024." 같은 해
+            }
+            let tail = &t[d.len()..];
+            if let Some(sub) = tail.strip_prefix('.') {
+                let d2: String = sub.chars().take_while(|c| c.is_ascii_digit()).collect();
+                if !d2.is_empty() {
+                    let sub2 = sub[d2.len()..].trim_start_matches('.');
+                    return (d2.len() <= 2 && sub2.starts_with(' ') && text_after(sub2)).then_some(Kind::ArabicSub);
+                }
+                return text_after(sub).then_some(Kind::Arabic);
+            }
+            tail.strip_prefix(')').filter(|r| text_after(r)).map(|_| Kind::Arabic)
+        }
+        c if HANGUL_NUM.contains(c) => (rest.starts_with(['.', ')']) && text_after(&rest[1..])).then_some(Kind::Hangul),
+        _ => None,
+    }
+}
+
+/// 문장으로 끝나는 줄(제목이 아님): "…다.", "…요.", "…음.", "…함." 또는 긴 줄의 마침표
+fn ends_like_sentence(t: &str) -> bool {
+    let t = t.trim_end();
+    ["다.", "요.", "음.", "함."].iter().any(|e| t.ends_with(e)) || (t.ends_with('.') && t.chars().count() > 30)
+}
+
+/// 제목 스타일이 하나도 없을 때: 본문보다 큰 글자, 짧은 굵은 줄, 번호 꼴("1.", "가.", "Ⅰ.", "①", "□")로 제목을 짐작해
+/// `DocBlock::Para`를 `DocBlock::Heading`으로 바꾼다. 문서 맨 앞의 한 번뿐인 큰 글자는 문서 제목(0단계)으로.
+/// 꼴마다 단계를 정하고(앞의 꼴일수록 높은 단계) 바꾼 수(문서 제목 빼고)를 돌려준다.
+pub(crate) fn infer_headings(blocks: &mut [DocBlock], feats: &HashMap<usize, Feat>) -> usize {
+    // 본문 글자 크기 = 글자 수로 가장 많은 크기
+    let mut by_size: HashMap<u32, usize> = HashMap::new();
+    let mut paras = 0usize;
+    for (i, b) in blocks.iter().enumerate() {
+        if let (DocBlock::Para { text, .. }, Some(f)) = (b, feats.get(&i)) {
+            *by_size.entry(f.size).or_default() += text.chars().filter(|c| !c.is_whitespace()).count();
+            paras += 1;
+        }
+    }
+    let Some(body) = by_size.iter().max_by_key(|&(s, n)| (*n, std::cmp::Reverse(*s))).map(|(s, _)| *s) else { return 0 };
+    let mut bigger: Vec<u32> = by_size.keys().copied().filter(|&s| s * 100 >= body * 115).collect();
+    bigger.sort_unstable_by(|a, b| b.cmp(a));
+    let mut cand: Vec<(usize, Kind)> = Vec::new();
+    for (i, b) in blocks.iter().enumerate() {
+        let (DocBlock::Para { text, list: None }, Some(f)) = (b, feats.get(&i)) else { continue };
+        let n = text.chars().filter(|c| !c.is_whitespace()).count();
+        if n == 0 || n > 60 || ends_like_sentence(text) {
+            continue;
+        }
+        let kind = if let Some(k) = bigger.iter().position(|&s| s == f.size) {
+            Some(Kind::Size(k as u32))
+        } else if let Some(p) = title_pattern(text) {
+            // "1." "가." "①" "(1)"은 본문 목록일 수도 있어 굵을 때만(장·로마 숫자·□는 그대로)
+            let strong = matches!(p, Kind::Chapter | Kind::Roman | Kind::Square);
+            (f.size >= body && (strong || f.bold)).then_some(p)
+        } else {
+            (f.bold && f.size >= body && n <= 40).then_some(Kind::Bold)
+        };
+        if let Some(k) = kind {
+            cand.push((i, k));
+        }
+    }
+    // 본문 문단의 절반 넘게 같은 꼴이면 제목이 아니라 본문 서식
+    let mut count: HashMap<Kind, usize> = HashMap::new();
+    for (_, k) in &cand {
+        *count.entry(*k).or_default() += 1;
+    }
+    cand.retain(|(_, k)| !(paras > 6 && count[k] * 2 > paras));
+    // 문서 맨 앞(첫 글 문단)의 한 번뿐인 큰 글자 → 문서 제목(이미 Title 스타일이 있으면 아님)
+    let has_title = blocks.iter().any(|b| matches!(b, DocBlock::Heading { level: 0, .. }));
+    let first_para = blocks.iter().position(|b| matches!(b, DocBlock::Para { .. }));
+    let title_at = match (cand.first(), first_para) {
+        (Some(&(i, k @ Kind::Size(_))), Some(fp)) if !has_title && i == fp && count[&k] == 1 => Some(i),
+        _ => None,
+    };
+    let mut kinds: Vec<Kind> = cand.iter().filter(|(i, _)| Some(*i) != title_at).map(|(_, k)| *k).collect();
+    kinds.sort_unstable();
+    kinds.dedup();
+    let mut n = 0;
+    for (i, k) in cand {
+        let DocBlock::Para { text, .. } = &blocks[i] else { continue };
+        let text = text.clone();
+        if Some(i) == title_at {
+            blocks[i] = DocBlock::Heading { level: 0, text };
+            continue;
+        }
+        let level = kinds.iter().position(|x| *x == k).unwrap_or(0) as u32 + 1;
+        blocks[i] = DocBlock::Heading { level: level.min(3), text };
+        n += 1;
+    }
+    n
 }
 
 // ---------- 슬라이드 만들기 ----------
@@ -535,15 +795,56 @@ fn title_shapes(sec: &Section, suffix: &str) -> Vec<Shape> {
     v
 }
 
-/// 고르게 나누기: 7줄·420자 이하가 되도록 필요한 장 수만큼 나누고, 줄을 고르게 펴 담는다("(계속)"에 한 줄만 남지 않게)
+/// 고르게 나누기: 7줄·420자 이하가 되도록 필요한 장 수만큼 나누고, 줄을 고르게 펴 담는다("(계속)"에 한 줄만 남지 않게).
+/// 줄 길이가 고르지 않아 고르게 나눈 장이 420자를 넘으면(0.3.1) 앞에서부터 채워 넘치지 않게 나눈다.
 fn chunk(items: &[Para]) -> Vec<Vec<Para>> {
     if items.is_empty() {
         return vec![];
     }
     let chars: usize = items.iter().map(Para::chars).sum();
+    let fits = |c: &[Para]| c.len() <= MAX_LINES && (c.len() == 1 || c.iter().map(Para::chars).sum::<usize>() <= MAX_CHARS);
     let n = items.len().div_ceil(MAX_LINES).max(chars.div_ceil(MAX_CHARS)).min(items.len()).max(1);
     let per = items.len().div_ceil(n);
-    items.chunks(per).map(<[Para]>::to_vec).collect()
+    let even: Vec<Vec<Para>> = items.chunks(per).map(<[Para]>::to_vec).collect();
+    if even.iter().all(|c| fits(c)) {
+        return even;
+    }
+    let mut out: Vec<Vec<Para>> = vec![];
+    let mut cur: Vec<Para> = vec![];
+    for p in items {
+        cur.push(p.clone());
+        if !fits(&cur) && cur.len() > 1 {
+            let last = cur.pop().unwrap();
+            out.push(std::mem::replace(&mut cur, vec![last]));
+        }
+    }
+    if !cur.is_empty() {
+        out.push(cur);
+    }
+    out
+}
+
+/// 0.3.1: 한 문단이 한 장에 다 안 들어갈 만큼 길면(420자 넘음) 문장 끝(없으면 띄어쓰기)에서 약 300자씩 나눈다
+pub(crate) fn split_long(text: &str) -> Vec<String> {
+    const PIECE: usize = 300;
+    let chars: Vec<char> = text.chars().collect();
+    if chars.len() <= MAX_CHARS {
+        return vec![text.to_string()];
+    }
+    let mut out = Vec::new();
+    let mut start = 0;
+    while chars.len() - start > MAX_CHARS {
+        let lo = start + PIECE / 2;
+        let hi = (start + PIECE).min(chars.len() - 1);
+        // 문장 끝(". " "? " "! " "다. ")을 hi에서 거꾸로 찾고, 없으면 띄어쓰기, 그것도 없으면 그냥 자른다
+        let sentence = (lo..=hi).rev().find(|&i| matches!(chars[i], '.' | '?' | '!' | '。') && chars.get(i + 1).is_some_and(|c| c.is_whitespace()));
+        let cut = sentence.map(|i| i + 1).or_else(|| (lo..=hi).rev().find(|&i| chars[i].is_whitespace())).unwrap_or(hi);
+        out.push(chars[start..cut].iter().collect::<String>().trim().to_string());
+        start = cut;
+    }
+    out.push(chars[start..].iter().collect::<String>().trim().to_string());
+    out.retain(|s| !s.is_empty());
+    out
 }
 
 fn body_size(paras: &[Para], half: bool) -> f32 {
@@ -754,7 +1055,7 @@ pub fn build_deck(blocks: Vec<DocBlock>, fallback_title: &str) -> (Deck, usize) 
             }
             DocBlock::Para { text, list } => {
                 if secs.is_empty() {
-                    if doc_title.is_some() && subtitle.len() < 2 && list.is_none() {
+                    if doc_title.is_some() && subtitle.len() < 2 && list.is_none() && text.chars().count() <= 80 {
                         subtitle.push(text);
                         continue;
                     }
@@ -766,7 +1067,11 @@ pub fn build_deck(blocks: Vec<DocBlock>, fallback_title: &str) -> (Deck, usize) 
                     None => (0, Bullet::Char("•".into())),
                 };
                 if let Some(s) = secs.last_mut() {
-                    s.items.push(Para { runs: vec![Run::new(text, 20.0, false)], level, bullet, space_before_pt: 6.0, ..Default::default() });
+                    // 아주 긴 문단은 나눠서(이어지는 조각은 글머리표 없이) 한 장이 넘치지 않게
+                    for (k, piece) in split_long(&text).into_iter().enumerate() {
+                        let bullet = if k == 0 { bullet.clone() } else { Bullet::None };
+                        s.items.push(Para { runs: vec![Run::new(piece, 20.0, false)], level, bullet, space_before_pt: if k == 0 { 6.0 } else { 2.0 }, ..Default::default() });
+                    }
                 }
             }
             DocBlock::Image { name, bytes, cx, cy } => {
@@ -859,7 +1164,7 @@ pub fn doc_to_pptx(input: &Path, out_dir: Option<&Path>, soffice: Option<&Path>,
     progress(3, 3);
     let st = deck.count();
     if sections == 0 {
-        notes.push("제목(Heading) 스타일이 없어 내용을 한 덩어리로 나눴습니다".into());
+        notes.push("제목을 찾지 못해 글 길이에 맞춰 여러 장으로 나눴습니다".into());
     }
     let note = format!("슬라이드 {}장(제목 {}개, 그림 {}개, 표 {}개){}", st.slides, sections, st.media, st.tables, if notes.is_empty() { String::new() } else { format!(" · {}", notes.join(" · ")) });
     Ok(DocToPptxOut { input: input.into(), output, slides: st.slides, sections, images: st.media, tables: st.tables, via_libreoffice: via, millis: t0.elapsed().as_millis() as u64, note })
@@ -916,6 +1221,142 @@ mod tests {
         assert_eq!(rows, vec![12, 10], "11줄 + 머리글, 9줄 + 머리글");
         assert!(texts(4).iter().any(|t| t == "큰 표 (표 1/2)"));
         assert_eq!(texts(6), vec!["빈 장".to_string()]);
+    }
+
+    /// 시험용 docx: (스타일 id, 글자 크기 반 포인트, 굵게, 글) 문단들. 스타일 "0"은 기본 문단(한글의 "바탕글"처럼 10pt)
+    fn write_docx(path: &Path, styles_extra: &str, paras: &[(&str, Option<u32>, bool, &str)]) {
+        use std::io::Write;
+        let mut body = String::new();
+        for (st, sz, b, t) in paras {
+            let rpr = format!("{}{}", if *b { "<w:b/>" } else { "" }, sz.map(|v| format!(r#"<w:sz w:val="{v}"/>"#)).unwrap_or_default());
+            body.push_str(&format!(r#"<w:p><w:pPr><w:pStyle w:val="{st}"/><w:rPr><w:sz w:val="99"/></w:rPr></w:pPr><w:r><w:rPr>{rpr}</w:rPr><w:t xml:space="preserve">{t}</w:t></w:r></w:p>"#));
+        }
+        let doc = format!(r#"<?xml version="1.0" encoding="UTF-8"?><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>{body}</w:body></w:document>"#);
+        let styles = format!(
+            r#"<?xml version="1.0" encoding="UTF-8"?><w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:docDefaults><w:rPrDefault><w:rPr><w:sz w:val="22"/></w:rPr></w:rPrDefault></w:docDefaults><w:style w:type="paragraph" w:styleId="0" w:default="1"><w:name w:val="바탕글"/><w:rPr><w:sz w:val="20"/></w:rPr></w:style>{styles_extra}</w:styles>"#
+        );
+        let mut z = zip::ZipWriter::new(std::fs::File::create(path).unwrap());
+        let o = zip::write::SimpleFileOptions::default();
+        for (n, c) in [("[Content_Types].xml", "<Types/>"), ("word/document.xml", doc.as_str()), ("word/styles.xml", styles.as_str())] {
+            z.start_file(n, o).unwrap();
+            z.write_all(c.as_bytes()).unwrap();
+        }
+        z.finish().unwrap();
+    }
+
+    fn headings(blocks: &[DocBlock]) -> Vec<(u32, String)> {
+        blocks.iter().filter_map(|b| if let DocBlock::Heading { level, text } = b { Some((*level, text.clone())) } else { None }).collect()
+    }
+
+    #[test]
+    fn title_patterns() {
+        for (t, k) in [
+            ("Ⅰ. 추진 배경", Kind::Roman),
+            ("Ⅱ 운영 목표", Kind::Roman),
+            ("IV. 기대 효과", Kind::Roman),
+            ("제2장 사업 내용", Kind::Chapter),
+            ("□ 추진 배경", Kind::Square),
+            ("1. 이용 시간 늘리기", Kind::Arabic),
+            ("2) 대출 관리", Kind::Arabic),
+            ("1.1 세부 내용", Kind::ArabicSub),
+            ("가. 일정", Kind::Hangul),
+            ("나) 예산", Kind::Hangul),
+            ("① 신뢰할 수 있는 AI", Kind::Circled),
+            ("➁ 국민이 체감하는", Kind::Circled),
+            ("(1) 현황", Kind::Paren),
+            ("(가) 현황", Kind::Paren),
+        ] {
+            assert_eq!(title_pattern(t), Some(k), "{t}");
+        }
+        for t in ["2024. 2. 16.(금) 10:00", "2. 16.(금)", "100. 숫자", "가나다 순서", "Index", "1.5배 늘었다", "(주)회사", "Ⅰ"] {
+            assert_eq!(title_pattern(t), None, "{t}");
+        }
+    }
+
+    #[test]
+    fn infers_headings_without_styles() {
+        // 한글에서 저장한 docx와 같은 꼴: 제목 스타일 없음, 모든 문단이 기본 스타일 + 직접 준 크기·굵게
+        let t = tempfile::tempdir().unwrap();
+        let p = t.path().join("한글식.docx");
+        let long = "사내 도서관은 2019년 문을 연 뒤 이용자가 꾸준히 늘었지만 좌석과 책이 모자랍니다. ".repeat(3);
+        write_docx(
+            &p,
+            "",
+            &[
+                ("0", Some(40), true, "2026년 사내 도서관 운영 계획"),
+                ("0", Some(22), false, "총무팀 · 2026. 11."),
+                ("0", Some(30), true, "Ⅰ. 추진 배경"),
+                ("0", Some(22), false, &long),
+                ("0", Some(22), false, "□ 올해 설문에서 직원 312명 가운데 71%가 운영 시간을 늘려 달라고 답했습니다."),
+                ("0", Some(30), true, "Ⅱ. 운영 목표"),
+                ("0", Some(26), true, "1. 이용 시간 늘리기"),
+                ("0", Some(22), false, "평일 저녁 9시까지, 토요일 오전에도 문을 엽니다."),
+                ("0", Some(26), true, "2. 대출 관리 바꾸기"),
+                ("0", Some(22), false, "대출·반납을 사원증으로 기록하고 반납일 하루 전에 알려 줍니다."),
+                ("0", Some(22), true, "가. 일정"),
+                ("0", Some(22), false, "1월 설명회, 2월 시스템 설치, 3월부터 새 방식으로 운영합니다."),
+                ("0", Some(22), false, "1. 회의는 매주 월요일에 엽니다."), // 굵지 않은 번호 문장 → 본문
+                ("0", Some(30), true, "Ⅲ. 기대 효과"),
+                ("0", Some(22), false, &long),
+            ],
+        );
+        let (blocks, notes) = read_docx(&p).unwrap();
+        assert_eq!(
+            headings(&blocks),
+            vec![
+                (0, "2026년 사내 도서관 운영 계획".to_string()),
+                (1, "Ⅰ. 추진 배경".into()),
+                (1, "Ⅱ. 운영 목표".into()),
+                (2, "1. 이용 시간 늘리기".into()),
+                (2, "2. 대출 관리 바꾸기".into()),
+                (3, "가. 일정".into()),
+                (1, "Ⅲ. 기대 효과".into()),
+            ]
+        );
+        assert!(notes.iter().any(|n| n.contains("제목 6개")), "{notes:?}");
+        let (deck, secs) = build_deck(blocks, "한글식");
+        assert_eq!(secs, 5);
+        assert!(deck.slides.len() >= 6, "{}", deck.slides.len());
+        assert_eq!(deck.title, "2026년 사내 도서관 운영 계획");
+    }
+
+    #[test]
+    fn styled_documents_are_left_alone() {
+        // Heading 스타일이 하나라도 있으면 짐작하지 않는다(굵은 짧은 줄도 그대로 본문)
+        let t = tempfile::tempdir().unwrap();
+        let p = t.path().join("word.docx");
+        write_docx(
+            &p,
+            r#"<w:style w:type="paragraph" w:styleId="Heading1"><w:name w:val="heading 1"/><w:rPr><w:sz w:val="32"/></w:rPr></w:style>"#,
+            &[("Heading1", None, false, "개요"), ("0", None, false, "본문"), ("0", Some(40), true, "굵고 큰 줄"), ("0", None, true, "1. 굵은 번호")],
+        );
+        let (blocks, notes) = read_docx(&p).unwrap();
+        assert_eq!(headings(&blocks), vec![(1, "개요".to_string())]);
+        assert!(notes.is_empty());
+        // 모든 줄이 굵으면(본문 서식) 제목으로 보지 않는다
+        let p = t.path().join("bold.docx");
+        let paras: Vec<(&str, Option<u32>, bool, &str)> = (0..8).map(|_| ("0", Some(22), true, "짧은 굵은 줄")).collect();
+        write_docx(&p, "", &paras);
+        let (blocks, _) = read_docx(&p).unwrap();
+        assert!(headings(&blocks).is_empty());
+    }
+
+    #[test]
+    fn long_text_never_overflows() {
+        // 제목이 전혀 없고 아주 긴 문단 → 문장에서 나눠 여러 장, 장마다 420자 이하(한 문단 조각 하나만 있는 장은 300자 안팎)
+        let sentence = "개인정보위는 올해 여러 과제를 차례로 추진하겠습니다. ";
+        let blocks = vec![para(&sentence.repeat(40)), para("짧은 줄"), para(&"가".repeat(900))];
+        let (deck, secs) = build_deck(blocks, "긴 글");
+        assert_eq!(secs, 1);
+        assert!(deck.slides.len() >= 6, "{}", deck.slides.len());
+        for s in &deck.slides[1..] {
+            let chars: usize = s.iter().filter_map(|x| if let Shape::Text(t) = x { Some(t.paras.iter().map(Para::chars).sum::<usize>()) } else { None }).sum();
+            assert!(chars <= MAX_CHARS + 40, "{chars}"); // 제목 글자 포함
+        }
+        let pieces = split_long(&sentence.repeat(40));
+        assert!(pieces.len() >= 4 && pieces.iter().all(|p| p.chars().count() <= 300 && p.ends_with('.')), "{pieces:?}");
+        assert_eq!(split_long("짧은 글"), vec!["짧은 글".to_string()]);
+        assert!(split_long(&"가".repeat(900)).iter().all(|p| p.chars().count() <= 420));
     }
 
     #[test]
