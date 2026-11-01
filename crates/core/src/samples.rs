@@ -94,12 +94,25 @@ pub fn pdf_rotations(path: &Path) -> Result<Vec<i64>> {
 
 /// 맥 Archive Utility처럼 UTF-8 플래그 없이 이름 바이트를 그대로 넣은 무압축 zip.
 pub fn write_mac_style_zip(path: &Path, entries: &[(&str, &[u8])]) -> Result<()> {
+    let raw: Vec<(&[u8], &[u8])> = entries.iter().map(|(n, d)| (n.as_bytes(), *d)).collect();
+    write_raw_name_zip(path, &raw, 3)
+}
+
+/// 0.3.0 W4: 윈도 탐색기 "압축(ZIP) 폴더"처럼 이름을 CP949 바이트 그대로(UTF-8 표시 없이) 넣은 zip.
+pub fn write_windows_cp949_zip(path: &Path, entries: &[(&str, &[u8])]) -> Result<()> {
+    let enc: Vec<(Vec<u8>, &[u8])> = entries.iter().map(|(n, d)| (encoding_rs::EUC_KR.encode(n).0.into_owned(), *d)).collect();
+    let raw: Vec<(&[u8], &[u8])> = enc.iter().map(|(n, d)| (n.as_slice(), *d)).collect();
+    write_raw_name_zip(path, &raw, 0)
+}
+
+/// 이름 바이트를 그대로 넣은 무압축 zip(UTF-8 표시 없음). `host`: 0 = MS-DOS(윈도), 3 = Unix(맥)
+pub fn write_raw_name_zip(path: &Path, entries: &[(&[u8], &[u8])], host: u16) -> Result<()> {
     let mut out = Vec::new();
     let mut central = Vec::new();
     let u16le = |v: u16| v.to_le_bytes();
     let u32le = |v: u32| v.to_le_bytes();
     for (name, data) in entries {
-        let nb = name.as_bytes();
+        let nb: &[u8] = name;
         let crc = crc32(data);
         let offset = out.len() as u32;
         out.extend_from_slice(&u32le(0x04034b50));
@@ -115,7 +128,7 @@ pub fn write_mac_style_zip(path: &Path, entries: &[(&str, &[u8])]) -> Result<()>
         out.extend_from_slice(data);
 
         central.extend_from_slice(&u32le(0x02014b50));
-        for v in [(3u16 << 8) | 20, 20, 0, 0, 0, 0x21] {
+        for v in [(host << 8) | 20, 20, 0, 0, 0, 0x21] {
             central.extend_from_slice(&u16le(v));
         }
         for v in [crc, data.len() as u32, data.len() as u32] {
@@ -124,7 +137,13 @@ pub fn write_mac_style_zip(path: &Path, entries: &[(&str, &[u8])]) -> Result<()>
         for v in [nb.len() as u16, 0, 0, 0, 0] {
             central.extend_from_slice(&u16le(v));
         }
-        let attr: u32 = if name.ends_with('/') { (0o040755 << 16) | 0x10 } else { 0o100644 << 16 };
+        let is_dir = name.ends_with(b"/");
+        let attr: u32 = match (host, is_dir) {
+            (3, true) => (0o040755 << 16) | 0x10,
+            (3, false) => 0o100644 << 16,
+            (_, true) => 0x10,
+            (_, false) => 0x20,
+        };
         central.extend_from_slice(&u32le(attr));
         central.extend_from_slice(&u32le(offset));
         central.extend_from_slice(nb);
@@ -222,6 +241,11 @@ fn run_ffmpeg(ffmpeg: &Path, args: &[&std::ffi::OsStr]) -> Result<()> {
 /// 작게 잘라(`out_w`×`out_h`) grid 자르기도 확인하고, `irot`=1(반시계 90°)과 EXIF(날짜, 회전 6)를 넣는다.
 /// 타일은 ffmpeg(libx265)로 인코딩한다.
 pub fn make_grid_heic(ffmpeg: &Path, path: &Path, tile: u32, out_w: u16, out_h: u16, date: &str) -> Result<()> {
+    make_grid_heic_exif(ffmpeg, path, tile, out_w, out_h, crate::exif::build_sample(date, 6))
+}
+
+/// 0.3.0 W4: [`make_grid_heic`]과 같되 EXIF 블록을 직접 준다(예: GPS가 든 [`crate::exif::build_sample_gps`]).
+pub fn make_grid_heic_exif(ffmpeg: &Path, path: &Path, tile: u32, out_w: u16, out_h: u16, exif: Vec<u8>) -> Result<()> {
     let tmp = crate::tempdir::JobDir::new("heicgen")?;
     let mut tiles = Vec::new();
     for (i, color) in ["red", "lime", "blue", "white"].iter().enumerate() {
@@ -238,7 +262,6 @@ pub fn make_grid_heic(ffmpeg: &Path, path: &Path, tile: u32, out_w: u16, out_h: 
         )?;
         tiles.push(std::fs::read(&f).map_err(io_err(&f))?);
     }
-    let exif = crate::exif::build_sample(date, 6);
     let bytes = crate::heif::build_grid_heic(&tiles, tile, tile, 2, 2, out_w, out_h, 1, Some(&exif))
         .ok_or_else(|| Error::Invalid("HEIC 샘플을 만들지 못했습니다(HEVC 타일 해석 실패)".into()))?;
     std::fs::write(path, bytes).map_err(io_err(path))

@@ -86,7 +86,7 @@ pub fn is_mac_junk(name: &str) -> bool {
 }
 
 /// `a/b/c.txt` → 안전한 상대 경로. `..`·드라이브·절대 경로가 섞이면 None.
-fn safe_relative(name: &str) -> Option<PathBuf> {
+pub(crate) fn safe_relative(name: &str) -> Option<PathBuf> {
     let mut out = PathBuf::new();
     for comp in name.split('/') {
         match comp {
