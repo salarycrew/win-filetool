@@ -38,9 +38,9 @@ try {
       try { $restore.UpdateLinksAtOpen = $o.Options.UpdateLinksAtOpen; $o.Options.UpdateLinksAtOpen = $false } catch {}
       try { $restore.ConfirmConversions = $o.Options.ConfirmConversions; $o.Options.ConfirmConversions = $false } catch {}
       try {
-        # FileName, ConfirmConversions, ReadOnly, AddToRecentFiles, PasswordDocument, PasswordTemplate, Revert,
-        # WritePasswordDocument, WritePasswordTemplate, Format, Encoding, Visible, OpenAndRepair, DocumentDirection, NoEncodingDialog
-        $doc = $o.Documents.Open($In, $false, $true, $false, $nopass, $nopass, $false, $missing, $missing, 0, $missing, $false, $false, $missing, $true)
+        # FileName, ConfirmConversions, ReadOnly, AddToRecentFiles, PasswordDocument, PasswordTemplate, Revert
+        # (뒤 인자까지 15개를 주면 PowerShell COM 연결이 Missing·bool 섞임을 거부해 열지 못한다 — 0.3.3 desktop 확인)
+        $doc = $o.Documents.Open($In, $false, $true, $false, $nopass, $nopass, $false)
       } catch { "OPENERR $($_.Exception.Message)"; 'OPEN False'; $code = 4; break }
       'OPEN True'
       try { "PAGES $($doc.ComputeStatistics(2))" } catch {}

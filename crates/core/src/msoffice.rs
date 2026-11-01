@@ -222,7 +222,8 @@ pub fn outcome_error(o: &Outcome, app: App, target: DocTarget) -> Option<String>
         if e.contains("password") || e.contains("암호") {
             return Some(MSG_ENCRYPTED.into());
         }
-        return Some(format!("{name}이(가) 이 파일을 열지 못했어요. 손상된 파일이거나 {name}이(가) 읽을 수 없는 형식일 수 있어요."));
+        let detail = o.open_error.as_deref().map(|d| format!(" ({d})")).unwrap_or_default();
+        return Some(format!("{name}이(가) 이 파일을 열지 못했어요. 손상된 파일이거나 {name}이(가) 읽을 수 없는 형식일 수 있어요.{detail}"));
     }
     if let Some(e) = &o.error {
         return Some(format!("{name} 자동화 중 오류가 났어요: {e}"));
@@ -469,7 +470,7 @@ mod tests {
         for open in ["$o.Documents.Open(", "$o.Workbooks.Open(", "$o.Presentations.Open("] {
             assert!(SCRIPT.find(open).unwrap() > sec, "{open}");
         }
-        for k in ["$o.Documents.Open($In, $false, $true, $false, $nopass", "$o.Workbooks.Open($In, 0, $true", "$o.Presentations.Open($In, -1, 0, 0)", "'NOPID'", "if ($ours)", "$o.Quit()", "DisplayAlerts", "EnableEvents = $false", "UpdateLinksAtOpen"] {
+        for k in ["$o.Documents.Open($In, $false, $true, $false, $nopass, $nopass, $false)", "$o.Workbooks.Open($In, 0, $true", "$o.Presentations.Open($In, -1, 0, 0)", "'NOPID'", "if ($ours)", "$o.Quit()", "DisplayAlerts", "EnableEvents = $false", "UpdateLinksAtOpen"] {
             assert!(SCRIPT.contains(k), "{k}");
         }
         // 원본 경로에 저장하는 말이 없다(-Out으로만 저장)
