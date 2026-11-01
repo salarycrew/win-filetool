@@ -21,6 +21,9 @@ memchr = "2.8.3"
 # PDF → 이미지: PDFium을 실행 중에 불러온다(pdfium.dll은 exe 옆, scripts/fetch-pdfium.sh)
 # 0.3.0 W2: Word 읽기·이미지 순서(docx/pptx/xlsx XML)
 quick-xml = "0.42.0"
+# 0.3.0 W4: 이름 바꾸기 정규식, 같은 파일 찾기 해시(SHA-256)
+regex = { version = "1.13.1", default-features = false, features = ["std", "unicode"] }
+sha2 = "0.10.9"
 pdfium-render = { version = "0.9.4", default-features = false, features = ["pdfium_latest", "image_latest", "thread_safe"] }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"
@@ -35,7 +38,7 @@ zstd = { version = "0.13", default-features = false }
 
 [target.'cfg(windows)'.dependencies]
 # 2a 검색: FindFirstFileExW, ReadDirectoryChangesW, 드라이브 종류
-windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_Storage_FileSystem", "Win32_System_IO", "Win32_Security", "Win32_Security_Authorization", "Win32_System_Pipes", "Win32_System_Services", "Win32_System_Threading"] }
+windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_Storage_FileSystem", "Win32_System_IO", "Win32_Security", "Win32_Security_Authorization", "Win32_System_Pipes", "Win32_System_Services", "Win32_System_Threading", "Win32_UI_Shell"] }
 # 윈도 시작 시 실행(HKCU Run)
 winreg = "0.56"
 

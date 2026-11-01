@@ -9,6 +9,10 @@ description = "파일 도구 빠른 검색 서비스(2c): NTFS MFT 읽기·USN �
 name = "filetool-svc"
 path = "src/main.rs"
 
+[build-dependencies]
+# VC 런타임 정적 링크(앱과 같은 방식). MIT OR Apache-2.0 OR Zlib
+static_vcruntime = "3.0.0"
+
 [dependencies]
 filetool-core = { path = "../core" }
 chrono = { version = "0.4.45", default-features = false, features = ["clock", "std"] }
