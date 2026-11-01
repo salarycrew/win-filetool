@@ -24,7 +24,7 @@ use crate::AppState;
 
 type R<T> = Result<T, CmdError>;
 
-fn err(e: Error) -> CmdError {
+pub(crate) fn err(e: Error) -> CmdError {
     match &e {
         Error::ToolMissing { .. } => CmdError { code: "tool_missing", message: e.to_string() },
         _ => CmdError::from(e),
@@ -55,14 +55,14 @@ pub struct ToolsProgress {
 }
 
 /// 진행 보내기(같은 값은 다시 보내지 않음)
-struct Emit {
+pub(crate) struct Emit {
     app: AppHandle,
     job: Option<u64>,
     last: (i64, String),
 }
 
 impl Emit {
-    fn send(&mut self, done: f64, total: f64, current: &str) {
+    pub(crate) fn send(&mut self, done: f64, total: f64, current: &str) {
         let Some(job) = self.job else { return };
         let pct = if total > 0.0 { (done / total * 200.0) as i64 } else { done as i64 };
         if (pct, current) == (self.last.0, self.last.1.as_str()) {
@@ -74,7 +74,7 @@ impl Emit {
 }
 
 /// job이 있으면 취소 표지를 등록하고, 끝나면 지운다.
-async fn job_work<T, F>(app: AppHandle, state: &State<'_, AppState>, job: Option<u64>, f: F) -> R<T>
+pub(crate) async fn job_work<T, F>(app: AppHandle, state: &State<'_, AppState>, job: Option<u64>, f: F) -> R<T>
 where
     T: Send + 'static,
     F: FnOnce(&Cancel, &mut Emit) -> filetool_core::Result<T> + Send + 'static,

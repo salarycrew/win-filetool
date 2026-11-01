@@ -518,3 +518,47 @@ textarea.ex.big { height: 360px; margin-top: 8px; }
 .tool-opts .opt-l:empty { display: none; }
 .sz { flex-direction: row; gap: 8px; align-items: center; }
 .sz .pill { margin-top: 0; }
+
+/* ---------- 0.3.2 홈(큰 단추 6개)·할 일 화면 ---------- */
+.home-promise { display: flex; align-items: center; gap: 6px; }
+.home-promise .ic { width: 16px; height: 16px; color: var(--ok); }
+.jobs { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin-top: 6px; }
+.job-b { display: flex; flex-direction: column; align-items: flex-start; gap: 12px; min-height: 132px; padding: 16px 16px 14px; text-align: left; background: var(--card); border: 1px solid var(--stroke); border-radius: var(--r-lg); cursor: pointer; box-shadow: var(--shadow); transition: background var(--dur), border-color var(--dur), box-shadow var(--dur); }
+.job-b:hover { background: var(--card-hover); }
+.job-b:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.job-b .tile { width: 48px; height: 48px; border-radius: 10px; }
+.job-b .tile .ic { width: 26px; height: 26px; }
+.job-b b { display: block; font-size: 16px; line-height: 22px; font-weight: 600; }
+.job-b .d { display: block; color: var(--text-2); font-size: 12.5px; line-height: 17px; margin-top: 3px; }
+.job-b.hint-on { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent) inset, var(--shadow); }
+.dz.home-dz { min-height: 0; flex-direction: row; gap: 14px; padding: 14px 18px; margin-top: 12px; justify-content: flex-start; text-align: left; }
+.dz-ic.sm { width: 40px; height: 40px; margin: 0; flex: none; }
+.dz-ic.sm .ic { width: 20px; height: 20px; }
+.dz-t2 { flex: 1; color: var(--text-2); }
+.dz-t2 b { color: var(--text); }
+.suggest { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-top: 12px; padding: 12px 14px; border-radius: var(--r-lg); background: var(--accent-soft); }
+.suggest > .ic { color: var(--accent-text); flex: none; }
+.suggest > span:not(.sg-b) { flex: 1 1 200px; }
+.sg-b { display: flex; gap: 6px; flex-wrap: wrap; }
+.home-more { margin: 14px 0 0; }
+.home-more .link { display: inline-flex; align-items: center; gap: 6px; }
+.home-more .ic { width: 16px; height: 16px; }
+.job-top { margin: -8px 0 8px -6px; }
+h1.title .tile { display: inline-grid; vertical-align: -8px; margin-right: 10px; }
+.dz.job-dz { min-height: 260px; }
+.job-fl { max-height: 320px; }
+.job-opt { margin-top: 12px; }
+.pg-strip { list-style: none; padding: 6px 8px 10px 40px; }
+.thumbs { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; max-height: 260px; overflow-y: auto; }
+.th { position: relative; padding: 2px; border: 1px solid var(--stroke); border-radius: 4px; background: var(--card); cursor: pointer; }
+.th img { display: block; width: 72px; height: auto; }
+.th span { position: absolute; right: 3px; bottom: 3px; font-size: 11px; padding: 0 4px; border-radius: 3px; background: var(--subtle-2); }
+.th.off img { opacity: .25; }
+.th.off::after { content: "뺌"; position: absolute; inset: 0; display: grid; place-items: center; font-weight: 700; color: var(--danger, #c42b1c); }
+.th:focus-visible { outline: 2px solid var(--accent); }
+.more-l .card { min-height: 76px; }
+@media (max-width: 779.98px) {
+  .jobs { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .job-b { min-height: 104px; padding: 12px; gap: 8px; }
+  .job-b .tile { width: 40px; height: 40px; }
+}

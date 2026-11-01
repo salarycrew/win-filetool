@@ -12,6 +12,7 @@
 //! 2c: 빠른 검색 서비스(`filetool-svc`, 선택 설치)가 답하면 그 서비스가 색인한 드라이브는 서비스에 묻고(상태 줄 "빠른 색인(서비스)"),
 //!     나머지 루트만 앱이 색인한다. 서비스가 없거나 멈추면 조용히 앱 색인으로. [설정] > 검색에서 설치/제거(UAC 1번).
 
+mod cmd_core;
 mod cmd_runtime;
 mod cmd_pdfedit;
 mod cmd_office;
@@ -1061,18 +1062,93 @@ fn start_watch_thread(app: AppHandle) {
     });
 }
 
+/// 0.3.2 설치 파일이 부르는 `--ctx-menu=install|remove`: 창 없이 우클릭 메뉴만 등록·제거하고 끝낸다.
+/// install은 사용자가 [설정]에서 끈 적이 있으면(`context_menu_off`) 다시 켜지 않는다.
+fn ctx_menu_cli() -> Option<i32> {
+    let mode = std::env::args().find_map(|a| a.strip_prefix("--ctx-menu=").map(str::to_string))?;
+    let exe = std::env::current_exe().ok()?;
+    let code = match mode.as_str() {
+        "install" => {
+            let default_dir = std::env::var_os("APPDATA").map(PathBuf::from).unwrap_or_else(std::env::temp_dir).join("kr.salarycrew.winfiletool");
+            let (dir, _) = filetool_core::portable::config_dir(exe.parent(), default_dir);
+            if Settings::load(&dir).context_menu_off {
+                0
+            } else {
+                filetool_core::ctxmenu::set(true, &exe).map(|_| 0).unwrap_or(1)
+            }
+        }
+        "remove" => filetool_core::ctxmenu::set(false, &exe).map(|_| 0).unwrap_or(1),
+        _ => 2,
+    };
+    Some(code)
+}
+
+/// 우클릭으로 여러 파일을 골랐을 때 탐색기는 파일마다 이 exe를 실행한다. 이미 앱이 떠 있으면
+/// Tauri를 띄우지 않고 single-instance 플러그인과 같은 메시지(WM_COPYDATA, cwd·인자를 NUL로 구분)로 인자만 넘기고 바로 끝낸다.
+#[cfg(windows)]
+fn forward_ctx_fast() -> bool {
+    use windows_sys::Win32::UI::WindowsAndMessaging::{AllowSetForegroundWindow, FindWindowW, GetWindowThreadProcessId, SendMessageTimeoutW, SMTO_NORMAL, WM_COPYDATA};
+    #[repr(C)]
+    struct CopyData {
+        dw_data: usize,
+        cb_data: u32,
+        lp_data: *const u8,
+    }
+    if !std::env::args().any(|a| a.starts_with(filetool_core::ctxmenu::CTX_ARG)) {
+        return false;
+    }
+    let wide = |s: &str| s.encode_utf16().chain(Some(0)).collect::<Vec<u16>>();
+    let (class, title) = (wide("kr.salarycrew.winfiletool-sic"), wide("kr.salarycrew.winfiletool-siw"));
+    unsafe {
+        let hwnd = FindWindowW(class.as_ptr(), title.as_ptr());
+        if hwnd.is_null() {
+            return false;
+        }
+        let mut pid = 0;
+        GetWindowThreadProcessId(hwnd, &mut pid);
+        if pid != 0 {
+            AllowSetForegroundWindow(pid);
+        }
+        let mut data = std::env::current_dir().unwrap_or_default().to_string_lossy().into_owned();
+        for a in std::env::args_os() {
+            data.push('\0');
+            data.push_str(&a.to_string_lossy());
+        }
+        let cds = CopyData { dw_data: 1543, cb_data: data.len() as u32, lp_data: data.as_ptr() };
+        SendMessageTimeoutW(hwnd, WM_COPYDATA, 0, &cds as *const _ as isize, SMTO_NORMAL, 10_000, std::ptr::null_mut()) != 0
+    }
+}
+#[cfg(not(windows))]
+fn forward_ctx_fast() -> bool {
+    false
+}
+
 fn main() {
+    let started = Instant::now();
+    if let Some(code) = ctx_menu_cli() {
+        std::process::exit(code);
+    }
+    if forward_ctx_fast() {
+        return;
+    }
     // 0.3.0: WebView2가 없으면 창을 만들다 꺼지므로 먼저 확인하고, 없으면 한국어 안내 후 끝낸다
     if !cmd_runtime::ensure_webview2() {
         std::process::exit(2);
     }
+    let ctx_queue = cmd_core::CtxQueue::default();
+    ctx_queue.push_args(std::env::args());
     tauri::Builder::default()
-        // 한 번만 실행: 두 번째 실행은 기존 창을 앞으로(자동 실행 인자로 온 것은 조용히 무시)
+        // 한 번만 실행: 두 번째 실행은 기존 창을 앞으로(자동 실행 인자로 온 것은 조용히 무시).
+        // 0.3.2 우클릭 메뉴로 온 것은 파일을 모아 두었다가 한 묶음으로 화면에 넘긴다.
         .plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
-            if !autostart::is_autostart_launch(&argv) {
+            if cmd_core::on_second_instance(app, &argv) {
+                show_main(app);
+            } else if !autostart::is_autostart_launch(&argv) {
                 show_main(app);
             }
         }))
+        .manage(ctx_queue)
+        .manage(cmd_core::StartTime(started))
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .on_window_event(|window, event| {
@@ -1232,6 +1308,15 @@ fn main() {
             cmd_ui::file_stats,
             cmd_ui::list_files,
             cmd_ui::image_data_url,
+            // 0.3.2 핵심 6개·우클릭 메뉴
+            cmd_core::pdf_compress_target,
+            cmd_core::pdf_merge_plan,
+            cmd_core::photo_shrink,
+            cmd_core::nfc_fix_paths,
+            cmd_core::ctx_menu_get,
+            cmd_core::ctx_menu_set,
+            cmd_core::ctx_take,
+            cmd_core::ui_ready,
             // 0.3.1 새 버전 알림
             cmd_update::update_view,
             cmd_update::update_check,

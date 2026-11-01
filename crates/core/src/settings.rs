@@ -23,6 +23,9 @@ pub struct Settings {
     /// 0.3.1: 새 버전 알림(켬/끔, 마지막 확인, 넘긴 판)
     #[serde(default)]
     pub update: crate::update::UpdateSettings,
+    /// 0.3.2: 사용자가 우클릭 메뉴를 끔(설치 파일이 새 판으로 바꿀 때 다시 켜지 않게). 기본 false
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub context_menu_off: bool,
 }
 
 /// ux3: 화면 상태. 모두 없으면 기본값(검색 탭, 기본 창 크기, 이름 오름차순)

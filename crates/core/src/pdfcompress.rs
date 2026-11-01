@@ -56,6 +56,9 @@ impl CompressPreset {
             CompressPreset::Print => "인쇄용",
         }
     }
+    pub fn level(self) -> Level {
+        Level { max_dpi: self.max_dpi(), quality: self.quality() }
+    }
     pub fn parse(s: &str) -> Option<Self> {
         match s {
             "screen" | "화면용" => Some(Self::Screen),
@@ -65,6 +68,25 @@ impl CompressPreset {
         }
     }
 }
+
+/// 사진을 줄이는 정도: 찍히는 크기 기준 최대 DPI와 JPEG 품질
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Level {
+    pub max_dpi: f64,
+    pub quality: u8,
+}
+
+/// 0.3.2 목표 크기 맞추기에서 차례로 해 보는 단계(보통 → 가장 작게). 글자·선은 어느 단계에서도 그대로다.
+pub const TARGET_LADDER: [Level; 8] = [
+    Level { max_dpi: 150.0, quality: 75 },
+    Level { max_dpi: 150.0, quality: 60 },
+    Level { max_dpi: 120.0, quality: 55 },
+    Level { max_dpi: 100.0, quality: 50 },
+    Level { max_dpi: 85.0, quality: 45 },
+    Level { max_dpi: 72.0, quality: 40 },
+    Level { max_dpi: 60.0, quality: 35 },
+    Level { max_dpi: 50.0, quality: 30 },
+];
 
 #[derive(Debug, Clone, Serialize)]
 pub struct CompressOut {
@@ -80,6 +102,13 @@ pub struct CompressOut {
     pub images_downsampled: usize,
     /// 사람이 읽을 요약
     pub note: String,
+    /// 0.3.2: 목표 크기(바이트, 목표 없이 줄였으면 None)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub target: Option<u64>,
+    /// 0.3.2: 목표 이하로 만들었는지(목표가 없으면 true)
+    pub reached: bool,
+    /// 0.3.2: 원본이 이미 목표보다 작아 손대지 않았는지
+    pub already_small: bool,
 }
 
 pub const MIN_IMAGE_BYTES: usize = 4 * 1024;
@@ -291,7 +320,7 @@ enum Plan {
     Replace { bytes: Vec<u8>, w: u32, h: u32, downsampled: bool },
 }
 
-fn plan_image(doc: &Document, id: ObjectId, disp: Option<(f64, f64)>, preset: CompressPreset, masks: &HashSet<ObjectId>) -> Plan {
+fn plan_image(doc: &Document, id: ObjectId, disp: Option<(f64, f64)>, preset: Level, masks: &HashSet<ObjectId>) -> Plan {
     let Ok(stream) = doc.get_object(id).and_then(Object::as_stream) else { return Plan::Skip };
     let d = &stream.dict;
     if masks.contains(&id)
@@ -350,8 +379,8 @@ fn plan_image(doc: &Document, id: ObjectId, disp: Option<(f64, f64)>, preset: Co
     let mut downsampled = false;
     if let Some((dw, dh)) = disp {
         if dw > 0.0 && dh > 0.0 {
-            let tw = (dw / 72.0 * preset.max_dpi()).ceil();
-            let th = (dh / 72.0 * preset.max_dpi()).ceil();
+            let tw = (dw / 72.0 * preset.max_dpi).ceil();
+            let th = (dh / 72.0 * preset.max_dpi).ceil();
             let scale = (tw / w as f64).max(th / h as f64);
             // 10% 넘게 줄일 때만 줄인다
             if scale < 0.9 {
@@ -363,7 +392,7 @@ fn plan_image(doc: &Document, id: ObjectId, disp: Option<(f64, f64)>, preset: Co
         }
     }
     let mut buf = Vec::new();
-    let enc = JpegEncoder::new_with_quality(&mut buf, preset.quality());
+    let enc = JpegEncoder::new_with_quality(&mut buf, preset.quality);
     let ok = match comps {
         Comps::Rgb => {
             let rgb = img.to_rgb8();
@@ -386,14 +415,22 @@ fn is_image(obj: &Object) -> bool {
 }
 
 /// 문서를 압축해 바이트로(파일은 쓰지 않음). (바이트, 이미지 수, 다시 인코딩한 수, 줄인 수)
-pub fn compress_doc(mut doc: Document, preset: CompressPreset) -> Result<(Vec<u8>, usize, usize, usize)> {
+pub fn compress_doc(doc: Document, preset: CompressPreset) -> Result<(Vec<u8>, usize, usize, usize)> {
+    compress_doc_level(doc, preset.level(), None)
+}
+
+/// 0.3.2: 정한 해상도·품질로 압축(목표 크기 맞추기에서 여러 번 부름). 취소되면 `Error::Cancelled`.
+pub fn compress_doc_level(mut doc: Document, level: Level, cancel: Option<&crate::process::Cancel>) -> Result<(Vec<u8>, usize, usize, usize)> {
     let sizes = image_display_sizes(&doc);
     let masks = mask_ids(&doc);
     let ids: Vec<ObjectId> = doc.objects.iter().filter(|(_, o)| is_image(o)).map(|(id, _)| *id).collect();
     let total = ids.len();
     let (mut re, mut down) = (0, 0);
     for id in ids {
-        if let Plan::Replace { bytes, w, h, downsampled } = plan_image(&doc, id, sizes.get(&id).copied(), preset, &masks) {
+        if let Some(c) = cancel {
+            c.check()?;
+        }
+        if let Plan::Replace { bytes, w, h, downsampled } = plan_image(&doc, id, sizes.get(&id).copied(), level, &masks) {
             if let Ok(Object::Stream(s)) = doc.get_object_mut(id) {
                 s.dict.set("Filter", Object::Name(b"DCTDecode".to_vec()));
                 s.dict.remove(b"DecodeParms");
@@ -460,6 +497,9 @@ pub fn compress(input: &Path, out_dir: Option<&Path>, preset: CompressPreset) ->
         images_recompressed: re,
         images_downsampled: down,
         note: String::new(),
+        target: None,
+        reached: true,
+        already_small: false,
     };
     let img_note = format!("이미지 {total}개 중 {re}개 다시 압축({down}개 해상도 줄임)");
     if after >= before {
@@ -471,6 +511,108 @@ pub fn compress(input: &Path, out_dir: Option<&Path>, preset: CompressPreset) ->
     out.note = format!("{} → {} ({} 줄어듦, {}, {pages}쪽). {img_note}", human(before), human(after), reduction_pct(before, after), preset.label());
     out.output = Some(path);
     Ok(out)
+}
+
+/// 0.3.2: 목표 크기(바이트) 이하가 될 때까지 [`TARGET_LADDER`]를 차례로 해 본다.
+/// - 원본이 이미 목표 이하이면 새 파일을 만들지 않는다(`already_small`).
+/// - 목표에 닿으면 그 결과를 저장한다(`reached = true`).
+/// - 끝까지 해도 안 되면 **가장 작은 결과**를 저장하고(원본보다 작을 때만) `reached = false`로 얼마나 줄었는지 알린다.
+/// `progress(i, n)`은 단계마다 부른다. 취소하면 `Error::Cancelled`이고 파일을 남기지 않는다.
+pub fn compress_to_target(
+    input: &Path,
+    out_dir: Option<&Path>,
+    target: u64,
+    cancel: Option<&crate::process::Cancel>,
+    progress: &mut dyn FnMut(usize, usize),
+) -> Result<CompressOut> {
+    let before = std::fs::metadata(input).map_err(crate::error::io_err(input))?.len();
+    let doc = load_unencrypted(input)?;
+    let pages = doc.get_pages().len() as u32;
+    let mut out = CompressOut {
+        input: input.into(),
+        output: None,
+        before,
+        after: before,
+        pages,
+        images_total: 0,
+        images_recompressed: 0,
+        images_downsampled: 0,
+        note: String::new(),
+        target: Some(target),
+        reached: true,
+        already_small: false,
+    };
+    if before <= target {
+        out.already_small = true;
+        out.note = format!("이미 {} 이하예요({}). 새 파일을 만들지 않았어요.", target_label(target), human(before));
+        return Ok(out);
+    }
+    let n = TARGET_LADDER.len();
+    let mut best: Option<(Vec<u8>, usize, usize, usize, Level)> = None;
+    let mut i = 0;
+    while i < n {
+        if let Some(c) = cancel {
+            c.check()?;
+        }
+        progress(i, n);
+        let level = TARGET_LADDER[i];
+        let (bytes, total, re, down) = compress_doc_level(doc.clone(), level, cancel)?;
+        let len = bytes.len() as u64;
+        let better = best.as_ref().map(|b| (len as usize) < b.0.len()).unwrap_or(true);
+        if better {
+            best = Some((bytes, total, re, down, level));
+        }
+        if len <= target || total == 0 {
+            // 목표에 닿았거나, 사진이 하나도 없으면(글자·선만 있는 PDF) 더 해 봐야 같다
+            break;
+        }
+        // 크기가 목표의 2배를 넘으면 한 단계씩 말고 두 단계 건너뛴다(50쪽 스캔에서 시간을 줄임)
+        i += if len > target.saturating_mul(2) && i + 2 < n { 2 } else { 1 };
+    }
+    progress(n, n);
+    let (bytes, total, re, down, level) = best.expect("한 번은 해 봄");
+    let after = bytes.len() as u64;
+    out.after = after;
+    out.images_total = total;
+    out.images_recompressed = re;
+    out.images_downsampled = down;
+    out.reached = after <= target;
+    if after >= before {
+        out.reached = false;
+        out.note = format!(
+            "더 줄일 수 없어요. 이 PDF는 사진보다 글자·선이 대부분이라 {}보다 작게 만들 수 없어요(원본 {} 그대로).",
+            target_label(target),
+            human(before)
+        );
+        return Ok(out);
+    }
+    let path = output_path(input, out_dir, "_압축", "pdf");
+    write_new(&path, &bytes)?;
+    out.output = Some(path);
+    out.note = if out.reached {
+        format!("{} → {} ({} 줄어듦, 목표 {} 이하, {pages}쪽, 사진 {}dpi·품질 {})", human(before), human(after), reduction_pct(before, after), target_label(target), level.max_dpi as u32, level.quality)
+    } else {
+        format!(
+            "목표 {}까지는 못 줄였어요. 가장 작게 만든 것이 {}예요({} → {}, {} 줄어듦). 글자·선은 줄일 수 없어서 더 작게는 안 돼요.",
+            target_label(target),
+            human(after),
+            human(before),
+            human(after),
+            reduction_pct(before, after)
+        )
+    };
+    Ok(out)
+}
+
+/// 목표 크기 표시: 1,000,000 바이트 단위면 "5MB"(공공기관 "5MB 이하"는 보통 10진), 아니면 [`human`]
+pub fn target_label(n: u64) -> String {
+    if n >= 1_000_000 && n % 1_000_000 == 0 {
+        format!("{}MB", n / 1_000_000)
+    } else if n >= 1000 && n % 1000 == 0 && n < 1_000_000 {
+        format!("{}KB", n / 1000)
+    } else {
+        human(n)
+    }
 }
 
 #[cfg(test)]

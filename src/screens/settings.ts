@@ -9,6 +9,7 @@ import { go } from "../router";
 import { showBanner, UpdateOutcome, UpdateView } from "../update";
 
 interface AutostartStatus { enabled: boolean; value: string | null; matches_exe: boolean; supported: boolean }
+interface CtxStatus { enabled: boolean; matches_exe: boolean; registered_exe: string | null; supported: boolean }
 interface ServiceInfo { installed: boolean; state: string; running: boolean; start_type: string; account: string }
 interface SvcPanel { info: ServiceInfo; connected: boolean; entries: number; ready: boolean; roots: string[]; visibility: string; error: string | null; exe: string | null; install_cmd: string | null; uninstall_cmd: string | null; bundled_version: string; installed_version: string | null; update_available: boolean }
 interface SearchSettings { roots: string[]; excludes: string[]; hotkey_enabled: boolean; hotkey: string }
@@ -30,6 +31,8 @@ function render() {
   root.innerHTML = `<h1 class="title">설정</h1>
     <div class="sc"><span class="sc-ic">${I("contrast")}</span><div class="sc-t"><b>테마</b><span>밝게·어둡게. “시스템”은 Windows 설정을 따라가요</span></div>
       ${seg("theme", [["system", "시스템"], ["light", "밝게"], ["dark", "어둡게"]], themePref(), "테마")}</div>
+    <div class="sc ctx-sc"><span class="sc-ic">${I("grid")}</span><div class="sc-t"><b>우클릭 메뉴</b><span class="ctx-state">확인하는 중…</span></div>
+      <button type="button" class="btn accent" data-act="ctx-relink" hidden>${I("refresh")}다시 연결</button>${toggle("ctxmenu", false, "")}</div>
     <div class="sc"><span class="sc-ic">${I("power")}</span><div class="sc-t"><b>윈도우 시작 시 실행</b><span class="as-state">확인하는 중…</span></div>${toggle("autostart", false, "")}</div>
     <div class="sc svc"><span class="sc-ic">${I("bolt")}</span><div class="sc-t"><b>빠른 검색 서비스</b><span class="svc-state">확인하는 중…</span></div>
       <span class="state off svc-chip"><i></i>…</span><button type="button" class="btn accent svc-up" data-svc="update" aria-label="빠른 검색 서비스 다시 설치(갱신)" title="빠른 검색 서비스 다시 설치(갱신)" hidden>${I("refresh")}다시 설치(갱신)</button><button type="button" class="btn svc-btn" disabled>…</button></div>
@@ -56,6 +59,7 @@ function render() {
 
 async function loadAll() {
   invoke<{ version: string }>("app_info").then((a) => { $(".ver", root)!.innerHTML = `파일 도구 ${esc(a.version)} · <button type="button" class="link" data-act="about">앱 정보</button>`; }).catch(() => {});
+  invoke<CtxStatus>("ctx_menu_get").then(showCtx).catch((e) => { $(".ctx-state", root)!.textContent = friendly(e).title; });
   invoke<AutostartStatus>("autostart_get").then(showAutostart).catch((e) => { $(".as-state", root)!.textContent = friendly(e).title; });
   refreshSearch();
   refreshSvc();
@@ -81,6 +85,19 @@ async function checkNow(btn: HTMLButtonElement) {
   const msg = o.state === "newer" ? `새 버전 ${o.version}가 나왔어요` : o.state === "latest" ? `최신 버전이에요 (${v?.current ?? ""})` : "확인하지 못했어요. 인터넷 연결을 확인하고 나중에 다시 해 보세요";
   refreshUpd(msg);
   if (o.state === "newer" && v) showBanner({ ...v, banner: { version: o.version, url: o.url } });
+}
+
+function showCtx(st: CtxStatus) {
+  const t = $<HTMLInputElement>("#ctxmenu", root)!;
+  t.checked = st.enabled;
+  t.disabled = !st.supported;
+  t.closest(".tg")!.querySelector(".tg-l")!.textContent = st.enabled ? "켬" : "끔";
+  const moved = st.enabled && !st.matches_exe;
+  $<HTMLElement>("[data-act=ctx-relink]", root)!.hidden = !moved;
+  $(".ctx-state", root)!.textContent = !st.supported ? "Windows에서만 쓸 수 있어요"
+    : moved ? "앱 위치가 바뀌어 메뉴가 예전 위치를 가리켜요. [다시 연결]을 누르세요"
+    : st.enabled ? "탐색기에서 파일을 우클릭 → 파일도구(Windows 11은 “더 많은 옵션 표시” 안)"
+    : "꺼져 있어요. 켜면 탐색기 우클릭에 “파일도구”가 생겨요";
 }
 
 function showAutostart(st: AutostartStatus) {
@@ -203,7 +220,9 @@ export const settingsScreen: Screen = {
     root = el;
     root.addEventListener("change", async (e) => {
       const t = e.target as HTMLInputElement;
-      if (t.id === "autostart") {
+      if (t.id === "ctxmenu") {
+        try { showCtx(await invoke<CtxStatus>("ctx_menu_set", { enabled: t.checked })); } catch (err) { toast(friendly(err).title); t.checked = !t.checked; }
+      } else if (t.id === "autostart") {
         try { showAutostart(await invoke<AutostartStatus>("autostart_set", { enabled: t.checked })); } catch (err) { toast(friendly(err).title); t.checked = !t.checked; }
       } else if (t.id === "hk-on" && view) {
         const hk = hotkeyDraft || view.settings.hotkey;
@@ -248,6 +267,7 @@ export const settingsScreen: Screen = {
         case "reset-roots": if (view) saveSearch({ ...view.settings, roots: [] }); break;
         case "rescan": await invoke("search_rescan").catch(() => {}); toast("다시 색인을 시작했어요"); break;
         case "save-ex": if (view) saveSearch({ ...view.settings, excludes: ($<HTMLTextAreaElement>("#excludes", root)!).value.split("\n").map((x) => x.trim()).filter(Boolean) }); break;
+        case "ctx-relink": try { showCtx(await invoke<CtxStatus>("ctx_menu_set", { enabled: true })); toast("우클릭 메뉴를 이 위치의 앱에 다시 연결했어요"); } catch (err) { toast(friendly(err).title); } break;
         case "welcome": resetWelcome(); toast("변환 화면에 안내를 다시 보여 드려요"); go("convert"); break;
         case "about": go("about"); break;
         case "upd-check": checkNow(b as HTMLButtonElement); break;

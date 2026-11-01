@@ -6,7 +6,39 @@
 ;     나중에 관리자 명령 프롬프트에서 "C:\Program Files\파일 도구 서비스\filetool-svc.exe" uninstall 로 지운다.
 ; 0.3.0: 한글 변환용 보안 모듈 — 앱이 만든 DLL 폴더(%LOCALAPPDATA%\kr.salarycrew.winfiletool\hwp)와
 ;        남아 있을 수 있는 HKCU 등록값(변환 중에만 두지만, 변환 중 강제 종료됐을 때 대비)을 지운다.
+; 0.3.2: 탐색기 우클릭 메뉴("파일도구"). 설치하면 켠다(사용자가 [설정]에서 끈 적이 있으면 앱이 그대로 둠),
+;        지우면 HKCU\Software\Classes 아래 우리 키만 지운다(앱이 지우고, 앱을 못 부를 때를 대비해 여기서도 지움).
+!macro NSIS_HOOK_POSTINSTALL
+  ExecWait '"$INSTDIR\win-filetool.exe" --ctx-menu=install'
+!macroend
+
 !macro NSIS_HOOK_PREUNINSTALL
+  ExecWait '"$INSTDIR\win-filetool.exe" --ctx-menu=remove'
+  DeleteRegKey HKCU "Software\Classes\SystemFileAssociations\.pdf\shell\WinFileTool"
+  DeleteRegKey HKCU "Software\Classes\SystemFileAssociations\.jpg\shell\WinFileTool"
+  DeleteRegKey HKCU "Software\Classes\SystemFileAssociations\.jpeg\shell\WinFileTool"
+  DeleteRegKey HKCU "Software\Classes\SystemFileAssociations\.png\shell\WinFileTool"
+  DeleteRegKey HKCU "Software\Classes\SystemFileAssociations\.heic\shell\WinFileTool"
+  DeleteRegKey HKCU "Software\Classes\SystemFileAssociations\.heif\shell\WinFileTool"
+  DeleteRegKey HKCU "Software\Classes\SystemFileAssociations\.webp\shell\WinFileTool"
+  DeleteRegKey HKCU "Software\Classes\SystemFileAssociations\.bmp\shell\WinFileTool"
+  DeleteRegKey HKCU "Software\Classes\SystemFileAssociations\.gif\shell\WinFileTool"
+  DeleteRegKey HKCU "Software\Classes\SystemFileAssociations\.tif\shell\WinFileTool"
+  DeleteRegKey HKCU "Software\Classes\SystemFileAssociations\.tiff\shell\WinFileTool"
+  DeleteRegKey HKCU "Software\Classes\SystemFileAssociations\.hwp\shell\WinFileTool"
+  DeleteRegKey HKCU "Software\Classes\SystemFileAssociations\.hwpx\shell\WinFileTool"
+  DeleteRegKey HKCU "Software\Classes\SystemFileAssociations\.doc\shell\WinFileTool"
+  DeleteRegKey HKCU "Software\Classes\SystemFileAssociations\.docx\shell\WinFileTool"
+  DeleteRegKey HKCU "Software\Classes\SystemFileAssociations\.rtf\shell\WinFileTool"
+  DeleteRegKey HKCU "Software\Classes\SystemFileAssociations\.odt\shell\WinFileTool"
+  DeleteRegKey HKCU "Software\Classes\SystemFileAssociations\.xls\shell\WinFileTool"
+  DeleteRegKey HKCU "Software\Classes\SystemFileAssociations\.xlsx\shell\WinFileTool"
+  DeleteRegKey HKCU "Software\Classes\SystemFileAssociations\.ods\shell\WinFileTool"
+  DeleteRegKey HKCU "Software\Classes\SystemFileAssociations\.ppt\shell\WinFileTool"
+  DeleteRegKey HKCU "Software\Classes\SystemFileAssociations\.pptx\shell\WinFileTool"
+  DeleteRegKey HKCU "Software\Classes\SystemFileAssociations\.odp\shell\WinFileTool"
+  DeleteRegKey HKCU "Software\Classes\SystemFileAssociations\.zip\shell\WinFileTool"
+  DeleteRegKey HKCU "Software\Classes\Directory\shell\WinFileTool"
   DeleteRegValue HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "win-filetool"
   DeleteRegValue HKCU "Software\HNC\HwpAutomation\Modules" "WinFileToolPathCheck"
   RMDir /r "$LOCALAPPDATA\kr.salarycrew.winfiletool\hwp"

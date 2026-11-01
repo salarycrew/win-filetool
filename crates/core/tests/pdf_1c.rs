@@ -331,3 +331,50 @@ fn run_key_value_building() {
     assert!(!autostart::is_autostart_launch(["win-filetool.exe", "--tab=pdf"]));
     assert_eq!(autostart::RUN_KEY, r"Software\Microsoft\Windows\CurrentVersion\Run");
 }
+
+// ---------- 0.3.2 목표 크기 ----------
+
+#[test]
+fn compress_to_target_reaches_target_and_keeps_original() {
+    let t = tempfile::tempdir().unwrap();
+    let src = t.path().join("스캔.pdf");
+    samples::make_photo_pdf(&src, 6, "SCAN", 2400).unwrap();
+    let before = len(&src);
+    let src_hash = std::fs::read(&src).unwrap();
+    // 원본의 1/6을 목표로
+    let target = before / 6;
+    let mut steps = Vec::new();
+    let r = pdfcompress::compress_to_target(&src, None, target, None, &mut |i, n| steps.push((i, n))).unwrap();
+    let out = r.output.clone().expect("새 파일");
+    assert!(r.reached, "{}", r.note);
+    assert!(len(&out) <= target, "{} > {target}", len(&out));
+    assert_eq!(r.target, Some(target));
+    assert_eq!(filetool_core::pdf::page_count(&out).unwrap(), 6);
+    assert_eq!(samples::pdf_labels(&out).unwrap().len(), 6);
+    assert_eq!(std::fs::read(&src).unwrap(), src_hash, "원본 그대로");
+    assert!(!steps.is_empty());
+}
+
+#[test]
+fn compress_to_target_already_small_and_impossible() {
+    let t = tempfile::tempdir().unwrap();
+    let src = t.path().join("작은.pdf");
+    samples::make_photo_pdf(&src, 1, "S", 800).unwrap();
+    let r = pdfcompress::compress_to_target(&src, None, 50_000_000, None, &mut |_, _| {}).unwrap();
+    assert!(r.already_small && r.output.is_none() && r.reached);
+    assert!(r.note.contains("50MB"), "{}", r.note);
+    // 1 KB는 닿을 수 없음 → 가장 작은 결과를 남기고 reached=false, 얼마나 줄었는지 알림
+    let big = t.path().join("큰.pdf");
+    samples::make_photo_pdf(&big, 2, "B", 2400).unwrap();
+    let r = pdfcompress::compress_to_target(&big, None, 1000, None, &mut |_, _| {}).unwrap();
+    assert!(!r.reached);
+    let out = r.output.expect("가장 작은 결과는 남김");
+    assert!(len(&out) < len(&big));
+    assert!(r.note.contains("가장 작게 만든 것"), "{}", r.note);
+    // 취소
+    let c = filetool_core::process::Cancel::new();
+    c.cancel();
+    let e = pdfcompress::compress_to_target(&big, Some(t.path()), 1000, Some(&c), &mut |_, _| {});
+    assert!(matches!(e, Err(filetool_core::Error::Cancelled)));
+    assert_eq!(pdfcompress::target_label(5_000_000), "5MB");
+}
