@@ -16,7 +16,7 @@ const body = () => $(".org-body", root)!;
 interface Pair { from: string; to: string; conflict?: string | null }
 let rnFiles: string[] = [];
 let rnPreview: Pair[] = [];
-let rnUndo: { id: string; done: number } | null = null;
+let rnUndo: { id: string; done: number; pairs: { from: string; to: string }[] } | null = null;
 let rnTimer = 0;
 let rnSeq = 0;
 
@@ -104,8 +104,8 @@ async function renameApply() {
   const pairs = rnPreview.filter((p) => p.from !== p.to && !p.conflict).map(({ from, to }) => ({ from, to }));
   if (!pairs.length) return;
   try {
-    const r = await invoke<{ done: number; failed: { from: string; reason: string }[]; undo_id: string }>("rename_apply", { pairs });
-    rnUndo = { id: r.undo_id, done: r.done };
+    const r = await invoke<{ done: number; failed: { from: string; reason: string }[]; undo_id: string | null }>("rename_apply", { pairs });
+    rnUndo = r.undo_id ? { id: r.undo_id, done: r.done, pairs } : null;
     const map = new Map(pairs.map((p) => [p.from, p.to]));
     const failed = new Set(r.failed.map((f) => f.from));
     rnFiles = rnFiles.map((f) => (failed.has(f) ? f : map.get(f) ?? f));
@@ -119,9 +119,9 @@ async function renameApply() {
 async function renameUndo() {
   if (!rnUndo) return;
   try {
-    const r = await invoke<{ done: number; failed: unknown[] }>("rename_undo", { undoId: rnUndo.id, undo_id: rnUndo.id });
+    const r = await invoke<{ done: number; failed: unknown[] }>("rename_undo", { undoId: rnUndo.id });
     // 되돌린 이름으로 목록 다시
-    const back = new Map(rnPreview.filter((p) => p.from !== p.to).map((p) => [p.to, p.from]));
+    const back = new Map(rnUndo.pairs.map((p) => [p.to, p.from]));
     rnFiles = rnFiles.map((f) => back.get(f) ?? f);
     rnUndo = null;
     renameUI();
@@ -178,7 +178,7 @@ function dupResultHTML(marked: number): string {
       const all = g.files.every((f) => dupMarked.has(f.path));
       return `<div class="dg ${all ? "bad" : ""}"><div class="dg-h">${FT(extOf(g.files[0].path), 22)}<b>${esc(fileName(g.files[0].path))}</b><span class="hint">${human(g.size)} × ${g.files.length}개</span>${all ? `<span class="cf">${I("warn")}하나는 남겨 주세요</span>` : ""}</div>
         ${g.files.map((f, fi) => `<label class="dg-f"><input type="checkbox" data-g="${gi}" data-f="${fi}" ${dupMarked.has(f.path) ? "checked" : ""}><span class="box">${I("check")}</span>
-          <span class="dg-p" title="${esc(f.path)}">${esc(dirOf(f.path))}\\<b>${esc(fileName(f.path))}</b></span><span class="hint">${fmtTime(f.modified)}</span>
+          <span class="dg-p" title="${esc(f.path)}">${esc(dirOf(f.path))}\\<b>${esc(fileName(f.path))}</b></span><span class="hint">${fmtTime(f.modified / 1000)}</span>
           <button type="button" class="ib" data-reveal="${esc(f.path)}" title="폴더에서 보기" aria-label="폴더에서 보기">${I("open")}</button></label>`).join("")}</div>`;
     }).join("")}</div>
     <div class="dup-foot"><span class="hint">${n ? `${num(n)}개 고름 · ${human(marked)}` : "지울 파일을 고르세요"}</span><span class="grow"></span>
@@ -194,7 +194,7 @@ async function dupScan() {
   setProgress(out, null, "파일 목록을 읽는 중");
   $("[data-cancel]", out)!.addEventListener("click", () => cancelJob(dupJob));
   try {
-    dupRes = await invoke("dup_scan", { job: dupJob, roots: dupRoots, minSize: Number(segVal(body(), "dup-min")), min_size: Number(segVal(body(), "dup-min")), includeHidden: checked(body(), "dup-hidden"), include_hidden: checked(body(), "dup-hidden") });
+    dupRes = await invoke("dup_scan", { job: dupJob, roots: dupRoots, minSize: Math.max(1, Number(segVal(body(), "dup-min"))), includeHidden: checked(body(), "dup-hidden") });
   } catch (e) {
     dupBusy = false;
     dupUI();
@@ -251,7 +251,7 @@ async function zipOpen(paths?: string[]) {
   const rows: string[] = [];
   for (const p of ps) {
     try {
-      const o = await invoke<Record<string, unknown>>("zip_extract", { path: p, zip: p, encoding: "auto", outDir: null, rezip: false });
+      const o = await invoke<Record<string, unknown>>("zip_extract", { path: p, encoding: "auto", outDir: null });
       if (typeof o.folder === "string") rows.push(resultRow({ output: o.folder, isFolder: true, pill: `파일 ${o.count}개`, note: (o.skipped as unknown[])?.length ? `${(o.skipped as unknown[]).length}개 건너뜀` : undefined }));
       else { const ex = (o.extract ?? o) as { out_dir: string; files: string[] }; rows.push(resultRow({ output: ex.out_dir, isFolder: true, pill: `파일 ${ex.files.length}개` })); }
     } catch (e) {

@@ -1192,6 +1192,9 @@ dependencies = [
  "filetool-core",
  "image",
  "lopdf",
+ "serde",
+ "serde_json",
+ "static_vcruntime",
  "zip",
 ]
 
@@ -1210,8 +1213,10 @@ dependencies = [
  "notify",
  "pdfium-render",
  "quick-xml",
+ "regex",
  "serde",
  "serde_json",
+ "sha2 0.10.9",
  "subsetter",
  "tar",
  "tempfile",
@@ -1232,6 +1237,7 @@ version = "0.3.0-dev"
 dependencies = [
  "chrono",
  "filetool-core",
+ "static_vcruntime",
  "windows-sys 0.61.2",
 ]
 

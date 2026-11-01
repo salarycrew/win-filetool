@@ -363,19 +363,31 @@ const ACTIONS: Record<Cls, Action[]> = {
       id: "i2resize", t: "크기 바꾸기", d: "가로 픽셀이나 %로", ic: "resize", tone: "purple", run: "크기 바꾸기",
       opts: () => opt("기준", seg("rmode", [["px", "가로 크기"], ["pct", "비율"]], "px")) +
         `<div data-r="px">${opt("가로", seg("rw", [["800", "800"], ["1280", "1280"], ["1920", "1920"], ["c", "직접"]], "1280") + `<input class="txt sm" id="rwc" placeholder="px" inputmode="numeric" hidden>`, "세로는 비율에 맞춰요")}</div>` +
-        `<div data-r="pct" hidden>${opt("비율", seg("rp", [["25", "25%"], ["50", "50%"], ["75", "75%"]], "50"))}</div>`,
+        `<div data-r="pct" hidden>${opt("비율", seg("rp", [["25", "25%"], ["50", "50%"], ["75", "75%"]], "50"))}</div>` +
+        opt("", chk("rup", "가로가 더 작은 사진도 키우기", false)),
       setup: (c) => c.panel.addEventListener("click", () => {
         const m = segVal(c.panel, "rmode");
         $$<HTMLElement>("[data-r]", c.panel).forEach((d) => (d.hidden = d.dataset.r !== m));
         $<HTMLInputElement>("#rwc", c.panel)!.hidden = segVal(c.panel, "rw") !== "c";
       }),
-      exec: (r) => {
+      exec: async (r) => {
         let resize: Record<string, unknown>;
         if (segVal(r.panel, "rmode") === "pct") resize = { percent: Number(segVal(r.panel, "rp")), keep_ratio: true };
         else {
           const w = segVal(r.panel, "rw") === "c" ? Math.round(Number(value(r.panel, "rwc"))) : Number(segVal(r.panel, "rw"));
           if (!w || w < 8 || w > 20000) throw new Error("가로 크기를 8~20000 사이 숫자로 적어 주세요");
           resize = { width: w, keep_ratio: true };
+          if (!checked(r.panel, "rup")) {
+            // 키우지 않기(기본): 이미 그보다 작은 사진은 건너뜀
+            const small: Item[] = [];
+            for (const it of r.items) {
+              const pr = await invoke<{ width: number }>("image_probe", { path: it.path }).catch(() => null);
+              if (pr && pr.width <= w) small.push(it);
+            }
+            for (const it of small) r.ok({ input: it.path, output: it.path, pill: "그대로", note: `가로가 이미 ${w}px 이하라 키우지 않았어요` });
+            r.items = r.items.filter((x) => !small.includes(x));
+            if (!r.items.length) return;
+          }
         }
         return imageEdit(r, { resize, strip_meta: false, format: "keep" });
       },
@@ -507,7 +519,7 @@ const ACTIONS: Record<Cls, Action[]> = {
         c.panel.addEventListener("click", (e) => { if ((e.target as HTMLElement).closest('[data-seg="enc"]')) load(); });
       },
       exec: (r) => each(r, async (it) => {
-        const o = await invoke<Record<string, unknown>>("zip_extract", { path: it.path, zip: it.path, encoding: segVal(r.panel, "enc"), outDir: r.outDir, rezip: false });
+        const o = await invoke<Record<string, unknown>>("zip_extract", { job: r.job(), path: it.path, encoding: segVal(r.panel, "enc"), outDir: r.outDir });
         if (typeof o.folder === "string") {
           const skipped = (o.skipped as unknown[] | undefined)?.length ?? 0;
           return { output: o.folder, isFolder: true, pill: `파일 ${o.count}개`, note: skipped ? `${skipped}개는 건너뛰었어요(이미 있거나 안전하지 않은 이름)` : undefined };
@@ -724,7 +736,7 @@ function renderOptions() {
   slot.outerHTML = `<div class="optcard" id="optcard"><div class="oc-body"><div class="oc-h">${esc(a.t)}${xs.length > 1 ? `<span class="hint">· ${xs.length}개</span>` : ""}</div>
       ${a.info ? `<div class="info">${I("info")}<span>${esc(a.info)}</span></div>` : ""}<div class="opts">${a.opts ? a.opts({ items: xs }) : ""}</div><p class="oc-err" role="alert" hidden></p></div>
     <div class="oc-foot">${a.noOutDir ? `<div class="save">${I("info")}<span>폴더 안에서 바로 바꿔요</span></div>` : `<div class="save">${I("folder")}<b>${outDir ? "저장 위치" : "원본 옆"}</b><span class="path" title="${esc(saveTo)}">${esc(saveTo)}</span>
-      <button type="button" class="link" data-act="outdir">바꾸기</button>${outDir ? `<button type="button" class="link" data-act="outdir-reset">원본 옆으로</button>` : ""}</div>`}
+      <button type="button" class="link" data-act="outdir" aria-label="저장 위치 바꾸기">바꾸기</button>${outDir ? `<button type="button" class="link" data-act="outdir-reset">원본 옆으로</button>` : ""}</div>`}
       <button type="button" class="btn accent lg" data-act="run">${esc(a.run)}</button></div></div>`;
   const card = $("#optcard", root)!;
   bindSegs(card);

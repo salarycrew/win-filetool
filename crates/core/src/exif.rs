@@ -112,6 +112,69 @@ pub fn build_sample(date: &str, orientation: u16) -> Vec<u8> {
     b
 }
 
+const TAG_GPS_IFD: u16 = 0x8825;
+
+/// 0.3.0 W4: 위치(GPS) 정보가 들어 있는지(IFD0의 GPS IFD에 항목이 하나라도 있으면).
+pub fn has_gps(tiff: &[u8]) -> bool {
+    let Some(t) = Tiff::new(tiff) else { return false };
+    let Some(ifd0) = t.u32(4) else { return false };
+    t.entries(ifd0 as usize)
+        .into_iter()
+        .find(|e| e.0 == TAG_GPS_IFD)
+        .and_then(|e| t.u32(e.3))
+        .map(|gps| t.u16(gps as usize).unwrap_or(0) > 0)
+        .unwrap_or(false)
+}
+
+/// 점검용 EXIF + GPS(빅엔디언): Orientation, DateTime, ExifIFD→DateTimeOriginal, GPSIFD→위도·경도(도 단위 정수).
+pub fn build_sample_gps(date: &str, orientation: u16, lat_deg: u32, lon_deg: u32) -> Vec<u8> {
+    let mut date_z = date.as_bytes().to_vec();
+    date_z.push(0);
+    let dlen = date_z.len() as u32;
+    // 헤더(8) | IFD0(2+4*12+4=54) | ExifIFD(18) | GPSIFD(2+4*12+4=54) | 위도(24) | 경도(24) | date | date
+    let ifd0 = 8u32;
+    let exif_ifd = ifd0 + 54;
+    let gps_ifd = exif_ifd + 18;
+    let lat = gps_ifd + 54;
+    let lon = lat + 24;
+    let d1 = lon + 24;
+    let d2 = d1 + dlen;
+    let mut b = Vec::new();
+    b.extend_from_slice(b"MM\0*");
+    b.extend_from_slice(&ifd0.to_be_bytes());
+    let entry = |b: &mut Vec<u8>, tag: u16, ty: u16, count: u32, val: [u8; 4]| {
+        b.extend_from_slice(&tag.to_be_bytes());
+        b.extend_from_slice(&ty.to_be_bytes());
+        b.extend_from_slice(&count.to_be_bytes());
+        b.extend_from_slice(&val);
+    };
+    b.extend_from_slice(&4u16.to_be_bytes());
+    let o = orientation.to_be_bytes();
+    entry(&mut b, TAG_ORIENTATION, 3, 1, [o[0], o[1], 0, 0]);
+    entry(&mut b, TAG_DATETIME, 2, dlen, d1.to_be_bytes());
+    entry(&mut b, TAG_EXIF_IFD, 4, 1, exif_ifd.to_be_bytes());
+    entry(&mut b, TAG_GPS_IFD, 4, 1, gps_ifd.to_be_bytes());
+    b.extend_from_slice(&0u32.to_be_bytes());
+    b.extend_from_slice(&1u16.to_be_bytes());
+    entry(&mut b, TAG_DATETIME_ORIGINAL, 2, dlen, d2.to_be_bytes());
+    b.extend_from_slice(&0u32.to_be_bytes());
+    b.extend_from_slice(&4u16.to_be_bytes());
+    entry(&mut b, 1, 2, 2, [b'N', 0, 0, 0]);
+    entry(&mut b, 2, 5, 3, lat.to_be_bytes());
+    entry(&mut b, 3, 2, 2, [b'E', 0, 0, 0]);
+    entry(&mut b, 4, 5, 3, lon.to_be_bytes());
+    b.extend_from_slice(&0u32.to_be_bytes());
+    for deg in [lat_deg, lon_deg] {
+        for (n, d) in [(deg, 1u32), (0, 1), (0, 1)] {
+            b.extend_from_slice(&n.to_be_bytes());
+            b.extend_from_slice(&d.to_be_bytes());
+        }
+    }
+    b.extend_from_slice(&date_z);
+    b.extend_from_slice(&date_z);
+    b
+}
+
 /// JPEG 파일에서 EXIF(TIFF) 블록을 꺼낸다.
 pub fn from_jpeg(jpeg: &[u8]) -> Option<Vec<u8>> {
     if jpeg.get(0..2)? != [0xFF, 0xD8] {
@@ -149,5 +212,14 @@ mod tests {
         let _ = image::metadata::Orientation::remove_from_exif_chunk(&mut m);
         assert_eq!(orientation(&m), Some(1));
         assert_eq!(date_taken(&m).as_deref(), Some("2024:05:01 10:20:30"));
+        assert!(!has_gps(&e));
+    }
+
+    #[test]
+    fn gps_sample() {
+        let e = build_sample_gps("2024:05:01 10:20:30", 6, 37, 127);
+        assert!(has_gps(&e));
+        assert_eq!(orientation(&e), Some(6));
+        assert_eq!(date_taken(&e).as_deref(), Some("2024:05:01 10:20:30"));
     }
 }

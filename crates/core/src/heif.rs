@@ -237,6 +237,14 @@ impl<'a> HeifInfo<'a> {
         Some(Grid { tiles, rows, cols, out_w, out_h, transforms })
     }
 
+    /// 0.3.0 W4: 대표 이미지의 보이는 크기(ispe, irot 90°/270°이면 가로·세로 바꿈).
+    pub fn display_size(&self) -> Option<(u32, u32)> {
+        let props = self.props_of(self.primary?);
+        let (w, h) = props.iter().find(|(t, _)| t == b"ispe").and_then(|(_, c)| Some((be32(c, 4)?, be32(c, 8)?)))?;
+        let quarter = props.iter().any(|(t, c)| t == b"irot" && c.first().is_some_and(|r| r & 1 == 1));
+        Some(if quarter { (h, w) } else { (w, h) })
+    }
+
     /// Exif 항목의 TIFF 블록.
     pub fn exif(&self) -> Option<Vec<u8>> {
         let id = self.items.iter().find(|x| &x.1 == b"Exif")?.0;

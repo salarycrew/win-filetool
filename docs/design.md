@@ -781,3 +781,110 @@ CLI(같은 코어): `filetool-cli doc-to-pptx | pdf-to-docx | pdf-to-pptx [--mod
 `make_corpus.py`(python-docx·python-pptx·openpyxl·pypdf·Pillow + LibreOffice로 PDF 만들기)로 만든 한국어 샘플. 글·그림은 스크립트가 지어낸 것,
 PDF에 들어간 글꼴은 나눔고딕·Noto(SIL OFL) 일부. `엣지인쇄.pdf`만 Windows Edge `--headless --print-to-pdf`로 `엣지인쇄.html`을 인쇄해 만든다(Noto Sans KR).
 `tests/office_030.rs`가 구조 숫자(제목·문단·목록·표·그림·글상자·슬라이드 수, 한글 낱말 사이 빈칸)를 확인한다(픽셀 비교 아님).
+
+## 0.3.0 이미지·영상·파일 정리 (W4)
+
+사진 고치기·영상 고치기·zip 풀기/만들기·이름 한꺼번에 바꾸기·같은 파일 찾기. 코어 모듈: `core/imgedit.rs`, `core/mediaedit.rs`,
+`core/ziptool.rs`, `core/rename.rs`, `core/dupes.rs`(+ `exif::has_gps`, `heif::HeifInfo::display_size`, `samples::write_windows_cp949_zip`).
+화면 명령은 `src-tauri/src/cmd_tools.rs`, CLI는 `filetool-cli help-tools`(`crates/cli/src/tools030.rs`, 결과는 같은 JSON).
+
+### 공통 규칙
+
+- 경로는 문자열(Windows 경로). `outDir`가 비거나 없으면 원본 옆. 결과는 덮어쓰지 않는다(`이름_편집 (1).jpg`). 원본은 그대로.
+- **진행·멈추기**: 오래 걸리는 명령(`image_edit`, `media_edit`, `zip_extract`, `zip_create`, `dup_scan`)은 `job?: number`(화면이 정한 번호)를 받는다.
+  주면 이벤트 **`tools_progress` `{ job, done: number, total: number, current: string }`**를 보내고, **`cancel_job { job }`**(그 작업만, 있었으면 `true`)
+  또는 예전 `cancel_jobs`(모두)로 멈춘다. `done/total`: 여러 파일이면 파일 수(current = 지금 파일), `media_edit`는 0~1 비율(total = 1),
+  `dup_scan`은 해시를 잰 파일 수(목록 만들기 단계에서는 total = 0).
+- **오류**: `{ code, message }` — `code` = `cancelled` | `tool_missing`(ffmpeg 없음) | `error`. `message`는 그대로 보여 줄 한국어 문장.
+
+### 명령 계약(Tauri)
+
+| 명령 | 인자 | 돌려주는 JSON |
+|---|---|---|
+| `image_probe` | `{ path }` | `{ width, height, format: "jpg"\|"png"\|"webp"\|"heic"\|"bmp"\|"tif"\|"gif", size, has_gps, taken_at? }` |
+| `image_edit` | `{ inputs: string[], ops, outDir?, job? }` | `[{ input, output: string\|null, before, after, width, height, note?, error? }]` |
+| `media_probe` | `{ path }` | `{ duration, width, height, rotation, has_audio, video_codec: string\|null, audio_codec: string\|null }` |
+| `media_frame` | `{ path, at: number, width? }` | `string` — JPG 바이트의 base64(앞에 `data:image/jpeg;base64,`를 붙여 `<img>`에) |
+| `media_frame_save` | `{ path, at, outDir? }` | `string` — 저장한 `이름_장면_mm-ss.jpg` 경로 |
+| `media_edit` | `{ input, ops, outDir?, job? }` | `{ output, before, after, duration, reencoded, note? }` |
+| `zip_list` | `{ path, encoding?: "auto"\|"utf8"\|"cp949" }` | `{ entries: [{ name, size, is_dir }], detected_encoding: "utf8"\|"cp949", garbled_guess }` |
+| `zip_extract` | `{ path, encoding?, outDir?, job? }` | `{ folder, count, skipped: [{ name, reason }] }` |
+| `zip_create` | `{ inputs: string[], output?, job? }` | `{ output, count, size }` |
+| `rename_preview` | `{ files: string[], rule, sort?: "name"\|"modified"\|"taken" }` | `[{ from, to, conflict?, note? }]` |
+| `rename_apply` | `{ pairs: [{ from, to }] }` | `{ done, failed: [{ from, reason }], undo_id: string\|null }` |
+| `rename_undo` | `{ undoId }` | `{ done, failed: [{ from, reason }] }` |
+| `dup_scan` | `{ roots: string[], minSize?, includeHidden: bool, job? }` | `{ groups: [{ size, hash, files: [{ path, modified }] }], scanned, wasted_bytes }` |
+| `dup_trash` | `{ paths: string[] }` | `{ done, failed: [{ path, reason }] }` |
+
+크기는 바이트(`before`·`after`·`size`), 시간은 초(`duration`·`at`), `modified`는 유닉스 밀리초. Tauri 인자 이름은 camelCase(`outDir`, `undoId`,
+`minSize`, `includeHidden`), `ops`·`rule` 안의 필드는 아래처럼 snake_case 그대로.
+
+**`image_edit` ops** — `{ resize?: { width?, height?, percent?, keep_ratio }, crop?: { x, y, w, h } | { aspect: "1:1"|"4:3"|"16:9"|"3:4"|"9:16", anchor: "center" },
+rotate?: 90|180|270, flip?: "h"|"v", strip_meta: bool, format?: "keep"|"jpg"|"png"|"webp", quality?: 1..100, target_kb? }`
+- 순서: EXIF 회전을 픽셀에 적용 → 자르기(보이는 그대로의 좌표) → 돌리기(시계 방향) → 뒤집기 → 크기 → 저장. 결과 이름 `이름_편집.확장자`.
+- `resize`: `percent`가 있으면 그것. `width`만/`height`만이면 나머지는 비율대로(`keep_ratio`). 둘 다면 `keep_ratio`일 때 그 상자 안에 들어가게, 아니면 그 크기 그대로.
+- `strip_meta`: EXIF(GPS·카메라·촬영 날짜)·XMP·IPTC를 넣지 않는다. 고칠 것이 정보 지우기뿐이고 회전 값이 없는 JPEG는 다시 압축하지 않고 조각만 뺀다
+  (`note`: "다시 압축하지 않아 화질이 그대로입니다"). `strip_meta: false`면 EXIF를 옮기되 회전 값은 1(이미 픽셀에 적용)로 — JPG/PNG만.
+- `format: "keep"`(기본): 원본 형식. HEIC는 JPG로(HEIC는 ffmpeg로 푼다 — `imageconv::load_heif`). `quality` 기본 90.
+- `target_kb`(1KB = 1024바이트): JPG/WebP는 품질을 이분 탐색(12~95)해 목표 이하에서 가장 높은 품질, 가장 낮은 품질로도 크면 크기를 줄여 다시.
+  PNG 등 무손실은 크기만 줄인다. 결과는 목표 이하(시험 사진 1600×1200: 300KB 목표 → 99.8%, 120KB → 93.7% — 품질이 정수 단계라 딱 맞지는 않음). 못 맞추면 가장 작게 만든 것 + `note`("목표 …KB까지 줄이지 못해…").
+- 한 장이 실패해도 나머지는 계속(그 항목은 `output: null`, `error`).
+
+**`media_edit` ops** — `{ trim?: { start, end }, mute?: bool, rotate?: 90|180|270 }`(시계 방향). 결과 `이름_편집.확장자`.
+- 다시 압축하지 않음(`reencoded: false`, 빠르고 화질 그대로): MP4/MOV/M4V 영상, MP3/M4A 소리.
+  자르기는 시작점 바로 앞의 키프레임(최대 1초 일찍)에서 시작 — `note`에 "가까운 장면 전환점에 맞춰 0.4초 일찍(0:01.2) 시작합니다".
+  1초 안에 키프레임이 없으면 다시 압축해 정확히 자름. 돌리기는 회전 정보만 바꿈(기존 회전 + 요청).
+- 그 밖(MKV·AVI·WebM·WMV·WAV…)은 앱에 든 LGPL ffmpeg로 다시 압축: 영상 → MP4(H.264 `h264_mf`, libx264 있는 ffmpeg면 libx264 / AAC 160k), 소리 → M4A.
+  이때 돌리기는 픽셀을 돌린다(transpose).
+- 소리만 있는 파일에서 `mute`·`rotate`, 소리 없는 영상에서 `mute`는 쉬운 말 오류.
+- `media_probe`: `width/height`는 보이는 크기(회전 반영), `rotation`은 플레이어가 돌려 보여 주는 시계 방향 각도. 표지 그림(mp3 앨범 그림)은 영상으로 치지 않음.
+- `media_frame`/`_save`: 길이보다 뒤를 고르면 끝 장면(저장 이름도 그 시각). 회전은 반영된 그림.
+
+**zip** — `encoding: "auto"`(기본): UTF-8 표시(bit 11)가 없는 이름 중 UTF-8로 안 읽히는 것이 있으면 CP949(윈도 탐색기 "압축(ZIP) 폴더"), 아니면 UTF-8.
+UTF-8 표시가 있는 이름은 언제나 UTF-8. 화면은 이름이 이상하면 `utf8`/`cp949`를 골라 `zip_list`를 다시 부르면 된다.
+`garbled_guess`: UTF-8 표시 없이 한글 등 ASCII 밖 이름이 든 zip(다른 프로그램·다른 OS에서는 이름이 깨져 보였을 수 있음).
+- 풀기: zip 옆(또는 `outDir`)에 새 폴더 `이름\`(있으면 `이름 (1)\`). 이름은 NFC, 윈도에서 못 쓰는 글자 `<>"|?*`는 `_`, 끝의 점·빈칸은 지움, `CON` 등은 앞에 `_`.
+  `skipped.reason`: "맥이 만든 부속 파일이라 뺐습니다"(`__MACOSX/`, `._*`, `.DS_Store`), "폴더 밖을 가리키는 이름이라 뺐습니다"(`..`·절대 경로·드라이브),
+  "같은 이름이 이미 있어 덮어쓰지 않았습니다", "암호가 걸린 항목이라 풀지 못했습니다", "바로 가기(링크)라 뺐습니다". 수정 시각은 zip 안 시각으로.
+- 만들기: `output`이 없으면 첫 항목 이름 + `.zip`(겹치면 ` (1)`). 폴더는 그 폴더 이름부터 담는다. 이름은 NFC + UTF-8 표시.
+  `.DS_Store`·`._*`·`Thumbs.db`·`desktop.ini`는 뺌, 이미 압축된 형식(jpg·png·heic·mp4·mov·mp3·zip·docx…)은 압축 없이 담음. `count` = 담은 파일 수(폴더 제외).
+- 예전 화면의 `zip_extract { zip, outDir, rezip }`도 그대로 받는다(맥 zip NFC + 다시 압축, 예전 결과 `{ extract, rezip }`). 새 화면은 `path`를 쓴다.
+
+**이름 바꾸기 rule** — `{ find?, replace?, regex: bool, prefix?, suffix?, numbering?: { start, step, digits, position: "prefix"|"suffix"|"replace" },
+date?: { source: "taken"|"modified", format: "YYYY-MM-DD"|"YYYYMMDD"|"YYYY-MM-DD_HHmmss", position: "prefix"|"suffix" }, case?: "lower"|"upper"|"keep", ext?: "keep"|"lower" }`
+- 확장자 앞 이름에 적용. 순서: 찾아 바꾸기 → 대소문자 → 번호 `replace` → 날짜·번호(앞/뒤, `_`로 이음) → `prefix`·`suffix`(그대로 붙임) → 확장자.
+  예: `prefix: "여행_"`, 번호 앞 3자리, `IMG_` 지우기 → `IMG_1.JPG` → `여행_001_1.jpg`(`ext: "lower"`).
+- `sort`(기본 `name`, 사람 순서: 사진2 < 사진10)가 번호 순서. `taken`은 EXIF 촬영 날짜(없으면 수정 날짜) — 그때 `note`.
+- `conflict`(있으면 적용에서 빼야 함): "다른 파일과 새 이름이 겹칩니다", "같은 이름의 파일이 이미 있습니다", "이름에 쓸 수 없는 글자…", "이름 끝에 점이나 빈칸…",
+  "윈도가 쓰는 이름…". 대소문자만 다른 이름은 같은 이름으로 본다(윈도).
+- `rename_apply`: 모두 임시 이름(`.ft-rename-…tmp`)으로 → 새 이름으로(맞바꾸기 `a→b, b→a`·이어 바꾸기 됨). 새 이름이 이미 있으면(목록 밖 파일) 그 항목은 원래 이름으로
+  돌려 두고 `failed`. 되돌리기 기록은 앱 설정 폴더 `rename-undo\<undo_id>.json`(바꾼 것이 없으면 `undo_id: null`).
+- `rename_undo`: 기록대로 되돌리고 기록을 지운다(일부 실패면 남은 것만 기록에 둠). 두 번째는 "되돌릴 기록이 없습니다" 오류.
+
+**같은 파일** — `dup_scan`: 크기가 같은 것 → 앞·뒤 64KiB SHA-256 → 전체 SHA-256이 같은 것끼리 묶음. 0바이트·링크는 보지 않음,
+`includeHidden: false`면 `.`으로 시작하는 이름과 숨김·시스템 속성 파일·폴더를 뺌. `minSize` 기본 1. 겹치는 루트는 한 번만.
+`groups`는 비울 수 있는 크기가 큰 순, 묶음 안은 경로 순. `scanned` = 살펴본 파일 수.
+- `dup_trash`: **휴지통으로만**(Shell `SHFileOperationW` + `FOF_ALLOWUNDO`, `FOF_WANTNUKEWARNING`). 휴지통이 없는 드라이브(USB·네트워크)는 거절.
+  마지막 `dup_scan` 결과로 확인해, 어떤 묶음이든 한 벌도 남지 않게 되는 요청은 **통째로** 거절("같은 파일 N개를 모두 지우게 되어…").
+  결과에 없는 파일, 남길 파일이 그사이 바뀌었거나 없어진 경우도 거절. 보내기 직전 그 파일의 크기·해시가 찾을 때와 같은지 다시 확인.
+
+### 앱에 든 ffmpeg(LGPL) — W4가 쓰는 것
+
+`scripts/build-ffmpeg.sh`(W1)에 이미 들어 있는 것만 쓴다(빌드 바꾸지 않음): `-ss/-t`, `-c copy`, `-display_rotation`, `-an`, 필터 `transpose`·`hflip`·`vflip`·`scale`,
+인코더 `mjpeg`(화면 한 장)·`h264_mf`·`aac`, 먹서 `mp4`·`mov`·`ipod`(m4a)·`mp3`·`image2`. MKV·WebM 먹서는 없으므로 그 형식은 MP4로 다시 만든다.
+
+### 새 의존성
+
+| 크레이트 | 쓰는 곳 | 라이선스 |
+|---|---|---|
+| `regex` 1.13 (이미 Cargo.lock에 있던 판) | 이름 바꾸기 정규식 | MIT OR Apache-2.0 |
+| `sha2` 0.10.9 (이미 Cargo.lock에 있던 판) | 같은 파일 해시 | MIT OR Apache-2.0 |
+| `serde`, `serde_json`(CLI에 추가, 코어엔 이미 있음) | CLI JSON 출력 | MIT OR Apache-2.0 |
+| `static_vcruntime` 3.0 (빌드 전용, 이미 Cargo.lock에 있던 판 — tauri-build가 씀) | CLI·서비스 VC 런타임 정적 링크 | MIT OR Apache-2.0 OR Zlib |
+
+### Windows C 런타임
+
+`filetool-cli.exe`·`filetool-svc.exe`는 `build.rs`에서 `static_vcruntime::metabuild()`(MIT OR Apache-2.0 OR Zlib) — VC 런타임(`VCRUNTIME140.dll`)을
+exe 안에 넣고 UCRT(Windows 10부터 OS에 있음, `api-ms-win-crt-*`)는 동적으로 둔다. `win-filetool.exe`는 tauri-build가 이미 같은 방식.
+`-C target-feature=+crt-static`을 전체에 걸면 tauri-build의 `/NODEFAULTLIB:libucrt.lib`와 부딪혀 앱이 링크되지 않으므로 쓰지 않는다.
+`llvm-readobj --coff-imports`로 세 exe에 `VCRUNTIME140`·`MSVCP140`이 없는지 확인한다.

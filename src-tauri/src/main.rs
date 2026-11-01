@@ -15,6 +15,7 @@
 mod cmd_runtime;
 mod cmd_pdfedit;
 mod cmd_office;
+mod cmd_tools;
 mod cmd_ui;
 mod icons;
 mod remote;
@@ -119,32 +120,27 @@ async fn nfc_apply(folder: String) -> CmdResult<nfc::ApplyReport> {
 }
 
 #[derive(Serialize)]
-struct ZipResult {
+pub(crate) struct ZipResult {
     extract: zipnfc::ExtractReport,
     rezip: Option<zipnfc::RezipReport>,
 }
 
-#[tauri::command]
-async fn zip_extract(zip: String, out_dir: Option<String>, rezip: bool) -> CmdResult<ZipResult> {
-    let dir = self::out_dir(&out_dir);
-    blocking(move || {
-        let zip = PathBuf::from(zip);
-        let target = match &dir {
-            Some(d) => {
-                let stem = zip.file_stem().map(|s| nfc::to_nfc(&s.to_string_lossy())).unwrap_or_default();
-                paths::unique_path(&d.join(stem))
-            }
-            None => zipnfc::default_extract_dir(&zip),
-        };
-        let extract = zipnfc::extract_nfc(&zip, &target)?;
-        let rezip = if rezip {
-            Some(zipnfc::rezip_nfc(&zip, &zipnfc::default_rezip_path(&zip, dir.as_deref()))?)
-        } else {
-            None
-        };
-        Ok(ZipResult { extract, rezip })
-    })
-    .await
+/// 예전 화면의 zip 풀기(맥 zip NFC + 다시 압축). 명령 이름 `zip_extract`는 0.3.0 W4 [`cmd_tools::zip_extract`]가 받아 넘긴다.
+pub(crate) fn zip_extract_legacy(zip: PathBuf, dir: Option<PathBuf>, rezip: bool) -> filetool_core::Result<ZipResult> {
+    let target = match &dir {
+        Some(d) => {
+            let stem = zip.file_stem().map(|s| nfc::to_nfc(&s.to_string_lossy())).unwrap_or_default();
+            paths::unique_path(&d.join(stem))
+        }
+        None => zipnfc::default_extract_dir(&zip),
+    };
+    let extract = zipnfc::extract_nfc(&zip, &target)?;
+    let rezip = if rezip {
+        Some(zipnfc::rezip_nfc(&zip, &zipnfc::default_rezip_path(&zip, dir.as_deref()))?)
+    } else {
+        None
+    };
+    Ok(ZipResult { extract, rezip })
 }
 
 #[derive(Serialize)]
@@ -1135,7 +1131,6 @@ fn main() {
             inspect_paths,
             nfc_preview,
             nfc_apply,
-            zip_extract,
             pdf_merge,
             pdf_split,
             pdf_rotate,
@@ -1202,6 +1197,22 @@ fn main() {
             cmd_pdfedit::pdf_form_list,
             cmd_pdfedit::pdf_form_fill,
             cmd_pdfedit::pdf_flatten,
+            // 0.3.0 W4 이미지·영상·파일 정리
+            cmd_tools::cancel_job,
+            cmd_tools::image_probe,
+            cmd_tools::image_edit,
+            cmd_tools::media_probe,
+            cmd_tools::media_frame,
+            cmd_tools::media_frame_save,
+            cmd_tools::media_edit,
+            cmd_tools::zip_list,
+            cmd_tools::zip_extract,
+            cmd_tools::zip_create,
+            cmd_tools::rename_preview,
+            cmd_tools::rename_apply,
+            cmd_tools::rename_undo,
+            cmd_tools::dup_scan,
+            cmd_tools::dup_trash,
             // 0.3.0 화면(W5) 읽기 전용 도우미
             cmd_ui::file_stats,
             cmd_ui::list_files,

@@ -70,7 +70,7 @@ const H: Record<string, (a: Args) => unknown> = {
   startup_tab: () => null,
   startup_query: () => null,
   inspect_paths: (a) => (a.paths as string[]).map((p) => ({ path: p, kind: kindOf(p), pages: kindOf(p) === "pdf" ? 12 : null })),
-  file_stats: (a) => (a.paths as string[]).map((p) => ({ path: p, exists: true, is_dir: kindOf(p) === "dir", size: kindOf(p) === "dir" ? 0 : /_압축/.test(p) ? 2_100_000 : /_편집/.test(p) ? 24_000_000 : SIZES[extOf(p)] ?? 900_000, modified: 1761900000 })),
+  file_stats: (a) => (a.paths as string[]).map((p) => ({ path: p, exists: true, is_dir: kindOf(p) === "dir", size: kindOf(p) === "dir" ? 0 : /_압축/.test(p) ? 2_100_000 : /_편집/.test(p) ? 24_000_000 : SIZES[extOf(p)] ?? 900_000, modified: 1761900000000 })),
   list_files: (a) => ["IMG_4021.JPG", "IMG_4022.JPG", "IMG_4023.JPG", "IMG_4025.HEIC", "IMG_4030.JPG"].map((n) => `${a.folder}\\${n}`),
   image_data_url: () => { const c = document.createElement("canvas"); c.width = 300; c.height = 120; const g = c.getContext("2d")!; g.strokeStyle = "#1a3a8a"; g.lineWidth = 5; g.beginPath(); g.moveTo(20, 80); g.bezierCurveTo(60, 10, 90, 110, 130, 50); g.bezierCurveTo(170, 0, 200, 110, 280, 40); g.stroke(); return c.toDataURL(); },
   pdf_protection: (a) => ({ needs_password: /암호|급여/.test(String(a.path)), encrypted: false }),
@@ -141,8 +141,8 @@ const H: Record<string, (a: Args) => unknown> = {
   dup_scan: async (a) => {
     for (let i = 1; i <= 10; i++) { await sleep(120); emit("tools_progress", { job: a.job, done: i * 120, total: 1200, current: `${D}\\사진\\IMG_${4000 + i}.JPG` }); }
     return { scanned: 1200, wasted_bytes: 9_800_000, groups: [
-      { size: 3_400_000, hash: "a", files: [{ path: `${D}\\사진\\IMG_4021.JPG`, modified: 1761800000 }, { path: `${D}\\사진\\IMG_4021 (1).JPG`, modified: 1761900000 }, { path: "C:\\Users\\me\\Desktop\\IMG_4021.JPG", modified: 1761950000 }] },
-      { size: 3_000_000, hash: "b", files: [{ path: `${D}\\계약서_최종.pdf`, modified: 1761000000 }, { path: "C:\\Users\\me\\Downloads\\계약서_최종 (1).pdf", modified: 1761100000 }] },
+      { size: 3_400_000, hash: "a", files: [{ path: `${D}\\사진\\IMG_4021.JPG`, modified: 1761800000000 }, { path: `${D}\\사진\\IMG_4021 (1).JPG`, modified: 1761900000000 }, { path: "C:\\Users\\me\\Desktop\\IMG_4021.JPG", modified: 1761950000000 }] },
+      { size: 3_000_000, hash: "b", files: [{ path: `${D}\\계약서_최종.pdf`, modified: 1761000000000 }, { path: "C:\\Users\\me\\Downloads\\계약서_최종 (1).pdf", modified: 1761100000000 }] },
     ] };
   },
   dup_trash: async (a) => ({ done: (a.paths as unknown[]).length, failed: [] }),
