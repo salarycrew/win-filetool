@@ -12,6 +12,7 @@
 //! 2c: 빠른 검색 서비스(`filetool-svc`, 선택 설치)가 답하면 그 서비스가 색인한 드라이브는 서비스에 묻고(상태 줄 "빠른 색인(서비스)"),
 //!     나머지 루트만 앱이 색인한다. 서비스가 없거나 멈추면 조용히 앱 색인으로. [설정] > 검색에서 설치/제거(UAC 1번).
 
+mod cmd_office;
 mod icons;
 mod remote;
 
@@ -1144,6 +1145,11 @@ fn main() {
             pdf_to_images,
             pdf_extract_images,
             pdfium_status,
+            cmd_office::doc_to_pptx,
+            cmd_office::pdf_to_docx,
+            cmd_office::pdf_to_pptx,
+            cmd_office::pdf_to_txt,
+            cmd_office::extract_images,
             autostart_get,
             autostart_set,
             launched_by_autostart,

@@ -74,6 +74,7 @@ src/, index.html  Vite + TypeScript(프레임워크 없음). 창 제목 "파일 
 - 1c: `pdfium-render` 0.9.4(MIT/Apache-2.0, 기능 `pdfium_7881`·`image_025`·`thread_safe`) + 동봉하는 `pdfium.dll`(아래), `winreg`(MIT, Windows에서만), `tauri` 기능 `tray-icon`, `tauri-plugin-single-instance` 2
 - 2a: `memchr`(이름 훑기 memmem), `chrono`(dm: 지역 날짜), `windows-sys` 0.61(FindFirstFileExW·ReadDirectoryChangesW·드라이브 종류, Windows에서만),
   `notify` 8(Linux·시험용 실시간 알림, Windows 빌드에는 안 들어감), `tauri-plugin-global-shortcut` 2(전역 단축키)
+- 0.3.0 W2: `quick-xml` 0.42(MIT, Word·PowerPoint·Excel XML 읽기 — 이미 Cargo.lock에 있던 버전)
 - 2c: 새 외부 크레이트 없음. `windows-sys` 기능 추가(Pipes·Services·Threading·Security_Authorization, 서비스는 Authentication_Identity(LSA), 앱은 UI_Shell(ShellExecuteExW)), 서비스·CLI에 `chrono`(기록 시각)
 
 ## 1b 변환
@@ -553,3 +554,90 @@ filetool-cli search --via service / svc-status / svc-watch    (같은 클라이�
 
 - 낱말 나누기에서 `<`(낱말 처음, `!` 뒤 포함)는 `Open{not}`, 묶음 안의 `>`는 `Close`. `size:>1mb`·`dm:<2024`처럼 낱말 가운데 또는 `:` 바로 뒤의
   `<` `>`는 비교 기호로 낱말에 남는다. 해석은 재귀(`parse_seq`): 묶음 하나가 낱말 하나처럼 AND/OR에 들어간다. 닫지 않은 묶음은 끝에서 닫고, 묶음 밖의 `>`는 글자.
+
+## 0.3.0 문서 변환(W2)
+
+Word→PPT, PDF→Word, PDF→PPT, PDF→TXT, 이미지만 뽑기. 모두 순수 Rust(+ 이미 쓰는 PDFium)이고,
+**LibreOffice의 PDF 가져오기(xpdfimport/poppler, GPL)는 쓰지 않는다**. LibreOffice는 Word→PPT에서 `.doc/.hwp/.odt/.pages/.rtf`를
+먼저 docx로 바꿀 때만(`docs::convert`, W1의 앱 내장 LO를 `Toolset`이 먼저 찾음) 쓴다.
+
+모듈: `core/ooxml/{pptx,docx}.rs`(공용 쓰기 — W3도 씀), `core/docx2pptx.rs`, `core/pdflayout.rs`(PDF 글자 배치 분석, 아래 셋이 공유),
+`core/pdf2docx.rs`(PDF→Word, PDF→TXT), `core/pdf2pptx.rs`, `core/officeimages.rs`. 화면 명령은 `src-tauri/src/cmd_office.rs`.
+
+### 화면 명령 계약(Tauri)
+
+공통: `job`은 화면이 정한 번호. 진행률은 이벤트 **`job-progress` `{ job: number, fraction: 0..1 }`**(1% 단위), 멈추기는 기존 **`cancel_jobs`**(돌고 있는 모든 작업).
+`out_dir`가 비거나 없으면 원본 옆. 결과는 덮어쓰지 않는다(`이름_PPT (1).pptx`). 실패는 한국어 문장(문자열)으로 reject.
+경로 필드는 문자열(Windows 경로).
+
+| 명령 | 인자 | 결과 이름 | 돌려주는 JSON |
+|---|---|---|---|
+| `doc_to_pptx` | `{ job, path, outDir? }` | `이름_PPT.pptx` | `{ input, output, slides, sections, images, tables, via_libreoffice, millis, note }` |
+| `pdf_to_docx` | `{ job, path, outDir? }` | `이름_Word.docx` | `{ input, output, pages, headings, paragraphs, list_items, tables, images, scanned_pages, two_column_pages, dropped_lines, millis, note }` |
+| `pdf_to_pptx` | `{ job, path, mode?: "image" \| "editable", dpi?: number, outDir? }` | `이름_PPT.pptx` | `{ input, output, mode, slides, text_boxes, pictures, shapes, image_pages, millis, note }` |
+| `pdf_to_txt` | `{ job, path, outDir? }` | `이름.txt` | `{ input, output, pages, chars, scanned_pages, millis, note }` |
+| `extract_images` | `{ job, path, outDir? }` | 폴더 `이름_이미지\` | `{ input, folder: string \| null, files: string[], duplicates, skipped, millis, note }` |
+
+- `note`는 사용자에게 그대로 보여 줄 한 줄 요약(예: "3쪽 → 제목 9, 문단 13, 목록 13, 표 1, 그림 2").
+- `mode` 기본 `"image"`(그대로 보이게), `"editable"`(글자 고칠 수 있게). `dpi` 기본 150(36~600).
+- `extract_images`는 빠르므로 진행 이벤트를 시작(0)·끝(1)만 보낸다. 그림이 없으면 `folder: null`, 폴더를 만들지 않음.
+- 받는 파일: `doc_to_pptx` — docx/docm/dotx + LibreOffice로 여는 글 문서(doc, hwp(옛 한글 97), odt, pages, rtf 등). LibreOffice가 없으면
+  "LibreOffice을(를) 찾지 못했습니다…" 오류. `extract_images` — docx/pptx/xlsx(매크로·서식 포함), pdf.
+- 오류 문구 예: 암호 PDF "암호가 걸린 PDF는 열 수 없습니다. PDF 프로그램에서 암호를 풀어 저장한 뒤 다시 시도하세요",
+  손상 "PDF 파일이 손상되었거나 PDF 형식이 아닙니다" / "Word 파일을 읽지 못했습니다(…). 파일이 손상되었거나…", 취소 "취소했습니다".
+
+CLI(같은 코어): `filetool-cli doc-to-pptx | pdf-to-docx | pdf-to-pptx [--mode image|editable] [--dpi N] | pdf-to-txt | extract-images [--out 폴더] <파일...>`.
+
+### Word → PPT 규칙
+
+- Title → 첫 슬라이드(+ 바로 뒤 보통 문단 2개는 부제). Heading 1/2 → 한 장씩(H2 위에 상위 H1을 작게). H3 이하 → 굵은 줄.
+  제목 스타일은 `w:name`(heading N / 제목 N / title)·`outlineLvl`·`basedOn` 사슬로 찾는다(한국어판 Word의 스타일 ID `1`,`2`,`a3`도 됨).
+- 문단·목록 → 글머리표(목록 단계, 번호 목록은 번호). 7줄 또는 420자를 넘으면 고르게 나눠 "(계속)".
+- 섹션의 첫 그림은 글 오른쪽, 나머지는 한 장씩. 그림 설명(Caption 스타일 또는 그림·표 바로 뒤 "그림 N…/표 N…")은 그림 아래 작은 글씨.
+- 표는 진짜 표. 12줄 넘으면 머리글 줄을 반복해 나눔("(표 1/2)"). 글이 3줄·200자 이하이고 표가 7줄 이하면 글과 표를 한 장에.
+- 머리글·바닥글은 넣지 않음. 표 안 그림은 표 다음 슬라이드에. EMF/WMF 그림은 바꾸지 않고 그대로(Content-Type은 내용으로 판단).
+  `mc:Fallback` 안(같은 내용의 옛 형식)은 읽지 않는다(두 번 들어가지 않게).
+- 슬라이드는 16:9, 자체 템플릿(마스터 1·빈 레이아웃 1·테마 1, 맑은 고딕). 자리 표시자 없이 위치를 정한 글상자·그림·표만.
+
+### PDF 글자 배치 분석(`pdflayout`)
+
+1. PDFium으로 글자마다 위치·크기·굵기·기울임·글꼴·색·링크를 읽는다(보이지 않는 글자 = OCR 층은 뺌).
+2. **틀**: 글자 각도의 최빈 사분면으로 좌표를 돌려 가로로 세운다(돌린 쪽 대응). 쪽 /Rotate와 같으면 `upright`(화면과 같은 방향).
+3. 기준선이 같은 글자 → 행. 행 안 틈이 글자 크기 1.2배를 넘거나 그 사이에 세로 선이 있으면 칸을 나눈다. 글머리표·번호와 글 사이 틈은 붙인다.
+4. **단**: 가운데(25~75%)에 긴 글줄이 거의 지나가지 않는 세로 빈 띠가 8pt 넘고 양쪽에 긴 줄이 4개 이상이면 2단. 가로지르는 줄(제목)이 나오면 그 앞까지 왼쪽 단 → 오른쪽 단 순서.
+5. **머리글·바닥글**: 쪽 위·아래 10% 안 줄 중 여러 쪽(3쪽 이상이면 절반 이상)에 되풀이되는 줄(숫자는 같게 봄), 쪽 번호 모양("3", "- 3 -", "3 / 10", "3쪽", "Page 3"),
+   끝에 쪽 번호가 붙은 줄("… · 3 쪽")은 뺀다. 한 쪽짜리 PDF의 쪽 번호 없는 머리글은 알 수 없어 남는다.
+6. **표**: 칸 2개 이상 줄이 2줄 넘게 이어지면 표. 세로 선이 표 높이 대부분에 걸치면 선 사이가 열(가운데 정렬 머리글도 맞음), 선이 없으면 칸의 가로 범위가 겹치는 것끼리 한 열.
+   가로 선이 있으면 선 사이 여러 줄을 한 행으로. 첫 줄이 굵거나 색 바탕이면 머리글 줄. 다음 쪽 첫 표가 열 수가 같으면 이어 붙인다.
+7. **제목**: 한 칸 줄이고 본문(글자 수로 가중한 최빈 크기)보다 15% 크거나, 굵고 짧은(60자 미만, 마침표로 안 끝남) 줄. 크기 순위로 단계, 가장 큰 크기가 첫 쪽에 한 번만 있고 본문의 1.4배 이상이면 Title.
+8. **문단**: 같은 크기·같은 왼쪽·좁은 줄 간격이고 앞줄이 오른쪽 끝 가까이 찼으면 잇는다. 쪽을 넘거나(앞 쪽 아래 → 다음 쪽 위) 단을 넘는(왼쪽 단 끝 → 오른쪽 단 첫 줄) 문단도 잇는다.
+   **한글 줄 잇기**: 줄 끝 빈칸을 글자로 남기는 PDF(LibreOffice·Word)는 빈칸이 없으면 낱말 안에서 끊긴 것 → 빈칸 없이 붙인다(`지적\n된` → `지적된`).
+   줄 끝 빈칸을 남기지 않는 PDF(Edge/Chrome 인쇄)는 앞줄이 오른쪽 끝까지 찼을 때만 붙인다. 영어는 빈칸, 줄 끝 하이픈은 이어 붙임.
+9. **목록**: 글머리표 글자(•, ▪, -, 사설 영역 기호 등), 번호("1." "(2)" "가." "a)"), 줄 왼쪽에 도형으로 그린 점(Edge). 들여쓰기가 깊으면 아래 단계(최대 3).
+   앞줄이 끝까지 찬 같은 왼쪽 줄의 "다." "가." 등은 번호가 아니라 이어지는 글.
+10. **스캔본**: 글자 20자 미만 + 쪽 절반 넘는 그림(또는 도형만 60개 넘음) → 150dpi JPEG 쪽 그림. OCR은 하지 않는다.
+11. **글꼴 표**(`map_font`): 맑은 고딕·나눔고딕·Noto Sans·본고딕 등 고딕 → 기본(맑은 고딕), 명조·바탕·Noto Serif → 바탕, 굴림·돋움·궁서 → 같은 이름,
+    Times/Liberation Serif → Times New Roman(한글은 바탕), Arial/Helvetica/Liberation Sans → Arial, Calibri/Carlito → Calibri, Cambria/Caladea → Cambria,
+    Courier/Consolas/D2Coding → Courier New. docx의 `fontTable.xml`에 글꼴 계열을 적어 그 글꼴이 없는 PC도 비슷한 계열로 그린다.
+
+### PDF → Word / TXT / PPT
+
+- **Word**: 위 블록 → Title/Heading1~3, 문단, 목록(ListBullet/ListNumber, 목록마다 번호 1부터), 표(TableGrid, 머리글 줄 반복), 그림(JPEG는 원본 바이트), 캡션,
+  굵게·기울임·하이퍼링크, 쪽 크기 = 첫 쪽 크기(여백 2cm). 스캔본 쪽은 앞뒤 쪽 나누기 + 쪽 그림. 여러 단은 한 단으로 흘린다(단 편집은 옮기지 않음).
+- **TXT**: UTF-8 **BOM** + CRLF(메모장). 문단은 한 줄, 목록은 "• " / "1. ", 표는 칸을 탭으로. **쪽 사이: 빈 줄 + `— N쪽 —` + 빈 줄**
+  (폼 피드는 메모장에서 이상한 기호로 보여서 쓰지 않음). 스캔본 쪽은 "(글자가 없는 쪽입니다 — 스캔한 그림)".
+- **PPT `image`**(기본): 쪽마다 PDFium 렌더(150dpi JPEG 품질 90) 한 장. 슬라이드 크기 = 첫 쪽 크기(PowerPoint 범위 1~56인치로 맞춤), 다른 크기 쪽은 가운데 맞춤.
+- **PPT `editable`**: 같은 분석으로 줄을 제자리 글상자로(같은 크기·왼쪽·촘촘한 줄은 한 상자, 줄은 그대로·줄 간격 고정·줄바꿈 없음), 칸이 나뉜 줄은 칸마다 상자,
+  그림은 제자리, 칠한 사각형·선은 도형(최대 600개, 흰 사각형·쪽 크기 배경은 뺌). 스캔본 쪽과 글자가 화면과 다른 방향인 쪽은 쪽 그림.
+
+### 이미지만 뽑기
+
+- docx/pptx/xlsx: 문서에서 처음 쓰인 순서(Word 본문 → 머리글·바닥글, PowerPoint는 `presentation.xml`의 슬라이드 순서, Excel은 시트 순서 → drawing),
+  차트·다이어그램 안쪽도 한 단계 더 따라감. 어디에도 안 쓰인 그림(마스터·레이아웃)은 맨 뒤. 같은 바이트는 한 번만. 이름 `NN_원래이름`(`01_image3.png`), 원본 바이트 그대로.
+- PDF: 1c `pdfrender::extract_images`와 같은 방식(JPEG 그대로, 8비트 Flate RGB/흑백은 PNG, 그 밖은 건너뛰고 개수만)이고 폴더만 `이름_이미지\`.
+
+### 시험 샘플(`crates/core/tests/data/030/`)
+
+`make_corpus.py`(python-docx·python-pptx·openpyxl·pypdf·Pillow + LibreOffice로 PDF 만들기)로 만든 한국어 샘플. 글·그림은 스크립트가 지어낸 것,
+PDF에 들어간 글꼴은 나눔고딕·Noto(SIL OFL) 일부. `엣지인쇄.pdf`만 Windows Edge `--headless --print-to-pdf`로 `엣지인쇄.html`을 인쇄해 만든다(Noto Sans KR).
+`tests/office_030.rs`가 구조 숫자(제목·문단·목록·표·그림·글상자·슬라이드 수, 한글 낱말 사이 빈칸)를 확인한다(픽셀 비교 아님).
