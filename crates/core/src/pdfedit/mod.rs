@@ -7,6 +7,7 @@
 //! - [`layout`]: 여백 자르기(직접/자동)·A4에 맞추기·모아 찍기(2/4쪽)
 //! - [`info`]: 문서 정보(Info 사전 + XMP) 읽기·바꾸기·지우기
 //! - [`forms`]: 양식 칸 목록·채우기·평평하게(양식·주석을 쪽 내용으로)
+//! - [`redact`]: 0.4 진짜 가리기(가린 쪽은 그림으로 바꾸고 숨은 내용·문서 정보·첨부·자바스크립트 지우기), 찾아서 가리기, 남았는지 확인
 //! - [`font`]: 한글 글꼴 찾기·부분 넣기(시스템 맑은 고딕 등, 앱에 글꼴을 넣지 않음)
 //!
 //! 공통 규칙: 입력이 암호 PDF면 [`Error::PasswordRequired`]/[`Error::WrongPassword`]로 끝나고(화면은 암호 칸을 띄움),
@@ -19,8 +20,10 @@ pub mod forms;
 pub mod info;
 pub mod layout;
 pub mod plan;
+pub mod redact;
 pub mod stamp;
 pub mod testpdf;
+pub mod testpdf040;
 pub mod thumbs;
 
 use std::path::{Path, PathBuf};

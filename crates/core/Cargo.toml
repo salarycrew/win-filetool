@@ -44,6 +44,8 @@ flate2 = "1.1"
 windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_Storage_FileSystem", "Win32_System_IO", "Win32_Security", "Win32_Security_Authorization", "Win32_System_Pipes", "Win32_System_Services", "Win32_System_Threading", "Win32_UI_Shell"] }
 # 윈도 시작 시 실행(HKCU Run)
 winreg = "0.56"
+# 0.4 글자 인식: Windows.Media.Ocr(WinRT). MIT OR Apache-2.0. 판은 Tauri가 이미 쓰는 0.62(같은 크레이트 한 벌)
+windows = { version = "0.62.2", features = ["Foundation", "Foundation_Collections", "Globalization", "Graphics_Imaging", "Media_Ocr", "Storage_Streams"] }
 
 [target.'cfg(unix)'.dependencies]
 # 감시 잠금: 프로세스 단위 fcntl 잠금(flock은 fork한 자식이 붙잡을 수 있음)

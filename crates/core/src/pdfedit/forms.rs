@@ -433,6 +433,11 @@ fn set_field(doc: &mut Document, id: ObjectId, key: &str, v: Object) -> Result<(
 
 /// 양식 칸과 주석을 쪽 내용으로 그려 넣고 없앤다(링크는 남김). 그린 개수.
 fn flatten_doc(doc: &mut Document, job: &mut Job) -> Result<u32> {
+    flatten_doc_with(doc, job, false)
+}
+
+/// `widgets_only`면 양식 칸(Widget)만 굳히고 다른 주석은 그대로 둔다(0.4 가리기).
+pub(crate) fn flatten_doc_with(doc: &mut Document, job: &mut Job, widgets_only: bool) -> Result<u32> {
     let dr = acroform(doc).and_then(|af| af.get(b"DR").ok().cloned());
     let ids = page_ids(doc);
     let n = ids.len() as u32;
@@ -456,6 +461,10 @@ fn flatten_doc(doc: &mut Document, job: &mut Job) -> Result<u32> {
                 _ => continue,
             };
             let subtype = ad.get(b"Subtype").ok().and_then(|o| o.as_name().ok()).map(|n| n.to_vec()).unwrap_or_default();
+            if widgets_only && subtype != b"Widget" {
+                keep.push(a.clone());
+                continue;
+            }
             let flags = ad.get(b"F").ok().and_then(|o| resolve(doc, o).as_i64().ok()).unwrap_or(0);
             if subtype == b"Popup" || flags & 2 != 0 || flags & 32 != 0 {
                 continue;

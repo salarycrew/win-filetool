@@ -33,6 +33,8 @@ pub struct PdfToDocxOut {
     pub two_column_pages: usize,
     /// 뺀 머리글·바닥글·쪽 번호 줄
     pub dropped_lines: usize,
+    /// 0.4: 글자 인식으로 글을 넣은 스캔본 쪽
+    pub ocr_pages: usize,
     pub millis: u64,
     pub note: String,
 }
@@ -77,11 +79,70 @@ pub fn build_doc(layout: &DocLayout, title: &str) -> Doc {
 
 /// PDF → `이름_Word.docx`
 pub fn pdf_to_docx(input: &Path, out_dir: Option<&Path>, cancel: Option<&Cancel>, progress: &mut dyn FnMut(u32, u32)) -> Result<PdfToDocxOut> {
+    pdf_to_docx_with(input, out_dir, None, cancel, progress)
+}
+
+/// 0.4: 스캔본 쪽을 글자 인식으로 읽어 고칠 수 있는 문단으로 넣는다. 글자가 10자 미만으로 읽힌 쪽은 예전처럼 쪽 그림.
+fn ocr_scanned(input: &Path, layout: &mut DocLayout, rec: &dyn crate::ocr::Recognizer, cancel: Option<&Cancel>, progress: &mut dyn FnMut(u32, u32)) -> Result<usize> {
+    let idx: Vec<usize> = layout.pages.iter().enumerate().filter(|(_, p)| p.scanned.is_some()).map(|(i, _)| i).collect();
+    if idx.is_empty() {
+        return Ok(0);
+    }
+    let pdfium = crate::pdfrender::pdfium()?;
+    let pdf = pdfium.load_pdf_from_file(input, None).map_err(|e| crate::pdfrender::open_err(input, e))?;
+    let n = layout.pages.len() as u32;
+    let mut done = 0;
+    for (k, &i) in idx.iter().enumerate() {
+        if let Some(c) = cancel {
+            c.check()?;
+        }
+        let page = pdf.pages().get(i as i32).map_err(|e| crate::pdfrender::render_err(input, e))?;
+        let img = crate::ocr::pdf::render(&page, 300, input)?;
+        let r = crate::ocr::recognize(rec, &img, cancel)?;
+        if r.chars() >= 10 {
+            let (lines, fw, fh) = crate::ocr::pdf::layout_lines(&r, 72.0 / 300.0);
+            let p = &mut layout.pages[i];
+            p.items = lines.into_iter().map(pdflayout::Item::Line).collect();
+            p.scanned = None;
+            p.width = fw;
+            p.height = fh;
+            p.upright = true;
+            p.columns = 1;
+            done += 1;
+        }
+        progress(n + ((k as u32 + 1) * n) / idx.len() as u32, n * 2);
+    }
+    // 본문 크기 다시(글자 수로 가중한 최빈 크기)
+    let mut hist: std::collections::HashMap<i32, usize> = std::collections::HashMap::new();
+    for p in &layout.pages {
+        for it in &p.items {
+            if let pdflayout::Item::Line(l) = it {
+                *hist.entry((l.size * 2.0).round() as i32).or_default() += l.chars();
+            }
+        }
+    }
+    if let Some((s, _)) = hist.iter().max_by_key(|(s, n)| (**n, -**s)) {
+        layout.body_size = *s as f32 / 2.0;
+    }
+    Ok(done)
+}
+
+/// PDF → `이름_Word.docx`. `ocr`가 있으면 스캔본 쪽을 글자 인식해서 문단으로 넣는다.
+pub fn pdf_to_docx_with(input: &Path, out_dir: Option<&Path>, ocr: Option<&dyn crate::ocr::Recognizer>, cancel: Option<&Cancel>, progress: &mut dyn FnMut(u32, u32)) -> Result<PdfToDocxOut> {
     let t0 = Instant::now();
     if !input.is_file() {
         return Err(Error::Invalid(format!("파일이 없습니다: {}", input.display())));
     }
-    let layout = pdflayout::analyze(input, &AnalyzeOpts { images: true, render_scanned: true, keep_running: false }, cancel, progress)?;
+    let mut layout = if ocr.is_some() {
+        let mut half = |i: u32, n: u32| progress(i, n * 2);
+        pdflayout::analyze(input, &AnalyzeOpts { images: true, render_scanned: true, keep_running: false }, cancel, &mut half)?
+    } else {
+        pdflayout::analyze(input, &AnalyzeOpts { images: true, render_scanned: true, keep_running: false }, cancel, progress)?
+    };
+    let ocr_pages = match ocr {
+        Some(r) => ocr_scanned(input, &mut layout, r, cancel, progress)?,
+        None => 0,
+    };
     let stem = input.file_stem().map(|s| crate::nfc::to_nfc(&s.to_string_lossy())).unwrap_or_else(|| "문서".into());
     let doc = build_doc(&layout, &stem);
     if let Some(c) = cancel {
@@ -95,6 +156,9 @@ pub fn pdf_to_docx(input: &Path, out_dir: Option<&Path>, cancel: Option<&Cancel>
     let dropped = layout.pages.iter().map(|p| p.dropped).sum();
     let images = st.images.saturating_sub(scanned);
     let mut note = format!("{}쪽 → 제목 {}, 문단 {}, 목록 {}, 표 {}, 그림 {}", layout.pages.len(), st.headings, st.paragraphs, st.list_items, st.tables, images);
+    if ocr_pages > 0 {
+        note.push_str(&format!(" · 스캔본 {ocr_pages}쪽은 글자 인식으로 넣었습니다(틀린 글자가 있을 수 있음)"));
+    }
     if scanned > 0 {
         note.push_str(&format!(" · 스캔본 {scanned}쪽은 쪽 그림으로 넣었습니다(글자는 고칠 수 없음)"));
     }
@@ -110,6 +174,7 @@ pub fn pdf_to_docx(input: &Path, out_dir: Option<&Path>, cancel: Option<&Cancel>
         scanned_pages: scanned,
         two_column_pages: two,
         dropped_lines: dropped,
+        ocr_pages,
         millis: t0.elapsed().as_millis() as u64,
         note,
     })
