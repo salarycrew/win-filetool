@@ -116,7 +116,7 @@ async function refreshSvc() {
   else if (p.connected) { text = `${p.roots.join(", ")} · 항목 ${num(p.entries)}개 · ${p.visibility}`; chip = "실행 중"; cls = ""; }
   else if (starting && Date.now() - svcWaitSince < 30_000) { text = "서비스가 시작하는 중이에요. 응답하면 저절로 연결해요"; chip = "시작 중"; cls = "warn"; }
   else { text = `설치돼 있지만 연결되지 않았어요 — 앱이 스스로 찾아요 (${i.state})`; chip = "연결 안 됨"; cls = "err"; }
-  if (!p.exe) text += " · 이 앱 폴더에는 서비스 파일이 없어요(설치본으로 설치하면 들어 있어요)";
+  if (!p.exe) text += i.installed ? " · 설치·제거는 설치본으로 깐 파일 도구에서 할 수 있어요" : " · 설치본(setup.exe)으로 깔면 쓸 수 있어요";
   $(".svc-state", root)!.textContent = text;
   const c = $(".svc-chip", root)!;
   c.className = `state svc-chip ${cls}`;

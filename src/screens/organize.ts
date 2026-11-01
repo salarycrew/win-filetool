@@ -153,6 +153,8 @@ let dupRes: { groups: DupGroup[]; scanned: number; wasted_bytes: number } | null
 let dupMarked = new Set<string>();
 let dupJob = 0;
 let dupBusy = false;
+let dupMin = "102400";
+let dupHidden = false;
 
 function dupUI() {
   const b = body();
@@ -161,11 +163,12 @@ function dupUI() {
     <div class="optcard"><div class="oc-body">
       ${opt("찾을 폴더", `<div class="roots">${dupRoots.map((r, i) => `<span class="chip-r">${I("folder")}<span title="${esc(r)}">${esc(r)}</span><button type="button" class="ib" data-rm-root="${i}" aria-label="${esc(r)} 빼기">${I("x")}</button></span>`).join("") || `<span class="hint">아직 없어요</span>`}
         <button type="button" class="btn" data-act="dup-add">${I("plus")}폴더 더하기</button></div>`)}
-      ${opt("크기", seg("dup-min", [["0", "모두"], ["102400", "100KB 넘는 것"], ["1048576", "1MB 넘는 것"], ["10485760", "10MB 넘는 것"]], "102400"), "작은 파일을 빼면 빨라요")}
-      ${opt("", chk("dup-hidden", "숨김 파일도 보기", false))}
+      ${opt("크기", seg("dup-min", [["0", "모두"], ["102400", "100KB 넘는 것"], ["1048576", "1MB 넘는 것"], ["10485760", "10MB 넘는 것"]], dupMin), "작은 파일을 빼면 빨라요")}
+      ${opt("", chk("dup-hidden", "숨김 파일도 보기", dupHidden))}
     </div><div class="oc-foot"><span class="save">${I("info")}<span>사진·동영상이 많은 폴더는 몇 분 걸릴 수 있어요</span></span><button type="button" class="btn accent lg" data-act="dup-scan" ${dupRoots.length && !dupBusy ? "" : "disabled"}>찾기</button></div></div>
     <div class="dup-out">${dupBusy ? progressPanel("같은 파일 찾는 중") : dupRes ? dupResultHTML(marked) : ""}</div>`;
-  bindSegs(b);
+  bindSegs(b, (n, v) => { if (n === "dup-min") dupMin = v; });
+  $<HTMLInputElement>("#dup-hidden", b)?.addEventListener("change", (e) => { dupHidden = (e.target as HTMLInputElement).checked; });
 }
 function dupResultHTML(marked: number): string {
   const r = dupRes!;
@@ -194,7 +197,7 @@ async function dupScan() {
   setProgress(out, null, "파일 목록을 읽는 중");
   $("[data-cancel]", out)!.addEventListener("click", () => cancelJob(dupJob));
   try {
-    dupRes = await invoke("dup_scan", { job: dupJob, roots: dupRoots, minSize: Math.max(1, Number(segVal(body(), "dup-min"))), includeHidden: checked(body(), "dup-hidden") });
+    dupRes = await invoke("dup_scan", { job: dupJob, roots: dupRoots, minSize: Math.max(1, Number(dupMin)), includeHidden: dupHidden });
   } catch (e) {
     dupBusy = false;
     dupUI();
