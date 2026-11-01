@@ -400,7 +400,7 @@ mod win {
         let tmp_in = job.path().join(format!("in.{ext}"));
         std::fs::copy(input, &tmp_in).map_err(io_err(input))?;
         // 0.3.3: 한글에는 매크로 끄기 설정이 없어, 여는 복사본에서 문서 스크립트를 뺀다(원본은 그대로)
-        super::scrub::strip_scripts(&tmp_in)?;
+        crate::hwp::scrub::strip_scripts(&tmp_in)?;
         let tmp_out = job.path().join(format!("out.{}", target.ext()));
         let script = job.path().join("hancom.ps1");
         std::fs::write(&script, format!("\u{feff}{SCRIPT}")).map_err(io_err(&script))?;
