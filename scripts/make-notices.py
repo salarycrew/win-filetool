@@ -4,9 +4,12 @@
 - Rust 의존성: `cargo metadata`(Windows x64 대상)에서 앱·CLI·서비스가 실제로 링크하는(normal) 크레이트만 모아
   이름·버전·라이선스와, 크레이트에 든 라이선스 파일 전문(같은 글은 한 번만)을 적는다.
   GPL/AGPL/LGPL만으로 된 라이선스가 있으면 멈춘다(앱에 링크하면 안 됨).
-- 앱에 든 별도 프로그램: ffmpeg·LAME·dav1d·zlib(소스 묶음 안 라이선스 파일), LibreOffice(license.txt·NOTICE), PDFium(licenses/).
-- LGPL/MPL 부품의 "소스 받는 곳": 주소는 자리표시(SOURCE_URL, coordinator가 채움). 빌드에 쓴 정확한 소스 묶음과 configure 줄은
-  build-windows.sh가 dist-win/sources/에 함께 둔다.
+- 앱에 든 별도 프로그램: ffmpeg·LAME·dav1d·zlib(소스 묶음 안 라이선스 파일), LibreOffice(license.txt·NOTICE — LibreOffice가 함께 싣는
+  서드파티 라이선스 모음), PDFium(LICENSE·licenses/).
+- 화면(프런트엔드) 묶음에 든 npm 패키지: package.json의 dependencies와 그 하위(node_modules의 package.json·LICENSE 파일), Vite 런타임 조각.
+- 시험에만 쓰는 자료(앱에 안 들어감): 한글 97 시험 파일(LibreOffice 회귀 자료, MPL-2.0) 출처.
+- LGPL/MPL 부품의 "소스 받는 곳": 기본 https://github.com/salarycrew/win-filetool-sources (--source-url로 바꿈).
+  자리표시({{...}})가 남으면 멈춘다. 빌드에 쓴 정확한 소스 묶음과 configure 줄은 build-windows.sh가 dist-win/sources/에 함께 둔다.
 
 사용: python3 scripts/make-notices.py <출력 파일> [--source-url URL]
 """
@@ -21,7 +24,8 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 TP = ROOT / "third_party"
-SOURCE_URL_PLACEHOLDER = "{{SOURCE_URL}}"
+DEFAULT_SOURCE_URL = "https://github.com/salarycrew/win-filetool-sources"
+PLACEHOLDER_RE = re.compile(r"\{\{[A-Za-z_]+\}\}")
 ROOTS = {"win-filetool", "filetool-cli", "filetool-svc", "filetool-core"}
 LICENSE_RE = re.compile(r"^(LICEN[CS]E|COPYING|COPYRIGHT|NOTICE|UNLICENSE)([-_.].*)?$", re.I)
 
@@ -46,6 +50,58 @@ def cargo_packages():
             if any(k["kind"] is None for k in d["dep_kinds"]):
                 stack.append(d["pkg"])
     return sorted((pkgs[i] for i in seen if pkgs[i]["name"] not in ROOTS), key=lambda p: (p["name"], p["version"]))
+
+
+def lo_version():
+    """줄인 LibreOffice의 정확한 판(26.2.6.3 등) — share/registry/main.xcd의 ooSetupVersionAboutBox"""
+    x = TP / "libreoffice" / "lo-trim" / "share" / "registry" / "main.xcd"
+    if x.is_file():
+        m = re.search(r'ooSetupVersionAboutBox"><value>([0-9.]+)<', x.read_text(encoding="utf-8", errors="replace"))
+        if m:
+            return m.group(1)
+    return None
+
+
+def pdfium_version():
+    v = TP / "pdfium" / "win-x64" / "VERSION"
+    if not v.is_file():
+        return "chromium/7881"
+    kv = dict(l.split("=", 1) for l in v.read_text().split() if "=" in l)
+    return ".".join(kv.get(k, "0") for k in ("MAJOR", "MINOR", "BUILD", "PATCH"))
+
+
+def npm_packages():
+    """package.json dependencies와 그 하위(배포 묶음에 들어가는 것). (이름, 판, 라이선스, [라이선스 전문])"""
+    nm = ROOT / "node_modules"
+    top = json.loads((ROOT / "package.json").read_text(encoding="utf-8")).get("dependencies", {})
+    out, seen, stack = [], set(), list(top)
+    fallback = {}
+    while stack:
+        name = stack.pop()
+        if name in seen:
+            continue
+        seen.add(name)
+        d = nm / name
+        pj = d / "package.json"
+        if not pj.is_file():
+            print(f"node_modules에 {name}이(가) 없습니다(npm ci 먼저)", file=sys.stderr)
+            sys.exit(1)
+        j = json.loads(pj.read_text(encoding="utf-8"))
+        texts = [f.read_text(encoding="utf-8", errors="replace").strip() for f in sorted(d.iterdir())
+                 if f.is_file() and LICENSE_RE.match(f.name) and not f.name.endswith(".spdx")]
+        lic = j.get("license") or "(표기 없음)"
+        if bad_license(lic):
+            print(f"GPL 계열 npm 패키지: {name} {lic}", file=sys.stderr)
+            sys.exit(1)
+        if texts and name.startswith("@tauri-apps/"):
+            fallback["@tauri-apps/"] = texts
+        out.append([name, j.get("version", "?"), lic, texts])
+        stack.extend((j.get("dependencies") or {}).keys())
+    for o in out:
+        if not o[3] and o[0].startswith("@tauri-apps/"):
+            # 같은 Tauri 프로젝트의 같은 라이선스(MIT OR Apache-2.0) 전문
+            o[3] = fallback.get("@tauri-apps/", [])
+    return sorted((tuple(o) for o in out), key=lambda x: x[0])
 
 
 def bad_license(expr):
@@ -87,13 +143,18 @@ def main():
         print(__doc__)
         sys.exit(2)
     out = Path(sys.argv[1])
-    url = SOURCE_URL_PLACEHOLDER
+    url = DEFAULT_SOURCE_URL
     if "--source-url" in sys.argv:
         url = sys.argv[sys.argv.index("--source-url") + 1]
+    if not re.match(r"^https://\S+$", url) or PLACEHOLDER_RE.search(url):
+        print(f"소스 받는 곳 주소가 올바르지 않습니다: {url}", file=sys.stderr)
+        sys.exit(1)
     src = TP / "ffmpeg" / "sources"
     version = json.loads((ROOT / "src-tauri" / "tauri.conf.json").read_text(encoding="utf-8"))["version"]
     parts = []
     parts.append(f"파일 도구 {version} — 오픈소스 고지 (THIRD-PARTY-NOTICES)\n\n"
+                 "파일 도구 자체의 코드는 MIT 라이선스입니다(Copyright (c) 2026 salarycrew). 출처를 밝히면 누구나 다시 쓸 수 있습니다.\n"
+                 "소스: https://github.com/salarycrew/win-filetool\n\n"
                  "이 앱은 아래 오픈소스 부품을 씁니다. 각 부품의 저작권과 라이선스는 아래와 같습니다.\n"
                  "ffmpeg·LAME·LibreOffice·PDFium은 앱 안에 따로 든 프로그램(별도 실행 파일·DLL)이고, 앱 본체에 링크하지 않습니다.\n"
                  "GPL·AGPL 부품은 넣지 않았습니다(ffmpeg는 --enable-gpl 없이 빌드, LibreOffice는 poppler를 쓰는 PDF 가져오기 부품을 뺌).\n")
@@ -102,6 +163,7 @@ def main():
     conf = (src / "configure.txt").read_text(encoding="utf-8") if (src / "configure.txt").is_file() else "(configure.txt 없음)"
     sums = (src / "SHA256SUMS").read_text(encoding="utf-8") if (src / "SHA256SUMS").is_file() else ""
     lo_ver = "26.2.6"
+    lo_full = lo_version() or "26.2.6.3"
     parts.append(section("소스 받는 곳 (LGPL·MPL 부품)"))
     parts.append(
         f"아래 부품의 소스 코드는 다음 주소에서 받을 수 있습니다: {url}\n"
@@ -111,9 +173,11 @@ def main():
         "- LAME 3.100 (LGPL-2.0-or-later): lame-3.100.tar.gz, 고치지 않은 원본. 원 출처 https://lame.sourceforge.io/\n"
         "- dav1d 1.5.1 (BSD-2-Clause): dav1d-1.5.1.tar.xz. 원 출처 https://code.videolan.org/videolan/dav1d\n"
         "- zlib 1.3.1 (zlib): zlib-1.3.1.tar.gz. 원 출처 https://zlib.net/\n"
-        f"- LibreOffice {lo_ver} (MPL-2.0 등): 공식 Windows 설치본의 파일을 고치지 않고, 문서 → PDF 변환에 필요 없는 파일만 뺐습니다.\n"
-        f"  소스: https://download.documentfoundation.org/libreoffice/src/{lo_ver}/ (뺀 목록: scripts/trim-libreoffice.ps1)\n"
-        "- PDFium (BSD-3-Clause 등): https://pdfium.googlesource.com/pdfium/ , 바이너리 출처 https://github.com/bblanchon/pdfium-binaries (chromium/7881)\n\n"
+        f"- LibreOffice {lo_full} (MPL-2.0 등): 공식 Windows 설치본(x86-64 MSI)의 파일을 고치지 않고,\n"
+        "  문서 → PDF 변환에 필요 없는 파일만 뺐습니다(뺀 목록: trim-libreoffice.ps1, GPL인 poppler PDF 가져오기 부품도 뺌).\n"
+        f"  소스: libreoffice-{lo_full}.tar.xz, libreoffice-translations-{lo_full}.tar.xz\n"
+        f"        (원 출처 https://download.documentfoundation.org/libreoffice/src/{lo_ver}/ , LibreOffice가 쓰는 외부 라이브러리 소스는 https://dev-www.libreoffice.org/src/ )\n"
+        f"- PDFium {pdfium_version()} (BSD-3-Clause 등): https://pdfium.googlesource.com/pdfium/ , 바이너리 출처 https://github.com/bblanchon/pdfium-binaries (chromium/7881)\n\n"
         "ffmpeg 빌드 설정(configure):\n" + conf + "\n소스 묶음 SHA-256:\n" + sums
     )
 
@@ -130,15 +194,36 @@ def main():
     lo = TP / "libreoffice" / "lo-trim"
     for f in ("NOTICE", "license.txt"):
         if (lo / f).is_file():
-            tp(f"LibreOffice {lo_ver} — {f}", (lo / f).read_text(encoding="utf-8", errors="replace"))
+            tp(f"LibreOffice {lo_full} — {f}", (lo / f).read_text(encoding="utf-8", errors="replace"))
     tp("Microsoft Visual C++ 런타임 (LibreOffice와 함께 든 msvcp140.dll·vcruntime140.dll 등)",
        "Microsoft Visual C++ 재배포 가능 파일입니다. Microsoft 소프트웨어 사용 조건(Visual Studio 재배포 파일)에 따라 함께 배포합니다.")
+    if (TP / "pdfium" / "win-x64" / "LICENSE").is_file():
+        tp("PDFium — LICENSE", (TP / "pdfium" / "win-x64" / "LICENSE").read_text(encoding="utf-8", errors="replace"))
     pd = TP / "pdfium" / "win-x64" / "licenses"
     if pd.is_dir():
         for f in sorted(pd.iterdir()):
             tp(f"PDFium — {f.name}", f.read_text(encoding="utf-8", errors="replace"))
 
-    # 3. Rust 크레이트
+    # 3. 화면(프런트엔드) npm 패키지
+    npm = npm_packages()
+    parts.append(section(f"화면(웹 UI)에 든 npm 패키지 ({len(npm)}개)"))
+    for name, ver, lic, _ in npm:
+        parts.append(f"- {name} {ver} — {lic}\n")
+    parts.append("- Vite 런타임 조각(모듈 미리 불러오기) — MIT, Copyright (c) 2019-present, VoidZero Inc. and Vite contributors\n\n")
+    seen_npm = {}
+    for name, ver, lic, files in npm:
+        for t in files:
+            seen_npm.setdefault(hashlib.sha256(t.encode()).hexdigest(), (t, []))[1].append(f"{name} {ver}")
+    for h, (t, who) in seen_npm.items():
+        parts.append(f"--- 적용: {', '.join(sorted(set(who)))}\n\n{t}\n\n")
+
+    # 4. 시험 자료(앱에 들어가지 않음)
+    parts.append(section("시험에만 쓰는 자료 (앱에 들어가지 않음, 소스 저장소에만 있음)"))
+    parts.append("- crates/core/tests/data/030/hwp/hangul97-3.0.hwp — LibreOffice 소스의 hwpfilter 회귀 시험 자료\n"
+                 "  (https://github.com/LibreOffice/core/blob/master/hwpfilter/qa/cppunit/data/pass/hangul97-3.0.hwp),\n"
+                 "  Mozilla Public License 2.0, 바꾸지 않은 원본. MPL-2.0 원문은 위 LibreOffice 고지에 있습니다.\n")
+
+    # 5. Rust 크레이트
     pkgs = cargo_packages()
     bad = [f"{p['name']} {p['version']} ({p['license']})" for p in pkgs if bad_license(p.get("license"))]
     if bad:
@@ -160,6 +245,11 @@ def main():
         parts.append(f"--- 적용: {', '.join(names)}\n\n{t}\n\n")
 
     text = "".join(parts).replace("\r\n", "\n")
+    # 빌드 자리표시가 남지 않게(0.3.0 QA-03)
+    left = sorted(set(PLACEHOLDER_RE.findall(text)))
+    if left:
+        print(f"고지에 자리표시가 남았습니다: {', '.join(left)}", file=sys.stderr)
+        sys.exit(1)
     # 개인 경로가 섞이지 않게
     for pat in (str(Path.home()), "C:\\Users\\"):
         if pat in text:
