@@ -19,6 +19,7 @@ mod cmd_tools;
 mod cmd_hwp;
 mod cmd_ui;
 mod cmd_update;
+mod cmd_040a;
 mod icons;
 mod remote;
 
@@ -1167,6 +1168,12 @@ fn main() {
             cmd_office::pdf_to_pptx,
             cmd_office::pdf_to_txt,
             cmd_office::extract_images,
+            // 0.4 글자 인식·가리기
+            cmd_040a::ocr_status,
+            cmd_040a::ocr_pdf,
+            cmd_040a::ocr_text,
+            cmd_040a::redact_find,
+            cmd_040a::redact_apply,
             cmd_hwp::hwp_capabilities,
             autostart_get,
             autostart_set,

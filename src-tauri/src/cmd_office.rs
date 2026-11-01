@@ -43,13 +43,17 @@ pub async fn doc_to_pptx(app: AppHandle, state: State<'_, AppState>, job: u64, p
     res
 }
 
-/// PDF → `이름_Word.docx`
+/// PDF → `이름_Word.docx`. 0.4 `ocr: true` = 스캔본 쪽을 글자 인식해서 문단으로(기본은 쪽 그림)
 #[tauri::command]
-pub async fn pdf_to_docx(app: AppHandle, state: State<'_, AppState>, job: u64, path: String, out_dir: Option<String>) -> CmdResult<PdfToDocxOut> {
+pub async fn pdf_to_docx(app: AppHandle, state: State<'_, AppState>, job: u64, path: String, out_dir: Option<String>, ocr: Option<bool>) -> CmdResult<PdfToDocxOut> {
     let dir = self::out_dir(&out_dir);
     let cancel = state.begin_job(job);
     let res = blocking(move || {
         let mut p = reporter(app, job);
+        if ocr.unwrap_or(false) {
+            let rec = filetool_core::ocr::engine(None)?;
+            return pdf2docx::pdf_to_docx_with(Path::new(&path), dir.as_deref(), Some(rec.as_ref()), Some(&cancel), &mut p);
+        }
         pdf2docx::pdf_to_docx(Path::new(&path), dir.as_deref(), Some(&cancel), &mut p)
     })
     .await;

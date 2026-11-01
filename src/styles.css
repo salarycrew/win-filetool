@@ -476,6 +476,18 @@ textarea.ex.big { height: 360px; margin-top: 8px; }
 .ovbox.sign img { width: 100%; height: 100%; display: block; pointer-events: none; }
 .ovbox.crop { box-shadow: 0 0 0 9999px rgba(0,0,0,.35); border: 2px solid #005FB8; }
 .ovbox.tbox { min-height: 14px; }
+/* 0.4 가리기: 그린 상자(검게 비침)·찾은 곳 */
+.pv-ov.rdraw { cursor: crosshair; touch-action: none; }
+.ovbox.redact { background: rgba(0,0,0,.55); border: 1.5px solid #C42B1C; }
+.ovbox.redact.cur { outline: 2px solid rgba(196,43,28,.45); }
+.ovhit { position: absolute; background: rgba(0,0,0,.45); outline: 1.5px dashed #C42B1C; pointer-events: none; }
+.hit-head { align-items: center; gap: 6px; margin-top: 6px; }
+.hit-list { max-height: 260px; overflow: auto; border: 1px solid var(--stroke); border-radius: 6px; margin-top: 6px; }
+.hit { display: grid; grid-template-columns: auto auto auto 1fr; gap: 8px; align-items: center; padding: 6px 8px; cursor: pointer; border-bottom: 1px solid var(--stroke); }
+.hit:last-child { border-bottom: 0; }
+.hit-p { color: var(--text-3); font-size: 12px; white-space: nowrap; }
+.hit-k { font-size: 12px; white-space: nowrap; }
+.hit-t { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
 .tb-t { white-space: pre-wrap; word-break: break-word; font-family: "Malgun Gothic", sans-serif; line-height: 1.25; pointer-events: none; }
 .hd { position: absolute; width: 12px; height: 12px; background: #fff; border: 2px solid #005FB8; border-radius: 2px; }
 .hd.br { right: -7px; bottom: -7px; cursor: nwse-resize; }

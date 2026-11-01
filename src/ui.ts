@@ -212,7 +212,11 @@ export interface ResultLine {
   pill?: string;           // "88% 작아졌어요" / "슬라이드 9장"
   note?: string;
   input?: string;
+  /** 0.4: [글자 복사] 단추로 복사할 글(글자 뽑기) */
+  copy?: string;
 }
+/** 결과 줄의 복사할 글(결과 파일 경로 → 글) */
+const copyTexts = new Map<string, string>();
 export function sizePill(before?: number | null, after?: number | null): string {
   if (!before || !after) return "";
   if (after < before) {
@@ -231,7 +235,7 @@ export function resultRow(r: ResultLine): string {
   return `<div class="rr" data-out="${esc(r.output)}" data-folder="${r.isFolder ? 1 : 0}">${FT(ext, 32)}
     <div class="rr-n"><b title="${esc(r.output)}">${esc(name)}</b><span>${esc(r.note ? r.note : dirOf(r.output))}</span></div>
     <div class="sz">${sz}${pill ? `<span class="${pillCls}">${esc(pill)}</span>` : ""}</div>
-    <div class="rr-b">${r.isFolder ? "" : `<button type="button" class="btn accent" data-open="file">${I("open")}파일 열기</button>`}
+    <div class="rr-b">${r.copy != null ? (copyTexts.set(r.output, r.copy), `<button type="button" class="btn" data-copytext>${I("copy")}글자 복사</button>`) : ""}${r.isFolder ? "" : `<button type="button" class="btn accent" data-open="file">${I("open")}파일 열기</button>`}
     <button type="button" class="btn ${r.isFolder ? "accent" : ""}" data-open="folder">${I("folder")}폴더 열기</button></div></div>`;
 }
 export function errRow(input: string, e: unknown): string {
@@ -242,6 +246,12 @@ export function errRow(input: string, e: unknown): string {
 /** 결과 줄의 [파일 열기]/[폴더 열기] 처리(한 번만 걸면 됨) */
 export function bindResultButtons(root: HTMLElement) {
   root.addEventListener("click", async (e) => {
+    const c = (e.target as HTMLElement).closest<HTMLButtonElement>("[data-copytext]");
+    if (c) {
+      const t = copyTexts.get(c.closest<HTMLElement>("[data-out]")?.dataset.out ?? "");
+      try { await navigator.clipboard.writeText(t ?? ""); toast("글자를 복사했어요. 붙여 넣을 곳에서 Ctrl+V를 누르세요"); } catch { toast("복사하지 못했어요"); }
+      return;
+    }
     const b = (e.target as HTMLElement).closest<HTMLButtonElement>("[data-open]");
     if (!b) return;
     const row = b.closest<HTMLElement>("[data-out]")!;

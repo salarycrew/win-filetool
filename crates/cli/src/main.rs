@@ -10,6 +10,7 @@ use filetool_core::{nfc, paths, zipnfc, Result};
 
 mod conv;
 mod hwp030;
+mod ocr040;
 mod office030;
 mod pdf1c;
 mod runtime030;
@@ -56,7 +57,7 @@ const USAGE: &str = "사용법:
   filetool-cli svc-watch <질의> [--seconds 30] [--interval-ms 100]   서비스 결과가 바뀔 때마다 시각과 함께 출력
   filetool-cli search-live [루트...] --query <질의> [--seconds 60] [--source auto|walk] [--index-dir 폴더]   앱과 같은 검색 서비스(실시간 갱신)를 돌리며 결과 변화를 출력
   filetool-cli selftest <빈 폴더> [--apple <Pages·Numbers·Keynote 샘플 폴더>] [--only 2a]   샘플을 만들어 모든 작업을 점검
-  (0.3.0 PDF 편집 명령은 `filetool-cli help-pdfedit`, 사진·영상·파일 정리는 `filetool-cli help-tools`)
+  (0.3.0 PDF 편집 명령은 `filetool-cli help-pdfedit`, 사진·영상·파일 정리는 `filetool-cli help-tools`, 0.4 글자 인식·가리기는 `filetool-cli help-ocr`)
 공통 옵션: --ffmpeg <경로> --soffice <경로>  (주면 그 경로를 먼저, 없으면 앱에 든 도구 → 앱 설정 → PATH → 설치 폴더 순으로 찾음)";
 
 fn main() -> ExitCode {
@@ -108,6 +109,9 @@ fn run(args: &[String]) -> Result<ExitCode> {
         return Ok(code);
     }
     if let Some(code) = tools030::run(cmd, args)? {
+        return Ok(code);
+    }
+    if let Some(code) = ocr040::run(cmd, args)? {
         return Ok(code);
     }
     match cmd {
@@ -190,6 +194,11 @@ fn run(args: &[String]) -> Result<ExitCode> {
         "selftest" => {
             let dir = PathBuf::from(arg(args, 1)?);
             // --only 2a: 검색만 점검
+            if args.iter().any(|a| a == "--only") && args.iter().any(|a| a == "040") {
+                let code = ocr040::selftest(&dir.join("040"))?;
+                println!("전체: 0.4 {}", ok_word(code));
+                return Ok(code);
+            }
             if args.iter().any(|a| a == "--only") && args.iter().any(|a| a == "2a") {
                 let code = search2a::selftest(&dir.join("2a"))?;
                 println!("전체: 2a {}", ok_word(code));
@@ -199,8 +208,9 @@ fn run(args: &[String]) -> Result<ExitCode> {
             let code_1b = selftest1b::run(&dir.join("1b"), args)?;
             let code_1c = selftest1c::run(&dir.join("1c"), args)?;
             let code_2a = search2a::selftest(&dir.join("2a"))?;
-            let all = [code_1a, code_1b, code_1c, code_2a].iter().all(|c| *c == ExitCode::SUCCESS);
-            println!("전체: 1a {} / 1b {} / 1c {} / 2a {}", ok_word(code_1a), ok_word(code_1b), ok_word(code_1c), ok_word(code_2a));
+            let code_040 = ocr040::selftest(&dir.join("040"))?;
+            let all = [code_1a, code_1b, code_1c, code_2a, code_040].iter().all(|c| *c == ExitCode::SUCCESS);
+            println!("전체: 1a {} / 1b {} / 1c {} / 2a {} / 0.4 OCR·가리기 {}", ok_word(code_1a), ok_word(code_1b), ok_word(code_1c), ok_word(code_2a), ok_word(code_040));
             return Ok(if all { ExitCode::SUCCESS } else { ExitCode::from(1) });
         }
         _ => {

@@ -473,6 +473,9 @@ const TOOLS: Tool[] = [
   { id: "info", t: "문서 정보", d: "제목·작성자 바꾸기", ic: "info", tone: "gray" },
   { id: "form", t: "양식 채우기", d: "빈칸에 글 넣기", ic: "form", tone: "teal" },
   { id: "flat", t: "평평하게", d: "양식·메모를 쪽에 굳히기", ic: "flatten", tone: "gray" },
+  // 0.4
+  { id: "ocr", t: "글자 인식(OCR)", d: "스캔본을 검색·복사되게", ic: "scan", tone: "teal" },
+  { id: "redact", t: "가리기", d: "개인 정보를 검게 지우기", ic: "redact", tone: "red", preview: true },
 ];
 
 async function openTool(id: string) {
@@ -985,6 +988,158 @@ const TOOL_UI: Record<string, ToolUI> = {
       });
       const out = await toolJob("양식 채우는 중", "pdf_form_fill", { values, flatten: checked(body, "fflat") });
       if (out) await finish(out, "양식 채우기");
+    };
+  },
+  // ---------- 0.4 글자 인식 ----------
+  ocr(body, apply) {
+    apply.textContent = "검색되게 만들기";
+    body.innerHTML = `<div class="info">${I("info")}<span>스캔하거나 사진으로 만든 PDF의 글자를 읽어, 보이지 않는 글자를 쪽 위에 얹어요. 모양은 그대로이고 Edge·Chrome에서 찾기(Ctrl+F)·복사가 돼요. 글자 읽기는 이 PC 안에서만 해요.</span></div>
+      <p class="hint ocr-st">글자 인식을 확인하는 중…</p>` +
+      opt("읽는 방법", seg("odpi", [["300", "꼼꼼하게"], ["200", "빠르게"]], "300"), "꼼꼼하게: 작은 글자도 잘 읽어요 · 빠르게: 쪽마다 시간이 덜 걸려요") +
+      opt("", chk("oredo", "이미 글자가 있는 쪽도 다시 인식(쪽 안 그림 속 글자)", false));
+    invoke<{ available: boolean; korean: boolean; using?: string | null; hint?: string | null }>("ocr_status").then((st) => {
+      const el = $(".ocr-st", body);
+      if (!el) return;
+      if (!st.available) { el.innerHTML = `${I("warn")} ${esc(st.hint ?? "이 PC에서는 글자 인식을 쓸 수 없어요")}`; apply.disabled = true; }
+      else el.textContent = st.korean ? "한국어·영어 글자를 읽어요." : (st.hint ?? "");
+    }).catch(() => { const el = $(".ocr-st", body); if (el) el.textContent = ""; });
+    apply.onclick = async () => {
+      const out = await toolJob("글자 읽는 중", "ocr_pdf", { opts: { dpi: Number(segVal(body, "odpi")), redo_text_pages: checked(body, "oredo") } });
+      if (out) {
+        await finish(out, "글자 인식");
+        const h = (out as unknown as { hint?: string | null }).hint;
+        if (h) toast(h, 8000);
+      }
+    };
+  },
+  // ---------- 0.4 가리기 ----------
+  redact(body, apply) {
+    apply.textContent = "가리기";
+    interface RBox { id: number; page: number; box: Box }
+    interface MarkR { page: number; x: number; y: number; w: number; h: number }
+    interface Hit { id: number; page: number; text: string; kind: string; label: string; rects: MarkR[]; source: string }
+    const boxes: RBox[] = [];
+    let seq = 0, cur = -1, searched = false;
+    let hits: Hit[] = [];
+    const on = new Set<number>();
+    let geo: Geo | null = null;
+    body.innerHTML = opt("가릴 곳", seg("rmode", [["box", "상자로 정하기"], ["find", "찾아서 가리기"]], "box")) +
+      `<div data-k="box"><div class="info">${I("info")}<span>왼쪽 쪽 위에서 마우스로 끌어 가릴 곳을 그리세요. 그린 상자는 옮기거나 가장자리로 크기를 바꿀 수 있어요(Delete 키로 지우기).</span></div>
+        <div class="row"><button type="button" class="btn subtle" data-rdel disabled>${I("trash")}고른 상자 지우기</button></div></div>` +
+      `<div data-k="find" hidden>${opt("찾을 말", `<input class="txt wide" id="rterms" placeholder="쉼표로 여러 개 · 예: 홍길동, 내부용">`)}` +
+      opt("찾을 종류", `${chk("p-rrn", "주민등록번호", true)}${chk("p-phone", "휴대폰·전화번호", true)}${chk("p-email", "이메일", true)}${chk("p-account", "계좌번호", true)}`) +
+      `<div class="row"><button type="button" class="btn" data-rfind>${I("search")}찾기</button></div><div class="r-hits"></div></div>` +
+      opt("가린 쪽 그림", seg("rdpi", [["200", "보통"], ["300", "선명하게"]], "200"), "가린 쪽은 그림으로 바뀌어요. 가리지 않은 쪽은 그대로예요") +
+      opt("", chk("rocr", "가린 쪽도 검색되게 글자 인식(가린 곳은 빼고)", true)) +
+      `<p class="hint r-sum"></p>`;
+    const marks = (): MarkR[] => [...boxes.map((b) => ({ page: b.page, x: b.box.x, y: b.box.y, w: b.box.w, h: b.box.h })), ...hits.filter((h) => on.has(h.id)).flatMap((h) => h.rects)];
+    const sum = () => {
+      const m = marks();
+      const ps = [...new Set(m.map((x) => x.page))].sort((a, b) => a - b);
+      $(".r-sum", body)!.textContent = m.length ? `가릴 곳 ${m.length}곳 · ${ps.join(", ")}쪽` : "아직 가릴 곳이 없어요";
+      ($<HTMLButtonElement>("[data-rdel]", body)!).disabled = !boxes.some((b) => b.id === cur);
+    };
+    const removeCur = () => { const i = boxes.findIndex((b) => b.id === cur); if (i >= 0) { boxes.splice(i, 1); cur = -1; showPreview(); sum(); } };
+    const renderHits = () => {
+      const box = $(".r-hits", body)!;
+      if (!hits.length) { box.innerHTML = searched ? `<p class="hint">찾은 것이 없어요</p>` : ""; return; }
+      box.innerHTML = `<div class="row hit-head"><b>${hits.length}곳 찾음</b><span class="grow"></span><button type="button" class="btn subtle sm" data-rall>모두 고르기</button><button type="button" class="btn subtle sm" data-rnone>모두 빼기</button></div>
+        <div class="hit-list" role="list">${hits.map((h) => `<label class="hit" role="listitem" data-hitpage="${h.page}"><input type="checkbox" data-hit="${h.id}" ${on.has(h.id) ? "checked" : ""}><span class="hit-p">${h.page}쪽</span><span class="hit-k">${esc(h.label)}</span><span class="hit-t" title="${esc(h.text)}">${esc(h.text)}</span></label>`).join("")}</div>`;
+    };
+    ov = {
+      draw(g) {
+        geo = g;
+        const layer = $(".pv-ov", root)!;
+        layer.innerHTML = "";
+        layer.classList.add("rdraw");
+        for (const h of hits) {
+          if (!on.has(h.id)) continue;
+          for (const r of h.rects) {
+            if (r.page !== g.page) continue;
+            const d = document.createElement("div");
+            d.className = "ovhit";
+            d.title = `${h.label} · ${h.text}`;
+            d.style.left = `${r.x * g.scale}px`; d.style.top = `${r.y * g.scale}px`; d.style.width = `${r.w * g.scale}px`; d.style.height = `${r.h * g.scale}px`;
+            layer.appendChild(d);
+          }
+        }
+        for (const b of boxes) {
+          if (b.page !== g.page) continue;
+          const hnd = makeBox(layer, () => geo!, b.box, { cls: `redact${b.id === cur ? " cur" : ""}`, handles: "edges", onChange: sum, onFocus: () => { cur = b.id; $$(".ovbox.redact", layer).forEach((e) => e.classList.remove("cur")); hnd.el.classList.add("cur"); sum(); } });
+          hnd.el.setAttribute("aria-label", "가릴 상자");
+          hnd.el.addEventListener("keydown", (e) => { if (e.key === "Delete" || e.key === "Backspace") { e.preventDefault(); cur = b.id; removeCur(); } });
+        }
+        if (!layer.dataset.rd) {
+          layer.dataset.rd = "1";
+          // 빈 곳에서 끌면 새 상자
+          layer.addEventListener("pointerdown", (e) => {
+            if (e.button !== 0 || (e.target as HTMLElement).closest(".ovbox") || !geo || segVal(body, "rmode") !== "box") return;
+            e.preventDefault();
+            const rc = layer.getBoundingClientRect();
+            const s = geo.scale;
+            const x0 = (e.clientX - rc.left) / s, y0 = (e.clientY - rc.top) / s;
+            const ghost = document.createElement("div");
+            ghost.className = "ovbox redact cur";
+            layer.appendChild(ghost);
+            layer.setPointerCapture(e.pointerId);
+            let bx = { x: x0, y: y0, w: 0, h: 0 };
+            const move = (ev: PointerEvent) => {
+              const x1 = Math.max(0, Math.min(geo!.w, (ev.clientX - rc.left) / s)), y1 = Math.max(0, Math.min(geo!.h, (ev.clientY - rc.top) / s));
+              bx = { x: Math.min(x0, x1), y: Math.min(y0, y1), w: Math.abs(x1 - x0), h: Math.abs(y1 - y0) };
+              ghost.style.left = `${bx.x * s}px`; ghost.style.top = `${bx.y * s}px`; ghost.style.width = `${bx.w * s}px`; ghost.style.height = `${bx.h * s}px`;
+            };
+            const up = () => {
+              layer.removeEventListener("pointermove", move); layer.removeEventListener("pointerup", up);
+              ghost.remove();
+              if (bx.w >= 4 && bx.h >= 4) { const id = ++seq; boxes.push({ id, page: geo!.page, box: bx }); cur = id; }
+              showPreview(); sum();
+            };
+            layer.addEventListener("pointermove", move);
+            layer.addEventListener("pointerup", up);
+          });
+        }
+      },
+    };
+    const doFind = async () => {
+      const terms = value(body, "rterms").split(/[,，]/).map((x) => x.trim()).filter(Boolean);
+      const presets = ([["p-rrn", "rrn"], ["p-phone", "phone"], ["p-email", "email"], ["p-account", "account"]] as const).filter(([id]) => checked(body, id)).map(([, v]) => v);
+      if (!terms.length && !presets.length) { toast("찾을 말을 적거나 찾을 종류를 골라 주세요"); return; }
+      const r = await withJob("찾는 중", (job) => invoke<{ hits: Hit[]; note: string; hint?: string | null }>("redact_find", { job, path: doc().path, password: doc().password, terms, presets, ocr: true }));
+      if (!r) return;
+      hits = r.hits; on.clear(); hits.forEach((h) => on.add(h.id)); searched = true;
+      renderHits();
+      toast(r.hint ? `${r.note} · ${r.hint}` : r.note, r.hint ? 8000 : 3000);
+      if (hits.length) previewPage = hits[0].page - 1;
+      showPreview(); sum();
+    };
+    body.addEventListener("click", (e) => {
+      const t = e.target as HTMLElement;
+      if (t.closest("[data-rfind]")) { doFind(); return; }
+      if (t.closest("[data-rdel]")) { removeCur(); return; }
+      if (t.closest("[data-rall]")) { hits.forEach((h) => on.add(h.id)); renderHits(); showPreview(); sum(); return; }
+      if (t.closest("[data-rnone]")) { on.clear(); renderHits(); showPreview(); sum(); return; }
+      const cb = t.closest<HTMLInputElement>("[data-hit]");
+      if (cb) { const id = Number(cb.dataset.hit); if (cb.checked) on.add(id); else on.delete(id); showPreview(); sum(); return; }
+      const row = t.closest<HTMLElement>("[data-hitpage]");
+      if (row) { previewPage = Number(row.dataset.hitpage) - 1; showPreview(); return; }
+      const k = segVal(body, "rmode");
+      $$<HTMLElement>("[data-k]", body).forEach((d) => (d.hidden = d.dataset.k !== k));
+    });
+    body.addEventListener("keydown", (e) => { if ((e.target as HTMLElement).id === "rterms" && e.key === "Enter") { e.preventDefault(); doFind(); } });
+    sum();
+    apply.onclick = async () => {
+      const m = marks();
+      if (!m.length) { toast("가릴 곳을 먼저 정해 주세요"); return; }
+      const ps = [...new Set(m.map((x) => x.page))].sort((a, b) => a - b);
+      const ok = await confirmDlg("정말 가릴까요?", `${m.length}곳을 검게 지워 새 파일(${fileName(doc().path).replace(/\.pdf$/i, "")}_가림.pdf)로 저장해요. 가린 쪽(${ps.join(", ")}쪽)은 그림으로 바뀌고, 가린 글자는 되살릴 수 없어요. 문서 정보·첨부 파일·숨은 내용도 함께 지워요. 원본은 그대로예요.`, "가리기", true);
+      if (!ok) return;
+      const out = await toolJob("가리는 중", "redact_apply", { marks: m, opts: { dpi: Number(segVal(body, "rdpi")), ocr: checked(body, "rocr"), check_terms: hits.filter((h) => on.has(h.id)).map((h) => h.text) } });
+      if (out) {
+        await finish(out, "가리기");
+        const o = out as unknown as { hint?: string | null; verify?: { clean: boolean } };
+        if (o.verify && !o.verify.clean) toast("가린 글이 다른 곳(가리지 않은 쪽 등)에 남아 있어요. 결과를 열어 확인해 주세요", 8000);
+        else if (o.hint) toast(o.hint, 8000);
+      }
     };
   },
   flat(body, apply) {

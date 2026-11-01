@@ -127,9 +127,11 @@ const ACTIONS: Record<Cls, Action[]> = {
     {
       id: "p2word", t: "Word로", d: "글자를 고칠 수 있게", ic: "doc", tone: "blue", run: "Word로 바꾸기",
       info: "제목·문단·표·그림을 살려요. 줄 바꿈·표 모양이 원본과 조금 다를 수 있어요.",
+      opts: () => opt("스캔한 쪽", chk("ocrword", "글자 인식해서 글로 넣기", false), "끄면 스캔한 쪽은 그림 그대로(모양이 같음) · 켜면 고칠 수 있는 글로(틀린 글자가 있을 수 있어요)"),
       exec: (r) => each(r, async (it) => {
-        const o = await invoke<{ output: string; pages: number; scanned_pages: number }>("pdf_to_docx", { job: r.job(), path: it.path, outDir: r.outDir });
-        return { output: o.output, pill: `${o.pages}쪽`, note: o.scanned_pages ? `스캔한 쪽 ${o.scanned_pages}개는 그림으로 넣었어요` : undefined };
+        const o = await invoke<{ output: string; pages: number; scanned_pages: number; ocr_pages?: number }>("pdf_to_docx", { job: r.job(), path: it.path, outDir: r.outDir, ocr: checked(r.panel, "ocrword") });
+        const notes = [o.ocr_pages ? `스캔한 쪽 ${o.ocr_pages}개는 글자 인식으로 넣었어요` : "", o.scanned_pages ? `스캔한 쪽 ${o.scanned_pages}개는 그림으로 넣었어요` : ""].filter(Boolean);
+        return { output: o.output, pill: `${o.pages}쪽`, note: notes.join(" · ") || undefined };
       }),
     },
     {
@@ -147,6 +149,27 @@ const ACTIONS: Record<Cls, Action[]> = {
         const o = await invoke<{ output: string; chars: number }>("pdf_to_txt", { job: r.job(), path: it.path, outDir: r.outDir });
         return { output: o.output, pill: `${o.chars.toLocaleString("ko-KR")}자` };
       }),
+    },
+    {
+      id: "p2ocr", t: "글자 인식(OCR)", d: "스캔본을 검색·복사되게", ic: "scan", tone: "teal", run: "검색되게 만들기",
+      info: "스캔하거나 사진으로 만든 PDF의 글자를 읽어 보이지 않는 글자를 얹어요. 모양은 그대로이고 Edge·Chrome에서 찾기(Ctrl+F)·복사가 돼요. 글자 읽기는 이 PC 안에서만 해요.",
+      opts: () => opt("", chk("ocrredo", "이미 글자가 있는 쪽도 다시 인식", false)),
+      exec: (r) => each(r, async (it) => {
+        const o = await withPw(it, (pw) => invoke<{ output: string; ocr_pages: number; note: string; hint?: string | null }>("ocr_pdf", { job: r.job(), path: it.path, password: pw, outDir: r.outDir, opts: { dpi: 300, redo_text_pages: checked(r.panel, "ocrredo") } }));
+        return { output: o.output, pill: `${o.ocr_pages}쪽 인식`, note: o.hint ?? o.note };
+      }),
+    },
+    {
+      id: "p2ocrtxt", t: "글자 뽑기(OCR)", d: "스캔한 쪽 글자도 TXT로", ic: "text", tone: "teal", run: "글자 뽑기",
+      info: "글자가 있는 쪽은 그대로, 스캔한 쪽은 글자를 읽어 메모장 파일(TXT)로 저장해요. [글자 복사]로 바로 붙여 넣을 수도 있어요.",
+      exec: (r) => each(r, async (it) => {
+        const o = await withPw(it, (pw) => invoke<{ output: string; chars: number; text: string; note: string; hint?: string | null }>("ocr_text", { job: r.job(), path: it.path, password: pw, outDir: r.outDir }));
+        return { output: o.output, pill: `${o.chars.toLocaleString("ko-KR")}자`, note: o.hint ?? o.note, copy: o.text };
+      }),
+    },
+    {
+      id: "p2redact", t: "가리기", d: "개인 정보를 검게 지우기", ic: "redact", tone: "red", run: "",
+      jump: (xs) => go("pdfedit", { open: [pdfs(xs)[0].path], tool: "redact" }),
     },
     {
       id: "p2img", t: "이미지로", d: "쪽마다 그림 파일로", ic: "pages", tone: "teal", run: "쪽 이미지로 저장",
@@ -422,6 +445,14 @@ const ACTIONS: Record<Cls, Action[]> = {
       id: "i2strip", t: "위치·촬영 정보 지우기", d: "남에게 보내기 전에", ic: "shield", tone: "blue", run: "정보 지우기",
       info: "사진에 든 위치(GPS)·촬영 기기·날짜 정보를 지워요. 사진 방향은 그대로예요.",
       exec: (r) => imageEdit(r, { strip_meta: true, format: "keep" }, (it) => it.kind === "heic" ? "HEIC은 JPG로 바꾸면서 지워요" : undefined),
+    },
+    {
+      id: "i2text", t: "이미지에서 글자 뽑기", d: "사진 속 글자를 TXT로·복사", ic: "scan", tone: "teal", run: "글자 뽑기",
+      info: "사진·스캔 그림의 글자를 읽어 메모장 파일(TXT)로 저장해요. [글자 복사]로 바로 붙여 넣을 수도 있어요. 글자 읽기는 이 PC 안에서만 해요.",
+      exec: (r) => each(r, async (it) => {
+        const o = await invoke<{ output: string; chars: number; text: string; note: string; hint?: string | null }>("ocr_text", { job: r.job(), path: it.path, outDir: r.outDir });
+        return { output: o.output, pill: `${o.chars.toLocaleString("ko-KR")}자`, note: o.hint ?? o.note, copy: o.text };
+      }),
     },
     {
       id: "i2pdf", t: "PDF 하나로", d: "넣은 순서대로 한 파일에", ic: "pdf", tone: "red", run: "PDF로 묶기",
