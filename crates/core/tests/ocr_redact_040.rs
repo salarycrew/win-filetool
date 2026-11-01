@@ -297,3 +297,38 @@ fn ocr_text_and_docx() {
     std::io::Read::read_to_string(&mut z.by_name("word/document.xml").unwrap(), &mut xml).unwrap();
     assert!(xml.contains("문단입니다") && xml.contains("둘째"), "본문에 인식 글");
 }
+
+#[test]
+fn image_redaction_boxes_text_and_no_exif() {
+    use filetool_core::imgredact::{self, ImgRedactOpts, PxBox};
+    let d = tmp();
+    // EXIF 회전 6(오른쪽으로 90도) JPEG: 저장된 그림 400x300 → 바로 세우면 300x400
+    let jpg = d.path().join("신분증.jpg");
+    filetool_core::samples::make_jpeg_with_exif(&jpg, 400, 300, "2026:11:01 10:00:00", 6).unwrap();
+    let pv = imgredact::preview(&jpg, None, 800).unwrap();
+    assert_eq!((pv.width, pv.height), (300, 400));
+    assert!(pv.data_url.starts_with("data:image/jpeg;base64,"));
+    let o = imgredact::redact(&jpg, None, &ImgRedactOpts { boxes: vec![PxBox { x: 20.0, y: 30.0, w: 100.0, h: 50.0 }], text: None }, None).unwrap();
+    assert!(o.output.file_name().unwrap().to_string_lossy().ends_with("_가림.jpg"));
+    assert_eq!((o.width, o.height, o.boxes), (300, 400, 1));
+    let bytes = std::fs::read(&o.output).unwrap();
+    assert!(!bytes.windows(6).any(|w| w == b"Exif\0\0"), "EXIF가 남음");
+    let img = image::load_from_memory(&bytes).unwrap().to_rgb8();
+    assert_eq!(img.dimensions(), (300, 400));
+    let p = img.get_pixel(70, 55);
+    assert!(p[0] < 20 && p[1] < 20 && p[2] < 20, "상자 안이 검지 않음 {p:?}");
+    // 빈 요청은 오류
+    assert!(imgredact::redact(&jpg, None, &ImgRedactOpts::default(), None).is_err());
+    // 글 얹기(PDF 워터마크 + PDFium) — 글꼴·PDFium이 있을 때
+    if pdfium_ok() && filetool_core::pdfedit::font::korean_font().is_ok() {
+        let png = d.path().join("사본.png");
+        image::RgbImage::from_pixel(600, 400, image::Rgb([255, 255, 255])).save(&png).unwrap();
+        let o = imgredact::redact(&png, None, &ImgRedactOpts { boxes: vec![PxBox { x: 0.0, y: 0.0, w: 50.0, h: 50.0 }], text: Some("은행 제출용".into()) }, None).unwrap();
+        assert!(o.output.extension().unwrap() == "png" && o.text);
+        let img = image::open(&o.output).unwrap().to_rgb8();
+        assert_eq!(img.dimensions(), (600, 400));
+        assert_eq!(img.get_pixel(10, 10).0, [0, 0, 0], "글을 얹은 뒤에도 상자는 검게");
+        let gray = img.pixels().filter(|p| p[0] < 230 && p[0] > 60).count();
+        assert!(gray > 500, "얹은 글(회색)이 보여야 함: {gray}");
+    }
+}

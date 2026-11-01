@@ -455,6 +455,66 @@ const ACTIONS: Record<Cls, Action[]> = {
       }),
     },
     {
+      id: "i2redact", t: "가리기(신분증 사본)", d: "번호 뒷자리 등을 검게", ic: "redact", tone: "red", run: "가려서 저장",
+      when: (xs) => xs.length === 1,
+      opts: () => `<div class="info">${I("info")}<span>사진 위에서 마우스로 끌어 가릴 곳을 그리세요(검게 칠해요, 흐리게 하지 않아요). 상자를 누르고 Delete 키로 지워요.</span></div>
+        <div class="ir-stage"><div class="ir-page"><img class="ir-img" alt="가릴 사진"><div class="ir-ov"></div></div></div>` +
+        opt("얹을 글", `<input class="txt wide" id="irtext" maxlength="40" placeholder="예: ○○은행 제출용 (비우면 없음)">`, "사진 전체에 비스듬히 흐리게 얹어요") +
+        `<p class="hint ir-sum"></p>`,
+      setup: (c) => {
+        const it = c.items[0];
+        const img = $<HTMLImageElement>(".ir-img", c.panel)!, ov = $<HTMLElement>(".ir-ov", c.panel)!, page = $<HTMLElement>(".ir-page", c.panel)!;
+        const st: { w: number; h: number; boxes: { x: number; y: number; w: number; h: number }[]; cur: number } = { w: 0, h: 0, boxes: [], cur: -1 };
+        (c.panel as HTMLElement & { _ir?: typeof st })._ir = st;
+        const k = () => (st.w ? page.clientWidth / st.w : 1);
+        const draw = () => {
+          ov.innerHTML = "";
+          st.boxes.forEach((b, i) => {
+            const d = document.createElement("div");
+            d.className = `ovbox redact${i === st.cur ? " cur" : ""}`; d.tabIndex = 0; d.setAttribute("aria-label", "가릴 상자");
+            d.style.left = `${b.x * k()}px`; d.style.top = `${b.y * k()}px`; d.style.width = `${b.w * k()}px`; d.style.height = `${b.h * k()}px`;
+            d.addEventListener("pointerdown", (e) => { e.stopPropagation(); st.cur = i; draw(); });
+            d.addEventListener("keydown", (e) => { if (e.key === "Delete" || e.key === "Backspace") { e.preventDefault(); st.boxes.splice(i, 1); st.cur = -1; draw(); } });
+            ov.appendChild(d);
+            if (i === st.cur) setTimeout(() => d.focus(), 0);
+          });
+          $(".ir-sum", c.panel)!.textContent = st.boxes.length ? `가릴 곳 ${st.boxes.length}곳` : "";
+        };
+        ov.addEventListener("pointerdown", (e) => {
+          if (e.button !== 0 || !st.w) return;
+          e.preventDefault();
+          const rc = ov.getBoundingClientRect(), s = k();
+          const x0 = (e.clientX - rc.left) / s, y0 = (e.clientY - rc.top) / s;
+          const ghost = document.createElement("div"); ghost.className = "ovbox redact cur"; ov.appendChild(ghost);
+          ov.setPointerCapture(e.pointerId);
+          let b = { x: x0, y: y0, w: 0, h: 0 };
+          const move = (ev: PointerEvent) => {
+            const x1 = Math.max(0, Math.min(st.w, (ev.clientX - rc.left) / s)), y1 = Math.max(0, Math.min(st.h, (ev.clientY - rc.top) / s));
+            b = { x: Math.min(x0, x1), y: Math.min(y0, y1), w: Math.abs(x1 - x0), h: Math.abs(y1 - y0) };
+            ghost.style.left = `${b.x * s}px`; ghost.style.top = `${b.y * s}px`; ghost.style.width = `${b.w * s}px`; ghost.style.height = `${b.h * s}px`;
+          };
+          const up = () => { ov.removeEventListener("pointermove", move); ov.removeEventListener("pointerup", up); if (b.w * s >= 4 && b.h * s >= 4) { st.boxes.push(b); st.cur = st.boxes.length - 1; } draw(); };
+          ov.addEventListener("pointermove", move); ov.addEventListener("pointerup", up);
+        });
+        invoke<{ data_url: string; width: number; height: number }>("image_redact_preview", { path: it.path }).then((p) => {
+          st.w = p.width; st.h = p.height;
+          const maxW = Math.min(c.panel.clientWidth - 8 || 480, 640), maxH = Math.max(240, window.innerHeight * 0.5);
+          const w = Math.round(Math.min(maxW, maxH * p.width / p.height));
+          page.style.width = `${w}px`; page.style.height = `${Math.round(w * p.height / p.width)}px`;
+          img.src = p.data_url; draw();
+        }).catch((e) => { $(".ir-stage", c.panel)!.innerHTML = `<p class="hint">${esc(friendly(e).title)}</p>`; });
+      },
+      exec: async (r) => {
+        const st = (r.panel as HTMLElement & { _ir?: { boxes: { x: number; y: number; w: number; h: number }[] } })._ir;
+        const text = value(r.panel, "irtext").trim();
+        if (!st?.boxes.length && !text) throw new Error("가릴 곳을 그리거나 얹을 글을 적어 주세요");
+        const it = r.items[0];
+        r.step(0, 1, fileName(it.path));
+        const o = await invoke<{ output: string; note: string }>("image_redact", { path: it.path, opts: { boxes: st?.boxes ?? [], text: text || null }, outDir: r.outDir });
+        r.ok({ input: it.path, before: it.size, output: o.output, note: o.note });
+      },
+    },
+    {
       id: "i2pdf", t: "PDF 하나로", d: "넣은 순서대로 한 파일에", ic: "pdf", tone: "red", run: "PDF로 묶기",
       info: "위 목록 순서대로 한 쪽씩 넣어요. 사진 방향은 바르게 돌려 넣어요.",
       opts: () => opt("쪽 크기", seg("page", [["image", "사진 크기 그대로"], ["a4_portrait", "A4 세로"], ["a4_landscape", "A4 가로"]], "image")) +

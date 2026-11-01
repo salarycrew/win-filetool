@@ -21,6 +21,7 @@ pub const USAGE: &str = "0.4 글자 인식(OCR)·가리기 (공통: --password �
   filetool-cli redact find <pdf> [--words 말1,말2] [--presets rrn,phone,email,account] [--no-ocr]   찾은 곳(JSON, 아무것도 바꾸지 않음)
   filetool-cli redact apply <pdf> (--marks 상자.json | --words … --presets …) [--dpi 200|300] [--no-ocr]   이름_가림.pdf + 확인 결과
   filetool-cli redact verify <pdf> <글...>                        글이 파일 어디에든 남았는지(JSON)
+  filetool-cli redact image <jpg|png|heic> [--boxes x,y,w,h;x,y,w,h] [--text "은행 제출용"]   사진 가리기(이름_가림.jpg, 위치·촬영 정보 없음)
   filetool-cli ocr-selftest <빈 폴더>                              가리기·글자 인식 점검(이 PC에 OCR이 있으면 인식까지)";
 
 const SWITCHES: [&str; 3] = ["--redo", "--no-ocr", "--json"];
@@ -211,6 +212,25 @@ pub fn run(cmd: &str, args: &[String]) -> Result<Option<ExitCode>> {
             if !v.clean {
                 return Ok(Some(ExitCode::from(4)));
             }
+        }
+        ("redact", "image") => {
+            let f = a.files(2)?.remove(0);
+            let boxes = a
+                .get("--boxes")
+                .unwrap_or("")
+                .split(';')
+                .filter(|b| !b.trim().is_empty())
+                .map(|b| {
+                    let v: Vec<f32> = b.split(',').filter_map(|x| x.trim().parse().ok()).collect();
+                    if v.len() == 4 {
+                        Ok(filetool_core::imgredact::PxBox { x: v[0], y: v[1], w: v[2], h: v[3] })
+                    } else {
+                        Err(Error::Invalid(format!("상자는 x,y,w,h 로 적어 주세요: {b}")))
+                    }
+                })
+                .collect::<Result<Vec<_>>>()?;
+            let opts = filetool_core::imgredact::ImgRedactOpts { boxes, text: a.get("--text").map(String::from) };
+            json(&filetool_core::imgredact::redact(&f, ffmpeg().as_deref(), &opts, a.out().as_deref())?);
         }
         ("ocr-selftest", _) => {
             let dir = PathBuf::from(a.rest.get(1).ok_or_else(|| Error::Invalid(USAGE.into()))?);

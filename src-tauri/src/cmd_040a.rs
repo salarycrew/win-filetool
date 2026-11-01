@@ -6,6 +6,7 @@
 
 use std::path::{Path, PathBuf};
 
+use filetool_core::imgredact::{self, ImgPreview, ImgRedactOpts, ImgRedactOut};
 use filetool_core::ocr::pdf::{self as ocrpdf, OcrPdfOpts, OcrPdfOut, TextOut};
 use filetool_core::ocr::{self, OcrStatus};
 use filetool_core::pdfedit::redact::{self, FindOut, Mark, Preset, RedactOpts, RedactOut};
@@ -107,4 +108,25 @@ pub async fn redact_apply(app: AppHandle, state: State<'_, AppState>, job: u64, 
         redact::apply(input, pw.as_deref(), &marks, &opts, &output, rec.as_deref(), j)
     })
     .await
+}
+
+/// 사진 가리기 미리보기(방향을 바로잡은 사진, 긴 변 1600px 안) + 원래 크기(px)
+#[tauri::command]
+pub async fn image_redact_preview(state: State<'_, AppState>, path: String) -> R<ImgPreview> {
+    let ffmpeg: Option<PathBuf> = state.toolset().get(Tool::Ffmpeg).ok().map(Path::to_path_buf);
+    tauri::async_runtime::spawn_blocking(move || imgredact::preview(Path::new(&path), ffmpeg.as_deref(), 1600))
+        .await
+        .map_err(|e| CmdError { code: "error", message: e.to_string() })?
+        .map_err(CmdError::from)
+}
+
+/// 사진 가리기 → `이름_가림.jpg`(PNG는 .png). 상자는 원래 사진 px
+#[tauri::command]
+pub async fn image_redact(state: State<'_, AppState>, path: String, opts: ImgRedactOpts, out_dir: Option<String>) -> R<ImgRedactOut> {
+    let ffmpeg: Option<PathBuf> = state.toolset().get(Tool::Ffmpeg).ok().map(Path::to_path_buf);
+    let out = dir(&out_dir);
+    tauri::async_runtime::spawn_blocking(move || imgredact::redact(Path::new(&path), ffmpeg.as_deref(), &opts, out.as_deref()))
+        .await
+        .map_err(|e| CmdError { code: "error", message: e.to_string() })?
+        .map_err(CmdError::from)
 }

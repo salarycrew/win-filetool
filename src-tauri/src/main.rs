@@ -1174,6 +1174,8 @@ fn main() {
             cmd_040a::ocr_text,
             cmd_040a::redact_find,
             cmd_040a::redact_apply,
+            cmd_040a::image_redact_preview,
+            cmd_040a::image_redact,
             cmd_hwp::hwp_capabilities,
             autostart_get,
             autostart_set,

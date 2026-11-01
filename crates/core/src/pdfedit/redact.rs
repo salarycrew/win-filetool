@@ -874,6 +874,8 @@ pub struct Hit {
     pub rects: Vec<Mark>,
     /// `text` | `ocr`
     pub source: String,
+    /// 0 = 확실함, 1 = 덜 확실함(주민등록번호인데 검증 숫자가 안 맞음 — 2020년 10월 이후 번호일 수 있음). 목록은 0이 먼저
+    pub rank: u8,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -913,15 +915,7 @@ fn accept(p: Option<Preset>, s: &str, before: Option<char>, after: Option<char>)
         return false;
     }
     match p {
-        Preset::Rrn => {
-            let d: Vec<u32> = s.chars().filter_map(|c| c.to_digit(10)).collect();
-            if d.len() < 7 {
-                return false;
-            }
-            let mm = d[2] * 10 + d[3];
-            let dd = d[4] * 10 + d[5];
-            (1..=12).contains(&mm) && (1..=31).contains(&dd) && (1..=8).contains(&d[6])
-        }
+        Preset::Rrn => rrn_rank(s).is_some(),
         Preset::Phone => {
             let n = digits(s);
             (8..=13).contains(&n) && (s.chars().any(|c| !c.is_ascii_digit()) || n >= 10)
@@ -932,6 +926,42 @@ fn accept(p: Option<Preset>, s: &str, before: Option<char>, after: Option<char>)
             // 날짜(2026-11-01)·전화번호 모양은 뺀다
             (10..=16).contains(&n) && !(preset_regex(Preset::Phone).find(s).is_some_and(|m| m.as_str() == s) && n <= 11)
         }
+    }
+}
+
+/// 주민등록번호 검증 숫자(가중치 2,3,4,5,6,7,8,9,2,3,4,5). 외국인등록번호(7번째 5~8)는 (13 - 합 % 11) % 10
+fn rrn_checksum_ok(d: &[u32]) -> bool {
+    if d.len() != 13 {
+        return false;
+    }
+    const W: [u32; 12] = [2, 3, 4, 5, 6, 7, 8, 9, 2, 3, 4, 5];
+    let sum: u32 = d.iter().zip(W).map(|(a, w)| a * w).sum();
+    let check = if (5..=8).contains(&d[6]) { (13 - sum % 11) % 10 } else { (11 - sum % 11) % 10 };
+    check == d[12]
+}
+
+/// 주민등록번호로 볼지와 순위: Some(0) 검증 숫자가 맞음(또는 뒷자리를 가린 번호), Some(1) 날짜·성별은 맞지만 검증 숫자가 안 맞음
+/// (2020년 10월 이후 번호는 뒷자리에 검증 숫자가 없음 — 빼지 않고 뒤로), None 아님.
+/// 빼기표 없이 이어 쓴 13자리는 검증 숫자가 맞을 때만, 외국인등록번호(5~8)도 검증 숫자가 맞을 때만.
+pub(crate) fn rrn_rank(s: &str) -> Option<u8> {
+    let d: Vec<u32> = s.chars().filter_map(|c| c.to_digit(10)).collect();
+    if d.len() < 7 {
+        return None;
+    }
+    let mm = d[2] * 10 + d[3];
+    let dd = d[4] * 10 + d[5];
+    if !(1..=12).contains(&mm) || !(1..=31).contains(&dd) || !(1..=8).contains(&d[6]) {
+        return None;
+    }
+    if d.len() == 7 {
+        // 뒷자리를 * 로 가린 번호
+        return Some(0);
+    }
+    let dashed = s.chars().any(|c| !c.is_ascii_digit());
+    match (rrn_checksum_ok(&d), dashed, d[6]) {
+        (true, _, _) => Some(0),
+        (false, true, 1..=4) => Some(1),
+        _ => None,
     }
 }
 
@@ -1013,7 +1043,9 @@ fn search_page(pt: &PageText, page: u32, rules: &[(Option<Preset>, String, regex
                 Some(p) => (serde_json::to_value(p).ok().and_then(|v| v.as_str().map(String::from)).unwrap_or_default(), p.label().to_string()),
                 None => ("word".to_string(), format!("찾는 말 '{term}'")),
             };
-            out.push(Hit { id: 0, page, text: m.as_str().replace(['\r', '\n'], " "), kind, label, rects, source: source.into() });
+            let rank = if *preset == Some(Preset::Rrn) { rrn_rank(m.as_str()).unwrap_or(1) } else { 0 };
+            let label = if rank == 1 { format!("{label}(확인 필요 — 검증 숫자가 안 맞아요. 2020년 10월 이후 번호일 수 있어요)") } else { label };
+            out.push(Hit { id: 0, page, text: m.as_str().replace(['\r', '\n'], " "), kind, label, rects, source: source.into(), rank });
         }
     }
 }
@@ -1096,6 +1128,8 @@ pub fn find(input: &Path, password: Option<&str>, terms: &[String], presets: &[P
         }
         job.tick(i + 1, n)?;
     }
+    // 확실한 것 먼저(쪽 순서는 그대로)
+    hits.sort_by_key(|h| h.rank);
     for (k, h) in hits.iter_mut().enumerate() {
         h.id = k + 1;
     }
@@ -1123,7 +1157,15 @@ mod tests {
 
     #[test]
     fn presets_match_korean_formats() {
-        assert_eq!(hits(Preset::Rrn, "주민번호 900101-1234567 입니다"), vec!["900101-1234567"]);
+        // 지어낸 번호만 쓴다. 900101-1234568은 검증 숫자가 맞음(합 = 2*9+3*0+4*0+5*1+6*0+7*1+8*1+9*2+2*3+3*4+4*5+5*6 → (11 - 합%11)%10)
+        assert_eq!(hits(Preset::Rrn, "주민번호 900101-1234568 입니다"), vec!["900101-1234568"]);
+        assert_eq!(rrn_rank("900101-1234568"), Some(0));
+        // 검증 숫자가 틀려도 빼기표가 있고 성별 1~4면 덜 확실하게(2020년 10월 이후 번호)
+        assert_eq!(rrn_rank("900101-1234567"), Some(1));
+        assert_eq!(rrn_rank("9001011234568"), Some(0));
+        assert_eq!(rrn_rank("9001011234567"), None, "이어 쓴 13자리는 검증 숫자가 맞을 때만");
+        assert_eq!(rrn_rank("900101-5234567"), None, "외국인등록번호는 검증 숫자가 맞을 때만");
+        assert_eq!(rrn_rank("900101-2******"), Some(0));
         assert_eq!(hits(Preset::Rrn, "900101 - 2******"), vec!["900101 - 2******"]);
         assert!(hits(Preset::Rrn, "주문번호 991399-1234567").is_empty(), "13월은 날짜가 아님");
         assert_eq!(hits(Preset::Phone, "연락처 010-1234-5678, 02-123-4567, (031) 123-4567, 1588-1234"), vec!["010-1234-5678", "02-123-4567", "(031) 123-4567", "1588-1234"]);
