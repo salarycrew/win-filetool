@@ -100,7 +100,7 @@ pub fn find_library() -> Option<PathBuf> {
 
 static PDFIUM: Mutex<Option<&'static Pdfium>> = Mutex::new(None);
 
-fn pdfium() -> Result<&'static Pdfium> {
+pub(crate) fn pdfium() -> Result<&'static Pdfium> {
     let mut g = PDFIUM.lock().unwrap_or_else(|e| e.into_inner());
     if let Some(p) = *g {
         return Ok(p);
@@ -119,7 +119,7 @@ pub fn pdfium_status() -> std::result::Result<PathBuf, String> {
     pdfium().map(|_| lib).map_err(|e| e.to_string())
 }
 
-fn render_err(path: &Path, e: PdfiumError) -> Error {
+pub(crate) fn render_err(path: &Path, e: PdfiumError) -> Error {
     let msg = match &e {
         PdfiumError::PdfiumLibraryInternalError(PdfiumInternalError::PasswordError) => {
             "암호가 걸린 PDF는 열 수 없습니다. PDF 프로그램에서 암호를 풀어 저장한 뒤 다시 시도하세요".to_string()

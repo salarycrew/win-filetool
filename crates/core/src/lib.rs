@@ -9,6 +9,7 @@
 //! - [`watch`]: 감시 폴더, [`settings`]: 설정 저장
 //! - 1c: [`pdfcompress`]: PDF 압축, [`img2pdf`]: 이미지 → PDF, [`pdfrender`]: PDF → 이미지(PDFium)·이미지 꺼내기,
 //!   [`autostart`]: 윈도 시작 시 실행(HKCU Run)
+//! - 0.3.0: [`pdfedit`]: PDF 편집(쪽 편집기·쪽 번호·워터마크·암호·서명·글상자·여백·A4·문서 정보·양식·모아 찍기)
 //! - 2a: [`search`]: 전체 파일 즉시 검색(색인·스캔·실시간 갱신·질의 언어)
 //! - 0.3.0 W1: [`bundle`]: 앱에 든 도구 묶음 풀기, [`portable`]: 휴대용 설정 위치, [`runtime`]: WebView2 확인, [`notices`]: 오픈소스 고지
 //!
@@ -31,6 +32,7 @@ pub mod pages;
 pub mod paths;
 pub mod pdf;
 pub mod pdfcompress;
+pub mod pdfedit;
 pub mod pdfrender;
 pub mod portable;
 pub mod process;
