@@ -58,8 +58,10 @@ pub fn run(cmd: &str, args: &[String]) -> Result<Option<ExitCode>> {
                 let t0 = Instant::now();
                 match caps.route {
                     Route::Hancom => {
-                        let r = hancom::convert(p, out, t, None, hancom::TIMEOUT)?;
-                        Ok(format!("{} -> {}  경로 hancom · 한글 쪽수 {} · {} ms", p.display(), r.output.display(), r.pages.map(|n| n.to_string()).unwrap_or("?".into()), r.millis))
+                        // 0.3.1: 배포용은 PDF로 인쇄(앱과 같은 길)
+                        let mode = if caps.distribution { hancom::Mode::PrintPdf } else { hancom::Mode::Save };
+                        let r = hancom::convert_mode(p, out, t, mode, None, hancom::TIMEOUT)?;
+                        Ok(format!("{} -> {}  경로 hancom{} · 한글 쪽수 {} · {} ms", p.display(), r.output.display(), if caps.distribution { "(PDF로 인쇄)" } else { "" }, r.pages.map(|n| n.to_string()).unwrap_or("?".into()), r.millis))
                     }
                     Route::Libreoffice => {
                         let o = docs::convert_lo(soffice.as_deref().expect("route"), p, out, t, None, docs::DOC_TIMEOUT)?;

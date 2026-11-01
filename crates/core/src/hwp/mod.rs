@@ -68,8 +68,13 @@ impl HwpCaps {
 }
 
 pub const MSG_NEED_HANCOM: &str = "이 한글 문서(2002년 이후 형식)는 한글 프로그램이 설치된 PC에서만 PDF·PPT로 바꿀 수 있어요. 그림 뽑기는 쓸 수 있어요.";
-pub const MSG_PROTECTED: &str = "암호가 걸렸거나 보호된 한글 문서라 열 수 없어요. 한글에서 암호를 풀어 저장한 뒤 다시 해 주세요.";
-pub const MSG_DISTRIBUTION: &str = "배포용 한글 문서라 바꾸거나 그림을 꺼낼 수 없어요.";
+pub const MSG_PROTECTED: &str = "암호가 걸린 한글 파일이에요. 한글에서 암호를 풀고 다시 넣어 주세요.";
+/// 배포용 + 한글 없음
+pub const MSG_DISTRIBUTION: &str = "배포용 한글 파일이에요. 한글이 설치된 PC에서 PDF로만 바꿀 수 있어요(만든 사람이 인쇄를 막아 두었으면 안 돼요).";
+/// 배포용 + 한글 있음(되는 일 안내)
+pub const MSG_DISTRIBUTION_PDF_ONLY: &str = "배포용 한글 파일이라 PDF로만 바꿀 수 있어요. 만든 사람이 인쇄를 막아 두었으면 PDF도 안 돼요.";
+/// 배포용인데 한글이 인쇄를 거절함
+pub const MSG_DISTRIBUTION_NOPRINT: &str = "배포용 한글 파일인데 만든 사람이 인쇄를 막아 두어 PDF로 바꿀 수 없어요.";
 pub const MSG_DAMAGED: &str = images::MSG_DAMAGED;
 pub const MSG_HWP97_NO_IMAGES: &str = "한글 97 문서는 그림 뽑기를 할 수 없어요. PDF로 바꾼 뒤 PDF에서 그림을 뽑아 주세요.";
 pub const MSG_NO_TOOL: &str = "한글 97 문서를 바꿀 문서 도구(LibreOffice)를 찾지 못했어요.";
@@ -96,7 +101,15 @@ pub fn capabilities_for(info: &HwpInfo, hancom: bool, soffice: bool) -> HwpCaps 
         return c;
     }
     if info.distribution {
-        c.message = Some(MSG_DISTRIBUTION.into());
+        // 0.3.1: 배포용은 다른 이름으로 저장(DOCX·PDF)이 막혀 있지만, 만든 사람이 인쇄를 허용했으면 한글의 "PDF로 인쇄"로
+        // PDF는 만들 수 있다(한글 2020에서 확인). PPT(DOCX를 거침)·그림 뽑기(내용 암호화)는 안 됨.
+        if hancom && info.format != HwpFormat::Hwp97 {
+            c.route = Route::Hancom;
+            c.can_pdf = true;
+            c.message = Some(MSG_DISTRIBUTION_PDF_ONLY.into());
+        } else {
+            c.message = Some(MSG_DISTRIBUTION.into());
+        }
         return c;
     }
     match info.format {
@@ -138,6 +151,7 @@ pub fn capabilities(path: &Path, soffice: bool) -> Result<HwpCaps> {
 /// 이 한글 파일에서 고를 수 있는 변환 대상([`crate::docs::allowed_targets`]가 쓴다). LibreOffice는 있다고 본다(앱에 들어 있음).
 pub fn doc_targets(path: &Path) -> Vec<DocTarget> {
     match detect(path) {
+        Ok(info) if info.distribution && capabilities_for(&info, hancom::available(), true).can_pdf => vec![DocTarget::Pdf],
         Ok(info) if capabilities_for(&info, hancom::available(), true).can_pdf => vec![DocTarget::Pdf, DocTarget::Docx],
         Ok(_) => vec![],
         // 아직 읽을 수 없는 경로(없음 등): 확장자 기준으로 두고, 실제 변환 때 다시 확인한다
@@ -155,8 +169,9 @@ pub fn convert(soffice: Option<&Path>, input: &Path, out_dir: Option<&Path>, tar
         return Err(Error::Unsupported(format!("{} → {}", input.display(), target.ext())));
     }
     let caps = capabilities_for(&detect(input)?, hancom::available(), soffice.is_some());
+    let mode = if caps.distribution { hancom::Mode::PrintPdf } else { hancom::Mode::Save };
     match caps.route {
-        Route::Hancom => hancom::convert(input, out_dir, target, cancel, timeout.min(hancom::TIMEOUT)).map(|r| r.output),
+        Route::Hancom => hancom::convert_mode(input, out_dir, target, mode, cancel, timeout.min(hancom::TIMEOUT)).map(|r| r.output),
         Route::Libreoffice => crate::docs::convert_lo(soffice.expect("route libreoffice → soffice"), input, out_dir, target, cancel, timeout),
         Route::None => Err(Error::Invalid(caps.message.unwrap_or_else(|| MSG_NEED_HANCOM.into()))),
     }
@@ -189,14 +204,21 @@ mod tests {
             assert!(c.message.is_none());
         }
         assert_eq!(capabilities_for(&info(HwpFormat::Hwp97), true, true).route, Route::Hancom);
-        // 보호·배포용·손상은 한글이 있어도 아무것도 안 됨
-        for (i, msg) in [
-            (HwpInfo { encrypted: true, ..info(HwpFormat::Hwp5) }, MSG_PROTECTED),
-            (HwpInfo { distribution: true, ..info(HwpFormat::Hwp5) }, MSG_DISTRIBUTION),
-            (HwpInfo { encrypted: true, ..info(HwpFormat::Hwpx) }, MSG_PROTECTED),
-            (info(HwpFormat::Damaged), MSG_DAMAGED),
+        // 0.3.1 배포용: 한글이 있으면 PDF만(인쇄로), 없으면 안 됨
+        for f in [HwpFormat::Hwp5, HwpFormat::Hwpx] {
+            let c = capabilities_for(&HwpInfo { distribution: true, ..info(f) }, true, true);
+            assert_eq!((c.can_pdf, c.can_pptx, c.can_images, c.route), (true, false, false, Route::Hancom));
+            assert_eq!(c.message.as_deref(), Some(MSG_DISTRIBUTION_PDF_ONLY));
+        }
+        // 암호·손상은 한글이 있어도 아무것도 안 됨, 배포용은 한글이 없으면 안 됨
+        for (i, hancom, msg) in [
+            (HwpInfo { encrypted: true, ..info(HwpFormat::Hwp5) }, true, MSG_PROTECTED),
+            (HwpInfo { distribution: true, ..info(HwpFormat::Hwp5) }, false, MSG_DISTRIBUTION),
+            (HwpInfo { distribution: true, ..info(HwpFormat::Hwpx) }, false, MSG_DISTRIBUTION),
+            (HwpInfo { encrypted: true, ..info(HwpFormat::Hwpx) }, true, MSG_PROTECTED),
+            (info(HwpFormat::Damaged), true, MSG_DAMAGED),
         ] {
-            let c = capabilities_for(&i, true, true);
+            let c = capabilities_for(&i, hancom, true);
             assert_eq!((c.can_pdf, c.can_pptx, c.can_images, c.route), (false, false, false, Route::None));
             assert_eq!(c.message.as_deref(), Some(msg));
         }

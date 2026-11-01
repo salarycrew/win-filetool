@@ -1,6 +1,7 @@
 # win-filetool 0.3.0 W6: 설치된 한글(HWPFrame.HwpObject)로 한 파일을 PDF/DOCX로 저장한다.
 # 앱(Rust, hwp::hancom)이 작업 임시 폴더에 이 스크립트를 쓰고 실행한다. 입력은 원본의 복사본, 출력도 임시 폴더.
 # 한 줄씩 상태를 내보낸다: PID n / REG / OPEN / PAGES n / SAVE / ERROR 메시지 / DONE
+# -Fmt: PDF | OOXML | PRINTPDF(0.3.1, 배포용 문서를 PDF로 인쇄)
 param([string]$In, [string]$Out, [string]$Fmt, [string]$Module)
 $ErrorActionPreference = 'Stop'
 [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false)
@@ -29,6 +30,22 @@ try {
     'OPEN True'
     "PAGES $($hwp.PageCount)"
     [Console]::Out.Flush()
+    if ($Fmt -eq 'PRINTPDF') {
+        # 0.3.1 배포용 문서: 다른 이름으로 저장은 막혀 있어 "PDF로 인쇄"로 만든다(만든 사람이 인쇄를 막았으면 False)
+        $pr = $hwp.HParameterSet.HPrint
+        [void]$hwp.HAction.GetDefault('PrintToPDF', $pr.HSet)
+        $pr.FileName = $Out
+        if (-not $hwp.HAction.Execute('PrintToPDF', $pr.HSet)) { 'SAVE False'; $code = 5; break }
+        # 인쇄가 파일을 다 쓸 때까지(크기가 1초 동안 그대로일 때까지) 기다린다
+        $last = -1
+        for ($i = 0; $i -lt 240; $i++) {
+            if (Test-Path $Out) { $n = (Get-Item $Out).Length; if ($n -gt 0 -and $n -eq $last) { break }; $last = $n }
+            Start-Sleep -Milliseconds 500
+        }
+        if (-not (Test-Path $Out)) { 'SAVE False'; $code = 5; break }
+        'SAVE True'
+        break
+    }
     if (-not $hwp.SaveAs($Out, $Fmt, '')) { 'SAVE False'; $code = 5; break }
     'SAVE True'
   } while ($false)

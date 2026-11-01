@@ -215,8 +215,24 @@ pub fn parse_line(o: &mut Outcome, line: &str) {
     }
 }
 
+/// 한글로 만드는 방법
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Mode {
+    /// 다른 이름으로 저장(PDF·DOCX)
+    Save,
+    /// 0.3.1: PDF로 인쇄(배포용 문서 — 저장은 막혀 있음)
+    PrintPdf,
+}
+
 /// 실패 사유 → 사용자 안내(없으면 성공)
 pub fn outcome_error(o: &Outcome, target: DocTarget) -> Option<String> {
+    outcome_error_mode(o, target, Mode::Save)
+}
+
+pub fn outcome_error_mode(o: &Outcome, target: DocTarget, mode: Mode) -> Option<String> {
+    if mode == Mode::PrintPdf && o.opened == Some(true) && o.saved == Some(false) {
+        return Some(super::MSG_DISTRIBUTION_NOPRINT.into());
+    }
     let what = if target == DocTarget::Pdf { "PDF" } else { "Word(DOCX)" };
     if o.nopid {
         return Some("이미 실행 중인 한글과 겹쳐 바꾸지 못했어요. 열려 있는 한글 창을 모두 닫고 다시 해 주세요.".into());
@@ -228,7 +244,7 @@ pub fn outcome_error(o: &Outcome, target: DocTarget) -> Option<String> {
         return Some("한글 자동화 보안 모듈을 등록하지 못했어요.".into());
     }
     if o.opened == Some(false) {
-        return Some("한글이 이 파일을 열지 못했어요. 손상되었거나 암호가 걸린 문서일 수 있어요.".into());
+        return Some("한글이 이 파일을 열지 못했어요. 손상된 파일이거나 암호가 걸린 한글 파일일 수 있어요. 암호가 있으면 한글에서 풀고 다시 넣어 주세요.".into());
     }
     if o.saved == Some(false) {
         return Some(format!("한글에서 {what}로 저장하지 못했어요."));
@@ -241,7 +257,15 @@ pub fn outcome_error(o: &Outcome, target: DocTarget) -> Option<String> {
 
 /// PowerShell 인자
 pub fn script_args(script: &Path, input: &Path, output: &Path, target: DocTarget) -> Vec<OsString> {
-    let fmt = if target == DocTarget::Pdf { "PDF" } else { "OOXML" };
+    script_args_mode(script, input, output, target, Mode::Save)
+}
+
+pub fn script_args_mode(script: &Path, input: &Path, output: &Path, target: DocTarget, mode: Mode) -> Vec<OsString> {
+    let fmt = match (mode, target) {
+        (Mode::PrintPdf, _) => "PRINTPDF",
+        (Mode::Save, DocTarget::Pdf) => "PDF",
+        _ => "OOXML",
+    };
     let mut a: Vec<OsString> = ["-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File"].iter().map(OsString::from).collect();
     a.push(script.into());
     for (k, v) in [("-In", input.as_os_str()), ("-Out", output.as_os_str()), ("-Fmt", fmt.as_ref()), ("-Module", MODULE_NAME.as_ref())] {
@@ -364,7 +388,7 @@ mod win {
         }
     }
 
-    pub fn convert(inst: &Install, input: &Path, out_dir: Option<&Path>, target: DocTarget, cancel: Option<&Cancel>, timeout: Duration) -> Result<HancomOut> {
+    pub fn convert(inst: &Install, input: &Path, out_dir: Option<&Path>, target: DocTarget, mode: Mode, cancel: Option<&Cancel>, timeout: Duration) -> Result<HancomOut> {
         let t0 = Instant::now();
         let _lock = lock(cancel, timeout)?;
         // 잠금보다 먼저 풀리도록 뒤에 선언(변환이 끝나면 등록값을 지운 다음 잠금을 놓음)
@@ -380,7 +404,7 @@ mod win {
         let ps = root.join(if inst.wow64 { "SysWOW64" } else { "System32" }).join(r"WindowsPowerShell\v1.0\powershell.exe");
         let before = hwp_pids();
         let mut o = Outcome::default();
-        let res = process::run(&ps, &script_args(&script, &tmp_in, &tmp_out, target), timeout, cancel, &mut |l| parse_line(&mut o, l));
+        let res = process::run(&ps, &script_args_mode(&script, &tmp_in, &tmp_out, target, mode), timeout, cancel, &mut |l| parse_line(&mut o, l));
         // 우리가 띄운 한글만 정리: 스크립트가 알려 준 번호, 못 알려 줬으면(만들다 멈춤) 시작 뒤 새로 생긴 것
         let mut ours = o.pids.clone();
         if ours.is_empty() && !o.nopid && res.is_err() {
@@ -405,7 +429,7 @@ mod win {
             Err(e) => return Err(e),
             Ok(_) => {}
         }
-        if let Some(m) = outcome_error(&o, target) {
+        if let Some(m) = outcome_error_mode(&o, target, mode) {
             return Err(Error::Tool { tool: "한글".into(), message: m });
         }
         if std::fs::metadata(&tmp_out).map(|m| m.len()).unwrap_or(0) == 0 {
@@ -423,6 +447,14 @@ pub use win::{hwp_pids, module_registered, remove_module_value};
 
 /// 설치된 한글로 PDF(`target` Pdf) 또는 DOCX를 만든다. 결과는 `이름.pdf`/`이름.docx`(겹치면 ` (1)`).
 pub fn convert(input: &Path, out_dir: Option<&Path>, target: DocTarget, cancel: Option<&Cancel>, timeout: Duration) -> Result<HancomOut> {
+    convert_mode(input, out_dir, target, Mode::Save, cancel, timeout)
+}
+
+/// [`convert`] + 만드는 방법(배포용 문서는 [`Mode::PrintPdf`], PDF만)
+pub fn convert_mode(input: &Path, out_dir: Option<&Path>, target: DocTarget, mode: Mode, cancel: Option<&Cancel>, timeout: Duration) -> Result<HancomOut> {
+    if mode == Mode::PrintPdf && target != DocTarget::Pdf {
+        return Err(Error::Invalid(super::MSG_DISTRIBUTION_PDF_ONLY.into()));
+    }
     if !matches!(target, DocTarget::Pdf | DocTarget::Docx) {
         return Err(Error::Unsupported(format!("{} → {}", input.display(), target.ext())));
     }
@@ -433,11 +465,11 @@ pub fn convert(input: &Path, out_dir: Option<&Path>, target: DocTarget, cancel: 
     let timeout = std::env::var(TIMEOUT_ENV).ok().and_then(|v| v.parse().ok()).map(Duration::from_secs).unwrap_or(timeout);
     #[cfg(windows)]
     {
-        win::convert(&_inst, input, out_dir, target, cancel, timeout)
+        win::convert(&_inst, input, out_dir, target, mode, cancel, timeout)
     }
     #[cfg(not(windows))]
     {
-        let _ = (out_dir, cancel, timeout);
+        let _ = (out_dir, cancel, timeout, mode);
         unreachable!("installed()는 Windows에서만 Some")
     }
 }
@@ -506,6 +538,20 @@ mod tests {
         assert!(outcome_error(&o, DocTarget::Pdf).unwrap().contains("클래스가"));
         // 아무 말 없이 끝나면 실패
         assert!(outcome_error(&Outcome::default(), DocTarget::Pdf).is_some());
+        // 0.3.1 배포용: 열렸는데 인쇄가 거절되면(만든 사람이 인쇄를 막음) 그 안내
+        let mut o = Outcome::default();
+        for l in ["PID 7", "REG True", "OPEN True", "PAGES 1", "SAVE False", "DONE"] {
+            parse_line(&mut o, l);
+        }
+        assert_eq!(outcome_error_mode(&o, DocTarget::Pdf, Mode::PrintPdf).as_deref(), Some(super::super::MSG_DISTRIBUTION_NOPRINT));
+        assert!(outcome_error_mode(&o, DocTarget::Pdf, Mode::Save).unwrap().contains("PDF로 저장하지 못했어요"));
+        let a = script_args_mode(Path::new("s.ps1"), Path::new("in.hwp"), Path::new("out.pdf"), DocTarget::Pdf, Mode::PrintPdf);
+        assert!(a.iter().any(|x| x == "PRINTPDF"));
+        // 배포용은 PDF만
+        let t = tempfile::tempdir().unwrap();
+        let p = t.path().join("a.hwp");
+        std::fs::write(&p, b"x").unwrap();
+        assert_eq!(convert_mode(&p, None, DocTarget::Docx, Mode::PrintPdf, None, TIMEOUT).unwrap_err().to_string(), super::super::MSG_DISTRIBUTION_PDF_ONLY);
     }
 
     #[test]

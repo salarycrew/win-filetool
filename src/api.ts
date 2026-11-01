@@ -118,6 +118,11 @@ export function friendly(e: unknown): Friendly {
   const { code, message: m } = asErr(e);
   const f = (kind: Friendly["kind"], icon: string, title: string, body: string): Friendly => ({ kind, icon, title, body, detail: m });
   if (code === "cancelled" || /취소했습니다|취소됨/.test(m)) return f("cancelled", "x", "멈췄어요", "만들던 파일은 남기지 않았어요.");
+  // 0.3.1 한글 파일: PDF 안내("암호가 걸린 PDF예요")로 가지 않게 먼저
+  if (/한글이 이 파일을 열지 못했어요/.test(m))
+    return f("damaged", "warn", "한글이 이 파일을 열지 못했어요", "손상된 파일이거나 암호가 걸린 한글 파일일 수 있어요. 암호가 있으면 한글에서 풀고 다시 넣어 주세요.");
+  if (/암호가 걸린 한글 파일/.test(m)) return f("locked", "lock", "암호가 걸린 한글 파일이에요", "한글에서 암호를 풀고 다시 넣어 주세요.");
+  if (/배포용 한글 파일/.test(m)) return f("unsupported", "lock", "배포용 한글 파일이에요", m.replace(/^.*?실행 실패:\s*/, "").replace(/^[^:]*\.hwpx?:\s*/i, ""));
   if (code === "password_required" || /암호가 걸린|암호.*(필요|있어)|encrypted|password/i.test(m))
     return f("locked", "lock", "암호가 걸린 PDF예요", "암호를 알고 있으면 [PDF 편집]에서 열거나 [암호 걸기·풀기]로 먼저 풀어 주세요. 여러 개를 넣었을 때는 이 파일만 건너뛰어요.");
   if (code === "wrong_password") return f("locked", "lock", "암호가 맞지 않아요", "대문자·소문자와 한/영 상태를 확인하고 다시 넣어 주세요.");

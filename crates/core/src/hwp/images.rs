@@ -39,8 +39,8 @@ pub struct Limits {
 
 pub const LIMITS: Limits = Limits { max_item: 256 << 20, max_total: 2 << 30, max_items: 20_000, max_docinfo: 64 << 20 };
 
-pub const MSG_ENCRYPTED: &str = "암호가 걸렸거나 보호된 한글 문서라 그림을 꺼낼 수 없어요. 한글에서 암호를 풀어 저장한 뒤 다시 해 주세요.";
-pub const MSG_DISTRIBUTION: &str = "배포용 한글 문서라 그림을 꺼낼 수 없어요.";
+pub const MSG_ENCRYPTED: &str = "암호가 걸린 한글 파일이에요. 한글에서 암호를 풀고 다시 넣어 주세요.";
+pub const MSG_DISTRIBUTION: &str = "배포용 한글 파일이라 그림을 꺼낼 수 없어요.";
 pub const MSG_DAMAGED: &str = "한글 파일이 손상되어 읽을 수 없어요.";
 pub const MSG_HWP97: &str = "한글 97 문서에서는 그림 뽑기를 할 수 없어요. PDF로 바꾼 뒤 PDF에서 그림을 뽑아 주세요.";
 

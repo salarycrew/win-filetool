@@ -118,8 +118,12 @@ fn detect_hwpx(path: &Path) -> HwpInfo {
     if mime.as_deref() != Some(HWPX_MIME) && !has_contents {
         return HwpInfo::damaged("HWPX(mimetype application/hwp+zip)가 아님");
     }
-    // 암호를 건 HWPX는 META-INF/manifest.xml에 encryption-data가 있다
-    let encrypted = zip_text(&mut z, "META-INF/manifest.xml", 4 << 20).is_some_and(|m| m.contains("encryption-data"));
+    // 암호를 건 HWPX는 META-INF/manifest.xml에 encryption-data가 있다.
+    // 0.3.1: 배포용 HWPX도 내용을 암호화하므로 encryption-data가 있다 — Contents/content.hpf(암호화 안 됨)의
+    // `<opf:package … hpf:distribution="1">`로 배포용을 가린다(한글 2020에서 만든 파일로 확인)
+    let manifest_enc = zip_text(&mut z, "META-INF/manifest.xml", 4 << 20).is_some_and(|m| m.contains("encryption-data"));
+    let distribution = zip_text(&mut z, "Contents/content.hpf", 1 << 20).is_some_and(|c| hpf_distribution(&c));
+    let encrypted = manifest_enc && !distribution;
     let version = zip_text(&mut z, "version.xml", 64 << 10).and_then(|x| {
         let attr = |k: &str| -> Option<String> {
             let i = x.find(&format!(" {k}=\""))? + k.len() + 3;
@@ -127,7 +131,17 @@ fn detect_hwpx(path: &Path) -> HwpInfo {
         };
         Some(format!("{}.{}.{}.{}", attr("major")?, attr("minor")?, attr("micro")?, attr("buildNumber")?))
     });
-    HwpInfo { format: HwpFormat::Hwpx, version, encrypted, distribution: false, compressed: true, problem: None }
+    HwpInfo { format: HwpFormat::Hwpx, version, encrypted, distribution, compressed: true, problem: None }
+}
+
+/// content.hpf의 `<opf:package …>` 여는 태그에 `distribution="1"`(접두사는 보통 `hpf:`)이 있는지
+fn hpf_distribution(hpf: &str) -> bool {
+    let Some(start) = hpf.find("<opf:package").or_else(|| hpf.find("<package")) else { return false };
+    let tag = hpf[start..].split('>').next().unwrap_or("");
+    tag.split_whitespace().any(|a| {
+        let (k, v) = a.split_once('=').unwrap_or((a, ""));
+        (k == "distribution" || k.ends_with(":distribution")) && matches!(v.trim_end_matches('/').trim_matches(['"', '\'']), "1" | "true")
+    })
 }
 
 /// 파일 내용으로 한글 형식을 알아본다. 파일을 읽을 수 없으면(없음·권한) 오류, 구조가 이상하면 `Damaged`.
@@ -250,8 +264,11 @@ pub(crate) mod testfiles {
             hpf.push_str(&format!(r#"<opf:item id="image{}" href="{href}" media-type="{mt}" isEmbeded="1"/>"#, i + 1));
         }
         hpf.push_str("</opf:manifest></opf:package>");
-        z.start_file("Contents/content.hpf", df).unwrap();
-        z.write_all(hpf.as_bytes()).unwrap();
+        // 시험에서 content.hpf를 직접 주면(배포용 표시 등) 그것을 쓴다
+        if !extra.iter().any(|(n, _)| *n == "Contents/content.hpf") {
+            z.start_file("Contents/content.hpf", df).unwrap();
+            z.write_all(hpf.as_bytes()).unwrap();
+        }
         z.start_file("Contents/header.xml", df).unwrap();
         z.write_all(b"<hh:head/>").unwrap();
         for (href, _, b) in items {
@@ -304,6 +321,24 @@ mod tests {
         let p = t.path().join("b.hwpx");
         write_hwpx(&p, &[], &[("META-INF/manifest.xml", br#"<odf:manifest><odf:file-entry><odf:encryption-data/></odf:file-entry></odf:manifest>"#)]);
         assert!(detect(&p).unwrap().encrypted);
+        // 0.3.1: 배포용 HWPX(한글 2020 FileSetSecurity로 만든 파일과 같은 꼴): 내용은 암호화, content.hpf에 distribution="1"
+        let p = t.path().join("배포용.hwpx");
+        write_hwpx(&p, &[], &[
+            ("META-INF/manifest.xml", br#"<odf:manifest><odf:file-entry full-path="Contents/section0.xml"><odf:encryption-data/></odf:file-entry></odf:manifest>"#),
+            ("Contents/content.hpf", br#"<?xml version="1.0"?><opf:package xmlns:hpf="http://www.hancom.co.kr/schema/2011/hpf" version="" id="" hpf:distribution="1"><opf:metadata/></opf:package>"#),
+        ]);
+        let i = detect(&p).unwrap();
+        assert!(i.distribution && !i.encrypted, "{i:?}");
+        // 같은 꼴이지만 distribution 없음(문서 암호) → 암호
+        let p = t.path().join("암호2.hwpx");
+        write_hwpx(&p, &[], &[
+            ("META-INF/manifest.xml", br#"<odf:manifest><odf:file-entry><odf:encryption-data/></odf:file-entry></odf:manifest>"#),
+            ("Contents/content.hpf", br#"<?xml version="1.0"?><opf:package xmlns:hpf="x" version="" id=""><opf:metadata><opf:title>distribution="1"</opf:title></opf:metadata></opf:package>"#),
+        ]);
+        let i = detect(&p).unwrap();
+        assert!(i.encrypted && !i.distribution, "{i:?}");
+        assert!(hpf_distribution(r#"<opf:package a="b" hpf:distribution="1">"#));
+        assert!(!hpf_distribution(r#"<opf:package hpf:distribution="0">"#));
     }
 
     #[test]
