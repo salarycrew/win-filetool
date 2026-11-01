@@ -25,6 +25,7 @@
 pub mod autostart;
 pub mod bundle;
 pub mod convert;
+pub mod corejobs;
 pub mod ctxmenu;
 pub mod docs;
 pub mod docx2pptx;

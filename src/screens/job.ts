@@ -213,7 +213,7 @@ async function run() {
         setProgress(pg, 0, `사진 ${total}장`);
         const j = newRun();
         onJobProgress(j, (f) => setProgress(pg, f, `${Math.min(total, Math.round(f * total) + 1)} / ${total}장`));
-        const o = await invoke<{ output: string; pages?: unknown[] }>("images_to_pdf", { job: j, paths: items.map((x) => x.path), outDir: null, opts: { page: vals.page, margin_mm: vals.page === "image" ? 0 : 10 } });
+        const o = await invoke<{ output: string; pages?: unknown[] }>("images_to_pdf", { job: j, paths: items.map((x) => x.path), outDir: null, opts: { page: vals.page, margin_mm: vals.page === "image" ? 0 : 10, compact: true } });
         results.push({ input: items[0].path, output: o.output, pill: `${total}쪽`, before: items.reduce((a, x) => a + (x.size ?? 0), 0) || null });
         resultTitle = `사진 ${total}장을 PDF 하나로 만들었어요`;
         break;

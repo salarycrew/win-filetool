@@ -105,7 +105,7 @@ pub fn run(dir: &Path, args: &[String]) -> Result<ExitCode> {
     }
     inputs.push(png);
     let out = img2pdf::default_output(&inputs, None);
-    let r = img2pdf::images_to_pdf(ts.ffmpeg.as_deref(), &inputs, &out, &Img2PdfOpts { page: PageSize::Image, margin_mm: 0.0 }, None, &mut |_| {});
+    let r = img2pdf::images_to_pdf(ts.ffmpeg.as_deref(), &inputs, &out, &Img2PdfOpts { page: PageSize::Image, margin_mm: 0.0, compact: false }, None, &mut |_| {});
     c.result("이미지 → PDF (쪽 수·쪽 크기·JPEG 그대로)", r, |r| {
         let n = pdf::page_count(&r.output).unwrap_or(0);
         let sizes = samples::pdf_page_sizes(&r.output).unwrap_or_default();
@@ -135,7 +135,7 @@ pub fn run(dir: &Path, args: &[String]) -> Result<ExitCode> {
         });
     }
     let a4 = dir.join("A4 가로.pdf");
-    c.result("이미지 → PDF (A4 가로, 여백 15mm)", img2pdf::images_to_pdf(ts.ffmpeg.as_deref(), &inputs[..1], &a4, &Img2PdfOpts { page: PageSize::A4Landscape, margin_mm: 15.0 }, None, &mut |_| {}), |r| {
+    c.result("이미지 → PDF (A4 가로, 여백 15mm)", img2pdf::images_to_pdf(ts.ffmpeg.as_deref(), &inputs[..1], &a4, &Img2PdfOpts { page: PageSize::A4Landscape, margin_mm: 15.0, compact: false }, None, &mut |_| {}), |r| {
         let p = &r.pages[0];
         let ok = (p.page_w - img2pdf::A4_H).abs() < 0.01 && (p.page_h - img2pdf::A4_W).abs() < 0.01 && (p.draw_h - (img2pdf::A4_W - 2.0 * 15.0 * 72.0 / 25.4)).abs() < 0.01;
         (ok, format!("쪽 {:.1}×{:.1}pt, 그림 {:.1}×{:.1}pt", p.page_w, p.page_h, p.draw_w, p.draw_h))

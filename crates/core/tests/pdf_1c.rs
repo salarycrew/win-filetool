@@ -139,7 +139,7 @@ fn images_to_pdf_pages_sizes_orientation_passthrough() {
     let inputs = make_inputs(t.path());
     let out = img2pdf::default_output(&inputs, None);
     assert_eq!(out.file_name().unwrap().to_string_lossy(), "a_회전6_외2장.pdf");
-    let r = img2pdf::images_to_pdf(None, &inputs, &out, &Img2PdfOpts { page: PageSize::Image, margin_mm: 0.0 }, None, &mut |_| {}).unwrap();
+    let r = img2pdf::images_to_pdf(None, &inputs, &out, &Img2PdfOpts { page: PageSize::Image, margin_mm: 0.0, compact: false }, None, &mut |_| {}).unwrap();
     assert_eq!(filetool_core::pdf::page_count(&out).unwrap(), 3);
     let sizes = samples::pdf_page_sizes(&out).unwrap();
     let want = [(60.0, 90.0), (150.0, 75.0), (37.5, 30.0)];
@@ -184,7 +184,7 @@ fn placement_matrix_all_orientations_render_correctly() {
         let mut want = base.clone();
         want.apply_orientation(image::metadata::Orientation::from_exif(o as u8).unwrap());
         let out = t.path().join(format!("o{o}.pdf"));
-        img2pdf::images_to_pdf(None, &[p], &out, &Img2PdfOpts { page: PageSize::A4Portrait, margin_mm: 10.0 }, None, &mut |_| {}).unwrap();
+        img2pdf::images_to_pdf(None, &[p], &out, &Img2PdfOpts { page: PageSize::A4Portrait, margin_mm: 10.0, compact: false }, None, &mut |_| {}).unwrap();
         let sizes = samples::pdf_page_sizes(&out).unwrap();
         assert!((sizes[0].0 - img2pdf::A4_W).abs() < 0.01 && (sizes[0].1 - img2pdf::A4_H).abs() < 0.01);
         let rr = pdfrender::render_pages(&out, Some(t.path()), &RenderOpts { format: PageImageFormat::Png, dpi: 72, quality: 90, pages: None }, None, &mut |_, _| {}).unwrap();
@@ -204,7 +204,7 @@ fn images_to_pdf_a4_fit_with_margin() {
     let inputs = make_inputs(t.path());
     for (page, pw, ph) in [(PageSize::A4Portrait, img2pdf::A4_W, img2pdf::A4_H), (PageSize::A4Landscape, img2pdf::A4_H, img2pdf::A4_W)] {
         let out = t.path().join(format!("{page:?}.pdf"));
-        let r = img2pdf::images_to_pdf(None, &inputs, &out, &Img2PdfOpts { page, margin_mm: 20.0 }, None, &mut |_| {}).unwrap();
+        let r = img2pdf::images_to_pdf(None, &inputs, &out, &Img2PdfOpts { page, margin_mm: 20.0, compact: false }, None, &mut |_| {}).unwrap();
         let m = 20.0 * 72.0 / 25.4;
         for p in &r.pages {
             assert!((p.page_w - pw).abs() < 0.01 && (p.page_h - ph).abs() < 0.01);
@@ -230,7 +230,7 @@ fn images_to_pdf_heic_via_ffmpeg() {
     let h = t.path().join("아이폰.heic");
     samples::make_grid_heic(&ff, &h, 512, 1000, 700, "2023:08:15 14:03:22").unwrap();
     let out = t.path().join("h.pdf");
-    let r = img2pdf::images_to_pdf(Some(&ff), &[h], &out, &Img2PdfOpts { page: PageSize::Image, margin_mm: 0.0 }, None, &mut |_| {}).unwrap();
+    let r = img2pdf::images_to_pdf(Some(&ff), &[h], &out, &Img2PdfOpts { page: PageSize::Image, margin_mm: 0.0, compact: false }, None, &mut |_| {}).unwrap();
     // grid 1000×700, irot 90° → 700×1000
     assert_eq!((r.pages[0].px_w, r.pages[0].px_h), (700, 1000));
     assert!(!r.pages[0].jpeg_passthrough);
@@ -377,4 +377,29 @@ fn compress_to_target_already_small_and_impossible() {
     let e = pdfcompress::compress_to_target(&big, Some(t.path()), 1000, Some(&c), &mut |_, _| {});
     assert!(matches!(e, Err(filetool_core::Error::Cancelled)));
     assert_eq!(pdfcompress::target_label(5_000_000), "5MB");
+}
+
+#[test]
+fn img2pdf_compact_keeps_a4_photos_reasonable() {
+    // 0.3.2 "사진을 PDF 하나로": 아이폰 크기 JPEG·사진 같은 PNG를 A4에 넣으면 200 DPI로 줄이고 JPEG로
+    let t = tempfile::tempdir().unwrap();
+    let jpg = t.path().join("1.jpg");
+    std::fs::write(&jpg, samples::jpeg_bytes(&samples::photo_like(4032, 3024, 1), 92).unwrap()).unwrap();
+    let png = t.path().join("2.png");
+    samples::photo_like(2400, 1800, 2).save(&png).unwrap();
+    let shot = t.path().join("3 화면.png");
+    image::RgbImage::from_fn(1200, 800, |x, _| if x < 600 { image::Rgb([255, 255, 255]) } else { image::Rgb([20, 60, 200]) }).save(&shot).unwrap();
+    let inputs = vec![jpg, png, shot];
+    let big = t.path().join("big.pdf");
+    let small = t.path().join("small.pdf");
+    img2pdf::images_to_pdf(None, &inputs, &big, &Img2PdfOpts { page: PageSize::A4Portrait, margin_mm: 10.0, compact: false }, None, &mut |_| {}).unwrap();
+    img2pdf::images_to_pdf(None, &inputs, &small, &Img2PdfOpts { page: PageSize::A4Portrait, margin_mm: 10.0, compact: true }, None, &mut |_| {}).unwrap();
+    assert!(len(&small) * 4 < len(&big), "{} vs {}", len(&small), len(&big));
+    let imgs = samples::pdf_images(&small).unwrap();
+    assert_eq!(imgs.len(), 3);
+    // A4 세로 여백 10mm → 그림 폭 약 7.5인치 → 200 DPI면 약 1500px
+    assert_eq!(imgs.iter().filter(|i| i.0 <= 1560 && i.2 == "DCTDecode").count(), 2, "{imgs:?}");
+    // 색이 적은 화면 갈무리는 무손실 그대로(선명하게)
+    assert!(imgs.iter().any(|i| (i.0, i.1) == (1200, 800) && i.2 != "DCTDecode"), "{imgs:?}");
+    assert_eq!(filetool_core::pdf::page_count(&small).unwrap(), 3);
 }

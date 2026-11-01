@@ -54,7 +54,7 @@ pub fn run(cmd: &str, args: &[String]) -> Result<Option<ExitCode>> {
             let inputs: Vec<PathBuf> = f.rest.iter().map(PathBuf::from).collect();
             let output = f.get("--output").map(PathBuf::from).unwrap_or_else(|| img2pdf::default_output(&inputs, out.as_deref()));
             let ts = toolset(&f);
-            let r = img2pdf::images_to_pdf(ts.ffmpeg.as_deref(), &inputs, &output, &Img2PdfOpts { page, margin_mm: f.num("--margin", 0.0)? }, None, &mut |_| {})?;
+            let r = img2pdf::images_to_pdf(ts.ffmpeg.as_deref(), &inputs, &output, &Img2PdfOpts { page, margin_mm: f.num("--margin", 0.0)?, compact: false }, None, &mut |_| {})?;
             for (i, p) in r.pages.iter().enumerate() {
                 println!(
                     "{}쪽  {}  {}×{}px → 쪽 {:.1}×{:.1}pt{}{}",

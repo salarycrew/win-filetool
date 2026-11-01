@@ -39,6 +39,27 @@ pub struct Img2PdfOpts {
     /// 여백(mm)
     #[serde(default)]
     pub margin_mm: f64,
+    /// 0.3.2 "사진을 PDF 하나로": 용량을 알맞게 — 찍히는 크기에서 200 DPI보다 큰 사진은 줄이고,
+    /// 사진 같은 PNG·WEBP·HEIC는 무손실 대신 JPEG(품질 85)로 넣는다. 끄면(기본) 예전처럼 원본 그대로.
+    #[serde(default)]
+    pub compact: bool,
+}
+
+/// compact일 때 찍히는 크기 기준 최대 DPI
+pub const COMPACT_DPI: f64 = 200.0;
+
+/// 사진처럼 색이 많은 그림인지(표본 64×64에서 서로 다른 색 1024개 이상). 화면 갈무리·도표는 무손실이 더 작고 선명하다.
+pub fn looks_photographic(img: &DynamicImage) -> bool {
+    let (w, h) = (img.width().max(1), img.height().max(1));
+    let rgb = img.to_rgb8();
+    let mut seen = std::collections::HashSet::new();
+    for j in 0..64u32 {
+        for i in 0..64u32 {
+            let p = rgb.get_pixel(i * w / 64, j * h / 64);
+            seen.insert((p[0] >> 2, p[1] >> 2, p[2] >> 2));
+        }
+    }
+    seen.len() >= 1024
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -160,6 +181,8 @@ fn load_one(ffmpeg: Option<&Path>, path: &Path, cancel: Option<&Cancel>) -> Resu
     Ok(Embedded::Pixels(img, false))
 }
 
+const JPEG_Q: u8 = 88;
+
 fn add_pixels(doc: &mut Document, img: &DynamicImage, as_jpeg: bool) -> Result<lopdf::ObjectId> {
     let (w, h) = (img.width(), img.height());
     let gray = matches!(img.color(), image::ColorType::L8 | image::ColorType::La8 | image::ColorType::L16 | image::ColorType::La16);
@@ -185,7 +208,7 @@ fn add_pixels(doc: &mut Document, img: &DynamicImage, as_jpeg: bool) -> Result<l
     }
     let stream = if as_jpeg {
         let mut buf = Vec::new();
-        let enc = image::codecs::jpeg::JpegEncoder::new_with_quality(&mut buf, 92);
+        let enc = image::codecs::jpeg::JpegEncoder::new_with_quality(&mut buf, JPEG_Q);
         let ct = if gray { image::ExtendedColorType::L8 } else { image::ExtendedColorType::Rgb8 };
         enc.write_image(&raw, w, h, ct).map_err(|e| Error::Invalid(e.to_string()))?;
         dict.set("Filter", "DCTDecode");
@@ -196,6 +219,34 @@ fn add_pixels(doc: &mut Document, img: &DynamicImage, as_jpeg: bool) -> Result<l
         s
     };
     Ok(doc.add_object(stream))
+}
+
+/// compact: 찍히는 크기에서 200 DPI를 넘는 사진은 줄이고, 사진 같은 무손실 그림은 JPEG로
+fn compact(emb: Embedded, opts: &Img2PdfOpts, path: &Path) -> Result<Embedded> {
+    let (vw, vh) = match &emb {
+        Embedded::Jpeg(_, w, h, _, o) => if (5..=8).contains(o) { (*h, *w) } else { (*w, *h) },
+        Embedded::Pixels(img, _) => (img.width(), img.height()),
+    };
+    let (_, _, _, _, dw, dh) = layout(opts.page, opts.margin_mm, vw, vh);
+    let max_w = (dw / 72.0 * COMPACT_DPI).ceil() as u32;
+    let max_h = (dh / 72.0 * COMPACT_DPI).ceil() as u32;
+    // "사진 크기 그대로"는 쪽이 사진 크기라 줄일 일이 없다(96 DPI 기준) — 형식만 본다
+    let too_big = opts.page != PageSize::Image && (vw as f64 > max_w as f64 * 1.15 || vh as f64 > max_h as f64 * 1.15);
+    Ok(match emb {
+        Embedded::Jpeg(bytes, w, h, comps, o) => {
+            if !too_big {
+                Embedded::Jpeg(bytes, w, h, comps, o)
+            } else {
+                let (img, _) = imageconv::decode(&bytes, path)?; // 회전을 적용해 풀어 줌
+                Embedded::Pixels(img.resize(max_w, max_h, image::imageops::FilterType::Lanczos3), true)
+            }
+        }
+        Embedded::Pixels(img, as_jpeg) => {
+            let img = if too_big { img.resize(max_w, max_h, image::imageops::FilterType::Lanczos3) } else { img };
+            let photo = !img.color().has_alpha() && (as_jpeg || looks_photographic(&img));
+            Embedded::Pixels(img, photo)
+        }
+    })
 }
 
 /// 기본 출력 이름: 한 장이면 `이름.pdf`, 여러 장이면 `첫이름_외N장.pdf`
@@ -227,7 +278,10 @@ pub fn images_to_pdf(
         if let Some(c) = cancel {
             c.check()?;
         }
-        let emb = load_one(ffmpeg, path, cancel)?;
+        let mut emb = load_one(ffmpeg, path, cancel)?;
+        if opts.compact {
+            emb = compact(emb, opts, path)?;
+        }
         let (img_id, px_w, px_h, orientation, pass) = match emb {
             Embedded::Jpeg(bytes, w, h, comps, o) => {
                 let cs = if comps == 1 { "DeviceGray" } else { "DeviceRGB" };

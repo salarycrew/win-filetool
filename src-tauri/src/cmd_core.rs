@@ -9,18 +9,14 @@
 //! - `ui_ready`: 첫 화면이 그려진 시각(시작 시간 재기, `WIN_FILETOOL_STARTUP_LOG`가 있을 때만 파일에 적음).
 
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
-use filetool_core::convert::{self, Op};
+use filetool_core::corejobs::{self, NfcFix, PhotoItem};
 use filetool_core::ctxmenu::{self, Collector, CtxBatch, CtxStatus};
-use filetool_core::imageconv::{ImageOpts, ImgFormat};
-use filetool_core::nfc;
 use filetool_core::pdfcompress::{self, CompressOut};
 use filetool_core::pdfedit::plan::{self, EditPlan};
 use filetool_core::pdfedit::{EditOut, Job};
-use filetool_core::Error;
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, State};
 
@@ -78,124 +74,25 @@ pub async fn pdf_merge_plan(app: AppHandle, state: State<'_, AppState>, job: u64
 
 // ---------- 사진 용량 줄이기·JPG로 ----------
 
-#[derive(Debug, Clone, Serialize)]
-pub struct PhotoItem {
-    input: PathBuf,
-    output: Option<PathBuf>,
-    before: u64,
-    after: u64,
-    note: Option<String>,
-    error: Option<String>,
-    /// 원본보다 커져서 새 파일을 만들지 않음
-    unchanged: bool,
-}
-
-fn len(p: &Path) -> u64 {
-    std::fs::metadata(p).map(|m| m.len()).unwrap_or(0)
-}
-
-fn shrink_one(ts: &filetool_core::tools::Toolset, src: &Path, opts: &ImageOpts, out_dir: Option<&Path>, cancel: &filetool_core::process::Cancel) -> PhotoItem {
-    let before = len(src);
-    let op = Op::Image(opts.clone());
-    match convert::convert_file(ts, src, out_dir, &op, Some(cancel), &mut |_| {}) {
-        Ok(o) => {
-            let after = len(&o.output);
-            let is_jpg = src.extension().and_then(|e| e.to_str()).map(|e| matches!(e.to_ascii_lowercase().as_str(), "jpg" | "jpeg" | "jfif")).unwrap_or(false);
-            if is_jpg && after >= before {
-                let _ = std::fs::remove_file(&o.output);
-                return PhotoItem { input: src.into(), output: None, before, after: before, note: Some("이미 작아서 그대로 두었어요".into()), error: None, unchanged: true };
-            }
-            PhotoItem { input: src.into(), output: Some(o.output), before, after, note: None, error: None, unchanged: false }
-        }
-        Err(e) => PhotoItem { input: src.into(), output: None, before, after: 0, note: None, error: Some(e.to_string()), unchanged: false },
-    }
-}
-
 #[tauri::command]
 pub async fn photo_shrink(app: AppHandle, state: State<'_, AppState>, job: u64, paths: Vec<String>, max_side: Option<u32>, quality: Option<u8>, out_dir: Option<String>) -> R<Vec<PhotoItem>> {
     let d = dir(&out_dir);
     let ts = state.toolset();
     job_work(app, &state, Some(job), move |cancel, emit| {
-        let opts = ImageOpts { format: ImgFormat::Jpg, quality: quality.unwrap_or(85).clamp(40, 95), max_side: max_side.filter(|m| *m >= 320), keep_exif: true };
-        let n = paths.len();
-        let results: Vec<Mutex<Option<PhotoItem>>> = (0..n).map(|_| Mutex::new(None)).collect();
-        let next = AtomicUsize::new(0);
-        let done = AtomicUsize::new(0);
-        let workers = std::thread::available_parallelism().map(|v| v.get()).unwrap_or(2).clamp(1, 4).min(n.max(1));
-        let (tx, rx) = std::sync::mpsc::channel::<String>();
-        std::thread::scope(|s| {
-            for _ in 0..workers {
-                let tx = tx.clone();
-                let (ts, opts, d, paths, results, next, done) = (&ts, &opts, &d, &paths, &results, &next, &done);
-                s.spawn(move || loop {
-                    if cancel.is_cancelled() {
-                        break;
-                    }
-                    let i = next.fetch_add(1, Ordering::SeqCst);
-                    if i >= n {
-                        break;
-                    }
-                    let it = shrink_one(ts, Path::new(&paths[i]), opts, d.as_deref(), cancel);
-                    *results[i].lock().unwrap() = Some(it);
-                    done.fetch_add(1, Ordering::SeqCst);
-                    let _ = tx.send(paths[i].clone());
-                });
-            }
-            drop(tx);
-            for cur in rx {
-                emit.send(done.load(Ordering::SeqCst) as f64, n as f64, &cur);
-            }
-        });
-        if cancel.is_cancelled() {
-            // 멈추면 이번에 만든 파일은 지운다(원본은 건드리지 않음)
-            for r in &results {
-                if let Some(PhotoItem { output: Some(o), .. }) = r.lock().unwrap().as_ref() {
-                    let _ = std::fs::remove_file(o);
-                }
-            }
-            return Err(Error::Cancelled);
-        }
-        Ok(results.into_iter().filter_map(|m| m.into_inner().unwrap()).collect())
+        let opts = corejobs::photo_opts(max_side, quality);
+        let paths: Vec<PathBuf> = paths.into_iter().map(PathBuf::from).collect();
+        corejobs::photo_shrink(&ts, &paths, &opts, d.as_deref(), cancel, &mut |done, n, cur| emit.send(done as f64, n as f64, &cur.to_string_lossy()))
     })
     .await
 }
 
 // ---------- 맥에서 온 이름 고치기(고른 파일·폴더 이름 자체) ----------
 
-#[derive(Debug, Clone, Serialize)]
-pub struct NfcFix {
-    from: PathBuf,
-    to: Option<PathBuf>,
-    note: Option<String>,
-}
-
 #[tauri::command]
 pub async fn nfc_fix_paths(paths: Vec<String>) -> R<Vec<NfcFix>> {
-    tauri::async_runtime::spawn_blocking(move || {
-        paths
-            .into_iter()
-            .map(|p| {
-                let from = PathBuf::from(&p);
-                let Some(name) = from.file_name().map(|n| n.to_string_lossy().into_owned()) else {
-                    return NfcFix { from, to: None, note: Some("이름이 없어요".into()) };
-                };
-                let fixed = nfc::to_nfc(&name);
-                if fixed == name {
-                    return NfcFix { from, to: None, note: None };
-                }
-                let to = from.with_file_name(&fixed);
-                if to.exists() {
-                    return NfcFix { from, to: None, note: Some(format!("같은 이름({fixed})이 이미 있어 건너뛰었어요")) };
-                }
-                match std::fs::rename(&from, &to) {
-                    Ok(()) => NfcFix { from, to: Some(to), note: None },
-                    Err(e) => NfcFix { from, to: None, note: Some(format!("바꾸지 못했어요: {e}")) },
-                }
-            })
-            .collect()
-    })
-    .await
-    .map_err(|e| CmdError { code: "error", message: format!("작업 스레드 오류: {e}") })
+    tauri::async_runtime::spawn_blocking(move || paths.iter().map(|p| corejobs::nfc_fix_path(Path::new(p))).collect())
+        .await
+        .map_err(|e| CmdError { code: "error", message: format!("작업 스레드 오류: {e}") })
 }
 
 // ---------- 우클릭 메뉴 ----------
