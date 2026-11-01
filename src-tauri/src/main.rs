@@ -17,6 +17,7 @@ mod cmd_pdfedit;
 mod cmd_office;
 mod cmd_tools;
 mod cmd_hwp;
+mod cmd_ui;
 mod icons;
 mod remote;
 
@@ -1213,7 +1214,11 @@ fn main() {
             cmd_tools::rename_apply,
             cmd_tools::rename_undo,
             cmd_tools::dup_scan,
-            cmd_tools::dup_trash
+            cmd_tools::dup_trash,
+            // 0.3.0 화면(W5) 읽기 전용 도우미
+            cmd_ui::file_stats,
+            cmd_ui::list_files,
+            cmd_ui::image_data_url
         ])
         .build(tauri::generate_context!())
         .expect("파일 도구를 시작하지 못했습니다")
