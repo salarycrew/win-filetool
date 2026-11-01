@@ -124,11 +124,15 @@ pub struct CtxQueue(pub Mutex<Collector>);
 impl CtxQueue {
     pub fn push_args<I: IntoIterator<Item = S>, S: AsRef<str>>(&self, args: I) -> bool {
         match ctxmenu::parse_args(args) {
-            Some((job, files)) if !files.is_empty() => {
-                self.0.lock().unwrap().push(job, files, Instant::now());
+            Some((job, files)) => {
+                // `--` 뒤 인자는 경로로만 보고, 없는 경로는 버린다(보안)
+                let files = ctxmenu::existing_paths(files);
+                if !files.is_empty() {
+                    self.0.lock().unwrap().push(job, files, Instant::now());
+                }
                 true
             }
-            _ => false,
+            None => false,
         }
     }
 }

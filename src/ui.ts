@@ -49,8 +49,8 @@ export function bindSegs(root: HTMLElement, onChange?: (name: string, v: string)
 export function chk(id: string, label: string, on: boolean, extra = ""): string {
   return `<label class="chk"><input type="checkbox" id="${esc(id)}" ${on ? "checked" : ""} ${extra}><span class="box">${I("check")}</span><span>${label}</span></label>`;
 }
-export function toggle(id: string, on: boolean, label = ""): string {
-  return `<label class="tg"><span class="tg-l">${esc(label)}</span><input type="checkbox" role="switch" id="${esc(id)}" ${on ? "checked" : ""}><i></i></label>`;
+export function toggle(id: string, on: boolean, label = "", aria = ""): string {
+  return `<label class="tg"><span class="tg-l">${esc(label)}</span><input type="checkbox" role="switch" id="${esc(id)}" ${aria ? `aria-label="${esc(aria)}"` : ""} ${on ? "checked" : ""}><i></i></label>`;
 }
 export function opt(label: string, control: string, help = ""): string {
   // 입력 칸에 이름 붙이기(화면 읽기·자동화): 이름이 없는 첫 입력에 aria-label

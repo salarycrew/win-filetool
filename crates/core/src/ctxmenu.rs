@@ -2,7 +2,10 @@
 //!
 //! 관리자 권한·코드 서명 없이 되는 **고전 메뉴**를 쓴다: `HKCU\Software\Classes\SystemFileAssociations\.<확장자>\shell\WinFileTool`
 //! (폴더는 `HKCU\Software\Classes\Directory\shell\WinFileTool`)에 `MUIVerb`·`SubCommands=""`를 두고, 그 아래 `shell\<할 일>\command`에
-//! `"<exe>" --ctx=<할 일> "%1"`을 적는다. 확장자마다 맞는 할 일만 넣으므로 PDF를 고르면 PDF 일만 나온다.
+//! `"<exe>" --ctx=<할 일> -- "%1"`을 적는다. 확장자마다 맞는 할 일만 넣으므로 PDF를 고르면 PDF 일만 나온다.
+//!
+//! 보안: exe 경로와 `%1`은 따옴표로 감싸고, `--` 뒤에 오는 인자는 **모두 파일 경로로만** 본다(옵션으로 읽지 않음).
+//! 절대 경로가 아니거나 없는 경로는 버린다. 셸(cmd)을 거치지 않고, 키는 HKCU 아래에만 만든다.
 //!
 //! Windows 11 첫 메뉴(“더 많은 옵션 표시”를 누르기 전)에 올리려면 `IExplorerCommand`를 구현한 COM 서버를
 //! **패키지 ID**(MSIX 또는 서명한 sparse package)와 함께 등록해야 한다. 서명 인증서 없이는 패키지를 설치할 수 없어
@@ -76,9 +79,9 @@ pub fn spots() -> Vec<MenuSpot> {
     v
 }
 
-/// 하위 명령 줄: `"C:\…\win-filetool.exe" --ctx=merge "%1"`
+/// 하위 명령 줄: `"C:\…\win-filetool.exe" --ctx=merge -- "%1"`
 pub fn command_line(exe: &Path, job: &str) -> String {
-    format!("\"{}\" {CTX_ARG}{job} \"%1\"", exe.display())
+    format!("\"{}\" {CTX_ARG}{job} -- \"%1\"", exe.display())
 }
 
 /// 명령 줄에서 exe 경로 꺼내기
@@ -86,21 +89,23 @@ pub fn exe_of_command(v: &str) -> Option<String> {
     crate::autostart::exe_of_value(v)
 }
 
-/// 인자에서 우클릭 할 일과 파일들(`--ctx=<할 일>` 뒤의 나머지 인자). 알 수 없는 할 일이면 None.
+/// 인자에서 우클릭 할 일과 파일들: `--ctx=<할 일>` 다음 `--`, 그 뒤 인자는 모두 경로(옵션으로 읽지 않음).
+/// 할 일을 모르거나 `--`가 없으면 None. 경로가 실제로 있는지는 [`existing_paths`]로 따로 거른다.
 pub fn parse_args<I: IntoIterator<Item = S>, S: AsRef<str>>(args: I) -> Option<(String, Vec<String>)> {
-    let mut job: Option<String> = None;
-    let mut files = Vec::new();
-    for a in args.into_iter().skip(1) {
-        let a = a.as_ref();
-        if let Some(j) = a.strip_prefix(CTX_ARG) {
-            if JOBS.iter().any(|(id, _)| *id == j) {
-                job = Some(j.to_string());
-            }
-        } else if job.is_some() && !a.starts_with("--") && !a.is_empty() {
-            files.push(a.to_string());
-        }
+    let args: Vec<String> = args.into_iter().skip(1).map(|a| a.as_ref().to_string()).collect();
+    let ci = args.iter().position(|a| a.starts_with(CTX_ARG))?;
+    let job = args[ci].strip_prefix(CTX_ARG)?.to_string();
+    if !JOBS.iter().any(|(id, _)| *id == job) {
+        return None;
     }
-    job.map(|j| (j, files))
+    let sep = args.iter().skip(ci + 1).position(|a| a == "--")? + ci + 1;
+    let files = args[sep + 1..].iter().filter(|a| !a.is_empty()).cloned().collect();
+    Some((job, files))
+}
+
+/// 절대 경로이고 실제로 있는 것만(없는 경로·상대 경로·이상한 인자는 버림)
+pub fn existing_paths(files: Vec<String>) -> Vec<String> {
+    files.into_iter().filter(|f| { let p = Path::new(f); p.is_absolute() && p.exists() }).collect()
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -310,7 +315,7 @@ mod tests {
     fn command_and_args_roundtrip() {
         let exe = Path::new(r"C:\Users\u\AppData\Local\파일 도구\win-filetool.exe");
         let c = command_line(exe, "merge");
-        assert_eq!(c, "\"C:\\Users\\u\\AppData\\Local\\파일 도구\\win-filetool.exe\" --ctx=merge \"%1\"");
+        assert_eq!(c, "\"C:\\Users\\u\\AppData\\Local\\파일 도구\\win-filetool.exe\" --ctx=merge -- \"%1\"");
         assert_eq!(exe_of_command(&c).as_deref(), Some(r"C:\Users\u\AppData\Local\파일 도구\win-filetool.exe"));
         let st = status_from(Some(c.clone()), exe);
         assert!(st.enabled && st.matches_exe);
@@ -318,11 +323,29 @@ mod tests {
         assert!(moved.enabled && !moved.matches_exe);
         assert!(!status_from(None, exe).enabled);
         assert_eq!(
-            parse_args(["app.exe", "--ctx=merge", r"C:\a b\1.pdf"]),
+            parse_args(["app.exe", "--ctx=merge", "--", r"C:\a b\1.pdf"]),
             Some(("merge".to_string(), vec![r"C:\a b\1.pdf".to_string()]))
         );
-        assert_eq!(parse_args(["app.exe", "--ctx=nope", "x"]), None);
+        // `--` 뒤는 옵션처럼 보여도 경로로만
+        assert_eq!(
+            parse_args(["app.exe", "--ctx=photo", "--", "--autostart", "-x.jpg", "--tab=search"]),
+            Some(("photo".to_string(), vec!["--autostart".to_string(), "-x.jpg".to_string(), "--tab=search".to_string()]))
+        );
+        assert_eq!(parse_args(["app.exe", "--ctx=merge", r"C:\1.pdf"]), None, "구분자 없으면 받지 않음");
+        assert!(!crate::autostart::is_autostart_launch(["app.exe", "--ctx=photo", "--", "--autostart"]), "경로를 옵션으로 읽지 않음");
+        assert!(crate::autostart::is_autostart_launch(["app.exe", "--autostart"]));
+        assert_eq!(parse_args(["app.exe", "--ctx=nope", "--", "x"]), None);
         assert_eq!(parse_args(["app.exe", "--autostart"]), None);
+    }
+
+    #[test]
+    fn only_existing_absolute_paths() {
+        let t = tempfile::tempdir().unwrap();
+        let odd = t.path().join("-가 & 나 '다' 100% ^라! .pdf");
+        std::fs::write(&odd, b"%PDF").unwrap();
+        let ok = odd.to_string_lossy().into_owned();
+        let got = existing_paths(vec![ok.clone(), "--autostart".into(), "relative.pdf".into(), t.path().join("없음.pdf").to_string_lossy().into_owned(), String::new()]);
+        assert_eq!(got, vec![ok]);
     }
 
     #[test]

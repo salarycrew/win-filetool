@@ -27,8 +27,9 @@ pub fn exe_of_value(v: &str) -> Option<String> {
     }
 }
 
+/// `--autostart`로 시작했는지. 0.3.2: `--` 뒤(우클릭 메뉴가 넘긴 파일 경로)는 옵션으로 보지 않는다.
 pub fn is_autostart_launch<I: IntoIterator<Item = S>, S: AsRef<str>>(args: I) -> bool {
-    args.into_iter().any(|a| a.as_ref() == AUTOSTART_ARG)
+    args.into_iter().take_while(|a| a.as_ref() != "--").any(|a| a.as_ref() == AUTOSTART_ARG)
 }
 
 #[derive(Debug, Clone, Serialize)]

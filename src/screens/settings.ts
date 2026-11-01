@@ -32,7 +32,7 @@ function render() {
     <div class="sc"><span class="sc-ic">${I("contrast")}</span><div class="sc-t"><b>테마</b><span>밝게·어둡게. “시스템”은 Windows 설정을 따라가요</span></div>
       ${seg("theme", [["system", "시스템"], ["light", "밝게"], ["dark", "어둡게"]], themePref(), "테마")}</div>
     <div class="sc ctx-sc"><span class="sc-ic">${I("grid")}</span><div class="sc-t"><b>우클릭 메뉴</b><span class="ctx-state">확인하는 중…</span></div>
-      <button type="button" class="btn accent" data-act="ctx-relink" hidden>${I("refresh")}다시 연결</button>${toggle("ctxmenu", false, "")}</div>
+      <button type="button" class="btn accent" data-act="ctx-relink" hidden>${I("refresh")}다시 연결</button>${toggle("ctxmenu", false, "", "우클릭 메뉴")}</div>
     <div class="sc"><span class="sc-ic">${I("power")}</span><div class="sc-t"><b>윈도우 시작 시 실행</b><span class="as-state">확인하는 중…</span></div>${toggle("autostart", false, "")}</div>
     <div class="sc svc"><span class="sc-ic">${I("bolt")}</span><div class="sc-t"><b>빠른 검색 서비스</b><span class="svc-state">확인하는 중…</span></div>
       <span class="state off svc-chip"><i></i>…</span><button type="button" class="btn accent svc-up" data-svc="update" aria-label="빠른 검색 서비스 다시 설치(갱신)" title="빠른 검색 서비스 다시 설치(갱신)" hidden>${I("refresh")}다시 설치(갱신)</button><button type="button" class="btn svc-btn" disabled>…</button></div>

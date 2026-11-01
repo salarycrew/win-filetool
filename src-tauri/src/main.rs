@@ -925,7 +925,7 @@ fn restore_geometry(app: &tauri::App, g: WindowGeom) {
 /// 시작할 때 검색 칸에 넣을 질의(`--search=…`, 화면 점검용)
 #[tauri::command]
 fn startup_query() -> Option<String> {
-    std::env::args().find_map(|a| a.strip_prefix("--search=").map(str::to_string))
+    own_args().find_map(|a| a.strip_prefix("--search=").map(str::to_string))
 }
 
 /// 검색 탭을 앞으로(트레이·단축키)
@@ -1017,7 +1017,7 @@ fn launched_by_autostart() -> bool {
 /// 시작 탭(`--tab=image` 같은 인자, 화면 점검용)
 #[tauri::command]
 fn startup_tab() -> Option<String> {
-    std::env::args().find_map(|a| a.strip_prefix("--tab=").map(str::to_string))
+    own_args().find_map(|a| a.strip_prefix("--tab=").map(str::to_string))
 }
 
 /// 앱이 열려 있는 동안 2초마다 켜진 규칙을 살핀다.
@@ -1062,10 +1062,15 @@ fn start_watch_thread(app: AppHandle) {
     });
 }
 
+/// 앱 자신의 옵션 인자: `--`(우클릭 메뉴가 넘긴 파일 경로의 시작) 앞까지만. 경로를 옵션으로 읽지 않는다.
+fn own_args() -> impl Iterator<Item = String> {
+    std::env::args().take_while(|a| a != "--")
+}
+
 /// 0.3.2 설치 파일이 부르는 `--ctx-menu=install|remove`: 창 없이 우클릭 메뉴만 등록·제거하고 끝낸다.
 /// install은 사용자가 [설정]에서 끈 적이 있으면(`context_menu_off`) 다시 켜지 않는다.
 fn ctx_menu_cli() -> Option<i32> {
-    let mode = std::env::args().find_map(|a| a.strip_prefix("--ctx-menu=").map(str::to_string))?;
+    let mode = own_args().find_map(|a| a.strip_prefix("--ctx-menu=").map(str::to_string))?;
     let exe = std::env::current_exe().ok()?;
     let code = match mode.as_str() {
         "install" => {
@@ -1094,7 +1099,7 @@ fn forward_ctx_fast() -> bool {
         cb_data: u32,
         lp_data: *const u8,
     }
-    if !std::env::args().any(|a| a.starts_with(filetool_core::ctxmenu::CTX_ARG)) {
+    if !own_args().any(|a| a.starts_with(filetool_core::ctxmenu::CTX_ARG)) {
         return false;
     }
     let wide = |s: &str| s.encode_utf16().chain(Some(0)).collect::<Vec<u16>>();

@@ -982,3 +982,35 @@ Word → PPT(`doc_to_pptx`)는 한글이면 `hwp::convert(… Docx)`로 docx를 
 그림 뽑기(항목별 압축, OLE·링크·그림 아님·없는 데이터, 같은 그림, WMF), 크기·개수·합계 한도와 압축 폭탄, 경로 빠져나가기, 보안 모듈 DLL 구조.
 `tests/hwp_030.rs`는 LibreOffice 시험 자료의 한글 97 파일(MPL-2.0, `tests/data/030/hwp/README.md`)로 LO 길을 확인한다(LO가 있을 때 변환까지).
 정부 배포 실제 문서(HWP 4 + HWPX 2)는 저장소에 넣지 않고 Windows 시험 PC에서 CLI(`hwp-info`, `hwp-convert`, `doc-to-pptx`, `hwp-images`)로 점검했다.
+
+## 0.3.2 핵심 6개 + 우클릭 메뉴
+
+방향: "잡다한 기능은 필요 없다. 진짜 필요한데 간단하고 확실한 기능을." 새 기능 영역은 넣지 않고, 자주 쓰는 6가지를 첫 화면에 두고 나머지는 [더 보기]로 옮겼다(지운 것 없음).
+
+- **화면**: 왼쪽 메뉴는 홈 · 더 보기 · 설정. 홈 = 큰 단추 6개 + 끌어다 놓기(놓은 파일 종류에 맞는 일을 `src/screens/core.ts` `suggest()`가 고름).
+  할 일 화면은 하나(`src/screens/job.ts`)를 6가지가 같이 쓴다: 파일 목록 → 설정 한두 개 → 실행 → 한 줄 요약(`summary()`, "10개 중 9개 완료, 1개는 암호가 걸려 있어요") + [폴더 열기].
+  예전 화면(변환·PDF 편집·파일 정리·검색·감시 폴더·앱 정보)은 [더 보기]에서 그대로 연다.
+- **PDF 용량 줄이기(목표 크기)**: `pdfcompress::compress_to_target`. 단계표 `TARGET_LADDER`(150dpi·품질 75 → 50dpi·품질 30)를 차례로 해 보고,
+  목표의 2배를 넘으면 두 단계씩 건너뛴다. 목표는 10진 MB(공공기관 "5MB 이하" = 5,000,000바이트로 보는 편이 안전). 글자·선은 건드리지 않는다.
+  끝까지 안 되면 가장 작은 결과를 남기고 `reached=false`로 얼마까지 줄었는지 알린다. 원본이 이미 목표 이하면 새 파일을 만들지 않는다.
+- **사진 → PDF(compact)**: `Img2PdfOpts.compact`. A4에서는 찍히는 크기 기준 200 DPI를 넘는 사진을 줄이고, 사진 같은(표본 64×64에서 색 1024개 이상) PNG·WEBP는 JPEG로 넣는다.
+  색이 적은 화면 갈무리·도표는 무손실 그대로. 예전 화면(변환 > PDF 하나로)은 compact를 끈 채 예전과 같다.
+- **사진 줄이기·JPG로**: `corejobs::photo_shrink`(앱·점검 CLI 공용). 4장씩 동시에, 원본이 JPG이고 결과가 더 크면 버리고 "그대로". 멈추면 만든 파일을 지운다.
+
+### 우클릭 메뉴(`crates/core/src/ctxmenu.rs`)
+
+- 고전 메뉴(정적 동사, 레지스트리)만 쓴다: `HKCU\Software\Classes\SystemFileAssociations\.<확장자>\shell\WinFileTool`(폴더는 `Directory\shell\WinFileTool`)에
+  `MUIVerb=파일도구`, `SubCommands=""`, 아래 `shell\<n><할 일>\command` = `"<exe>" --ctx=<할 일> -- "%1"`, `MultiSelectModel=Player`(15개 제한 없음).
+  HKCU만 쓰므로 관리자 권한이 필요 없다. 바꾼 뒤 `SHChangeNotify(SHCNE_ASSOCCHANGED)`.
+- **Windows 11 첫 메뉴에 올릴 수 있나**: Windows 11의 새 메뉴는 `IExplorerCommand`를 구현한 COM 서버가 **패키지 ID**를 가진 앱(MSIX, 또는 외부 위치 sparse package)에
+  `desktop4:FileExplorerContextMenus`로 선언돼 있어야 보인다. 패키지는 서명돼 있어야 설치되고(자체 서명이면 사용자가 인증서를 신뢰 저장소에 넣어야 함 — 관리자 권한),
+  레지스트리만으로 첫 메뉴에 넣는 공식 방법은 없다. 서명 인증서가 없는 이 앱은 고전 메뉴만 쓰고, Windows 11에서는 "더 많은 옵션 표시"(Shift+F10·Shift+우클릭) 안에 나온다.
+  나중에 코드 서명을 하게 되면 sparse package + `IExplorerCommand` DLL로 첫 메뉴를 더할 수 있다(고전 메뉴는 그대로 둠).
+- **여러 파일**: 고전 메뉴는 고른 파일마다 exe를 한 번씩 실행한다. 앞에 떠 있는 앱이 있으면 새 프로세스는 Tauri를 띄우기 전에 single-instance 플러그인과 같은
+  WM_COPYDATA(창 클래스 `kr.salarycrew.winfiletool-sic`)로 인자만 넘기고 바로 끝난다(`forward_ctx_fast`). 받는 쪽은 `Collector`에 모았다가
+  마지막 인자가 온 뒤 0.7초 조용하면 한 묶음으로 화면에 넘긴다(`ctx_take`, 이벤트 `ctx-ready`). 늦게 온 것은 같은 할 일 화면에 이어 붙인다.
+- **보안**: exe 경로와 `%1`은 따옴표로 감싼다. `--` 뒤 인자는 모두 경로로만 보고(옵션으로 읽지 않음 — `--autostart`·`--tab=` 같은 글자가 파일 이름이어도),
+  절대 경로가 아니거나 없는 경로는 버린다. 셸(cmd)을 거치지 않는다.
+- **켜고 끄기**: 상태는 레지스트리 자체(앱·설치 파일이 같은 값을 봄). 설치본은 설치 파일이 `win-filetool.exe --ctx-menu=install`로 켜고(사용자가 끈 적이 있으면
+  `settings.json`의 `context_menu_off`를 보고 그대로 둠), 지울 때 `--ctx-menu=remove` + NSIS `DeleteRegKey`로 지운다. 휴대용은 기본 꺼짐, [설정]에서 켠다.
+  등록된 exe가 지금 exe와 다르면(휴대용을 옮김) [다시 연결]을 보여 준다.
