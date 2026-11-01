@@ -31,6 +31,11 @@ pub enum Error {
     Image { path: PathBuf, message: String },
     #[error("이 파일 형식은 이 작업에 쓸 수 없습니다: {0}")]
     Unsupported(String),
+    /// 0.3.0 PDF 편집: 암호를 넣어 다시 시도하면 되는 경우(화면이 암호 입력 칸을 띄움)
+    #[error("암호가 걸린 PDF입니다. 암호를 넣어 주세요 ({})", .0.display())]
+    PasswordRequired(PathBuf),
+    #[error("암호가 맞지 않습니다. 다시 넣어 주세요 ({})", .0.display())]
+    WrongPassword(PathBuf),
 }
 
 pub type Result<T> = std::result::Result<T, Error>;

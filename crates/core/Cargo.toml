@@ -12,6 +12,11 @@ encoding_rs = "0.8.44"
 image = { version = "0.25.10", default-features = false, features = ["jpeg", "png", "webp", "bmp", "tiff", "gif"] }
 libwebp-sys = { version = "0.9.6", features = ["sse41"] }
 lopdf = { version = "0.46.0", default-features = false }
+# 0.3.0 PDF 편집: 암호 걸기용 무작위 키(AES-256 파일 키)
+getrandom = "0.4.3"
+# 0.3.0 PDF 편집: 한글 글꼴 부분 넣기(시스템 맑은 고딕 등 TrueType)
+subsetter = "0.2.6"
+ttf-parser = "0.25.1"
 memchr = "2.8.3"
 # PDF → 이미지: PDFium을 실행 중에 불러온다(pdfium.dll은 exe 옆, scripts/fetch-pdfium.sh)
 pdfium-render = { version = "0.9.4", default-features = false, features = ["pdfium_latest", "image_latest", "thread_safe"] }

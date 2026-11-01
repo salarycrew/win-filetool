@@ -38,7 +38,7 @@ pub fn page_count(path: &Path) -> Result<u32> {
     Ok(load(path)?.get_pages().len() as u32)
 }
 
-fn pages_root(doc: &Document, path: &Path) -> Result<ObjectId> {
+pub(crate) fn pages_root(doc: &Document, path: &Path) -> Result<ObjectId> {
     doc.catalog()
         .and_then(|c| c.get(b"Pages"))
         .and_then(Object::as_reference)
@@ -47,7 +47,7 @@ fn pages_root(doc: &Document, path: &Path) -> Result<ObjectId> {
 
 /// 상속 속성을 페이지로 내려 복사하고, 모든 페이지를 루트 `/Pages` 바로 아래에 둔다.
 /// 페이지 id 목록(원래 순서)을 돌려준다.
-fn flatten(doc: &mut Document, path: &Path) -> Result<(ObjectId, Vec<ObjectId>)> {
+pub(crate) fn flatten(doc: &mut Document, path: &Path) -> Result<(ObjectId, Vec<ObjectId>)> {
     let root = pages_root(doc, path)?;
     let page_ids: Vec<ObjectId> = doc.get_pages().into_values().collect();
     for &pid in &page_ids {
@@ -82,7 +82,7 @@ fn flatten(doc: &mut Document, path: &Path) -> Result<(ObjectId, Vec<ObjectId>)>
     Ok((root, page_ids))
 }
 
-fn set_kids(doc: &mut Document, root: ObjectId, kids: &[ObjectId], path: &Path) -> Result<()> {
+pub(crate) fn set_kids(doc: &mut Document, root: ObjectId, kids: &[ObjectId], path: &Path) -> Result<()> {
     let node = doc.get_dictionary_mut(root).map_err(pdf_err(path))?;
     node.set("Kids", Object::Array(kids.iter().map(|&id| Object::Reference(id)).collect()));
     node.set("Count", Object::Integer(kids.len() as i64));
