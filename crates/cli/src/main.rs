@@ -10,6 +10,7 @@ use filetool_core::{nfc, paths, zipnfc, Result};
 
 mod conv;
 mod pdf1c;
+mod runtime030;
 mod search2a;
 mod selftest1b;
 mod selftest1c;
@@ -46,7 +47,7 @@ const USAGE: &str = "사용법:
   filetool-cli svc-watch <질의> [--seconds 30] [--interval-ms 100]   서비스 결과가 바뀔 때마다 시각과 함께 출력
   filetool-cli search-live [루트...] --query <질의> [--seconds 60] [--source auto|walk] [--index-dir 폴더]   앱과 같은 검색 서비스(실시간 갱신)를 돌리며 결과 변화를 출력
   filetool-cli selftest <빈 폴더> [--apple <Pages·Numbers·Keynote 샘플 폴더>] [--only 2a]   샘플을 만들어 모든 작업을 점검
-공통 옵션: --ffmpeg <경로> --soffice <경로>  (없으면 앱 설정 → PATH → 설치 폴더 순으로 찾음)";
+공통 옵션: --ffmpeg <경로> --soffice <경로>  (주면 그 경로를 먼저, 없으면 앱에 든 도구 → 앱 설정 → PATH → 설치 폴더 순으로 찾음)";
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -74,6 +75,9 @@ fn run(args: &[String]) -> Result<ExitCode> {
     if matches!(cmd, "--version" | "-V") {
         println!("filetool-cli {}", env!("CARGO_PKG_VERSION"));
         return Ok(ExitCode::SUCCESS);
+    }
+    if let Some(code) = runtime030::run(cmd, args)? {
+        return Ok(code);
     }
     if let Some(code) = conv::run(cmd, args)? {
         return Ok(code);
@@ -178,7 +182,7 @@ fn run(args: &[String]) -> Result<ExitCode> {
             return Ok(if all { ExitCode::SUCCESS } else { ExitCode::from(1) });
         }
         _ => {
-            println!("{USAGE}");
+            println!("{USAGE}\n{}", runtime030::USAGE);
             return Ok(ExitCode::from(2));
         }
     }

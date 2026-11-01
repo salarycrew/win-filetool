@@ -1,8 +1,8 @@
 //! 외부 도구 찾기: ffmpeg/ffprobe(영상·소리·HEIC), LibreOffice soffice(문서).
 //!
-//! 찾는 순서: 사용자가 [도구 설정]에서 지정한 경로 → PATH → 흔한 설치 위치
-//! (Program Files, winget 패키지 폴더·Links, scoop/chocolatey, LibreOffice Portable,
-//! 앱 옆 `tools\*` 폴더). 1b는 자동 설치하지 않고, 없으면 내려받을 곳을 안내한다.
+//! 찾는 순서(0.3.0): **앱에 든 도구**([`crate::bundle`], 처음 필요할 때 LOCALAPPDATA에 풂) → 사용자가 [도구 설정]에서
+//! 지정한 경로 → PATH → 흔한 설치 위치(Program Files, winget 패키지 폴더·Links, scoop/chocolatey, LibreOffice Portable,
+//! 앱 옆 `tools\*` 폴더). 고급 설정 `prefer_custom`을 켜면 직접 지정한 경로를 앱에 든 도구보다 먼저 쓴다.
 
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
@@ -111,6 +111,7 @@ impl SearchEnv {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Source {
+    Bundled,
     UserSetting,
     Path,
     KnownLocation,
@@ -119,6 +120,7 @@ pub enum Source {
 impl Source {
     pub fn label(self) -> &'static str {
         match self {
+            Source::Bundled => "앱에 든 도구",
             Source::UserSetting => "직접 지정한 경로",
             Source::Path => "PATH",
             Source::KnownLocation => "설치 폴더",
@@ -235,6 +237,30 @@ pub fn find(tool: Tool, user: Option<&Path>, related: Option<&Path>, env: &Searc
     None
 }
 
+impl Tool {
+    /// 앱 묶음 안의 (도구 이름, 그 폴더 안 실행 파일 경로)
+    pub fn bundle_entry(self) -> (&'static str, &'static [&'static str]) {
+        match self {
+            Tool::Ffmpeg => (crate::bundle::FFMPEG, &["ffmpeg.exe"]),
+            Tool::Ffprobe => (crate::bundle::FFMPEG, &["ffprobe.exe"]),
+            Tool::Soffice => (crate::bundle::LIBREOFFICE, &["program", "soffice.exe"]),
+        }
+    }
+}
+
+/// 앱 묶음에 든 도구의 실행 파일 경로(풀지 않고 경로만). 묶음이 없거나 그 도구가 없으면 None.
+pub fn bundled_path(tool: Tool) -> Option<PathBuf> {
+    let b = crate::bundle::current()?;
+    let (name, rel) = tool.bundle_entry();
+    b.has(name).then(|| rel.iter().fold(b.tool_dir(name), |p, s| p.join(s)))
+}
+
+/// 앱 묶음의 도구를 (필요하면) 풀고 실행 파일 경로를 돌려준다.
+pub fn ensure_bundled(tool: Tool) -> Option<crate::Result<PathBuf>> {
+    let (name, rel) = tool.bundle_entry();
+    crate::bundle::ensure_file(name, rel)
+}
+
 /// 실제로 실행해 버전 문자열을 얻는다(실행할 수 없으면 None).
 pub fn probe_version(tool: Tool, exe: &Path) -> Option<String> {
     let (program, args): (PathBuf, Vec<OsString>) = match tool {
@@ -286,7 +312,9 @@ pub struct ToolStatus {
 pub struct Toolset {
     pub ffmpeg: Option<PathBuf>,
     pub ffprobe: Option<PathBuf>,
+    /// 앱에 든 LibreOffice면 아직 풀리지 않았을 수 있다 → [`Toolset::get`]이 처음 쓸 때 푼다(약 3초)
     pub soffice: Option<PathBuf>,
+    soffice_bundled: bool,
 }
 
 /// 사용자 지정 경로(설정)를 받아 도구를 찾는다.
@@ -296,14 +324,44 @@ pub struct ToolPaths {
     pub ffmpeg: Option<PathBuf>,
     #[serde(default)]
     pub soffice: Option<PathBuf>,
+    /// 고급: 직접 지정한 경로를 앱에 든 도구보다 먼저 쓴다
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub prefer_custom: bool,
+}
+
+/// 사용자 지정 경로가 앱 묶음보다 먼저인지
+fn custom_first(tool: Tool, user: &ToolPaths) -> bool {
+    let set = match tool {
+        Tool::Ffmpeg | Tool::Ffprobe => user.ffmpeg.as_deref(),
+        Tool::Soffice => user.soffice.as_deref(),
+    };
+    user.prefer_custom && set.is_some_and(|p| resolve_user_path(tool, p).is_some())
 }
 
 impl Toolset {
+    /// ffmpeg·ffprobe는 앱 묶음에 있으면 바로 푼다(작아서 0.1초 안). LibreOffice는 경로만 정하고 처음 쓸 때 푼다.
     pub fn discover(user: &ToolPaths, env: &SearchEnv) -> Self {
-        let ffmpeg = find(Tool::Ffmpeg, user.ffmpeg.as_deref(), None, env).map(|f| f.0);
-        let ffprobe = find(Tool::Ffprobe, user.ffmpeg.as_deref(), ffmpeg.as_deref(), env).map(|f| f.0);
-        let soffice = find(Tool::Soffice, user.soffice.as_deref(), None, env).map(|f| f.0);
-        Self { ffmpeg, ffprobe, soffice }
+        let bundled_ff = if custom_first(Tool::Ffmpeg, user) { None } else { ensure_bundled(Tool::Ffmpeg).and_then(|r| r.ok()) };
+        let (ffmpeg, ffprobe) = match bundled_ff {
+            Some(ff) => {
+                let probe = ff.with_file_name(Tool::Ffprobe.exe_name());
+                (Some(ff), probe.is_file().then_some(probe))
+            }
+            None => {
+                let ffmpeg = find(Tool::Ffmpeg, user.ffmpeg.as_deref(), None, env).map(|f| f.0);
+                let ffprobe = find(Tool::Ffprobe, user.ffmpeg.as_deref(), ffmpeg.as_deref(), env).map(|f| f.0);
+                (ffmpeg, ffprobe)
+            }
+        };
+        let bundled_lo = if custom_first(Tool::Soffice, user) { None } else { bundled_path(Tool::Soffice) };
+        let soffice_bundled = bundled_lo.is_some();
+        let soffice = bundled_lo.or_else(|| find(Tool::Soffice, user.soffice.as_deref(), None, env).map(|f| f.0));
+        Self { ffmpeg, ffprobe, soffice, soffice_bundled }
+    }
+
+    /// 앱에 든 LibreOffice인지(처음 쓰면 "문서 도구 준비 중"을 보여 줄 때)
+    pub fn soffice_needs_unpack(&self) -> bool {
+        self.soffice_bundled && !self.soffice.as_deref().is_some_and(Path::is_file)
     }
 
     pub fn get(&self, tool: Tool) -> crate::Result<&Path> {
@@ -312,6 +370,11 @@ impl Toolset {
             Tool::Ffprobe => &self.ffprobe,
             Tool::Soffice => &self.soffice,
         };
+        if tool == Tool::Soffice && self.soffice_needs_unpack() {
+            if let Some(r) = ensure_bundled(Tool::Soffice) {
+                r?;
+            }
+        }
         p.as_deref().ok_or_else(|| crate::Error::ToolMissing {
             tool: tool.stem().into(),
             hint: tool.guidance().into(),
@@ -320,14 +383,35 @@ impl Toolset {
 }
 
 /// [도구 설정] 화면용: 찾은 위치와 버전(실제 실행해서 확인).
+/// 앱에 든 LibreOffice가 아직 풀리지 않았으면 버전을 묻지 않는다(그것 때문에 3초 걸리지 않게).
 pub fn status_all(user: &ToolPaths, env: &SearchEnv) -> Vec<ToolStatus> {
-    let ffmpeg = find(Tool::Ffmpeg, user.ffmpeg.as_deref(), None, env);
-    let ffprobe = find(Tool::Ffprobe, user.ffmpeg.as_deref(), ffmpeg.as_ref().map(|f| f.0.as_path()), env);
-    let soffice = find(Tool::Soffice, user.soffice.as_deref(), None, env);
+    let ts = Toolset::discover(user, env);
+    let src = |tool: Tool, p: &Option<PathBuf>| -> Option<(PathBuf, Source)> {
+        let p = p.clone()?;
+        let bundled = bundled_path(tool).is_some_and(|b| b == p);
+        if bundled {
+            return Some((p, Source::Bundled));
+        }
+        let user_p = match tool {
+            Tool::Ffmpeg | Tool::Ffprobe => user.ffmpeg.as_deref(),
+            Tool::Soffice => user.soffice.as_deref(),
+        };
+        let s = if user_p.and_then(|u| resolve_user_path(tool, u)).is_some_and(|u| u == p) {
+            Source::UserSetting
+        } else if env.path_dirs.iter().any(|d| d.join(tool.exe_name()) == p) {
+            Source::Path
+        } else {
+            Source::KnownLocation
+        };
+        Some((p, s))
+    };
+    let ffmpeg = src(Tool::Ffmpeg, &ts.ffmpeg);
+    let ffprobe = src(Tool::Ffprobe, &ts.ffprobe);
+    let soffice = src(Tool::Soffice, &ts.soffice);
     [(Tool::Ffmpeg, ffmpeg), (Tool::Ffprobe, ffprobe), (Tool::Soffice, soffice)]
         .into_iter()
         .map(|(tool, f)| {
-            let version = f.as_ref().and_then(|(p, _)| probe_version(tool, p));
+            let version = f.as_ref().filter(|(p, _)| p.is_file()).and_then(|(p, _)| probe_version(tool, p));
             let found = f.is_some();
             ToolStatus {
                 tool,

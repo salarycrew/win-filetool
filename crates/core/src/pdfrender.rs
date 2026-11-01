@@ -66,14 +66,14 @@ pub struct RenderOut {
     pub note: String,
 }
 
-pub const PDFIUM_HINT: &str = "PDF를 그림으로 바꾸려면 pdfium.dll이 앱(win-filetool.exe)과 같은 폴더에 있어야 합니다. 설치 파일로 설치했거나 휴대용 묶음(zip)을 통째로 풀었다면 들어 있습니다";
+pub const PDFIUM_HINT: &str = "PDF를 그림으로 바꾸는 도구(pdfium.dll)를 찾지 못했습니다. 앱을 새로 받아 다시 실행해 주세요(앱 파일 하나에 들어 있습니다)";
 
 /// pdfium 라이브러리 파일 이름(pdfium.dll / libpdfium.so)
 pub fn library_name() -> std::ffi::OsString {
     Pdfium::pdfium_platform_library_name()
 }
 
-/// 찾는 순서: 환경 변수 `WIN_FILETOOL_PDFIUM`(파일 또는 폴더) → exe 옆 → exe 옆 `pdfium\` → exe 옆 `tools\pdfium\(bin)`
+/// 찾는 순서: 환경 변수 `WIN_FILETOOL_PDFIUM`(파일 또는 폴더) → 앱에 든 도구 묶음(0.3.0, 처음 쓸 때 풂) → exe 옆 → exe 옆 `pdfium\` → exe 옆 `tools\pdfium\(bin)`
 pub fn find_library() -> Option<PathBuf> {
     let name = library_name();
     let mut cands = Vec::new();
@@ -84,6 +84,10 @@ pub fn find_library() -> Option<PathBuf> {
         cands.push(v.join(&name));
         cands.push(v.join("lib").join(&name));
         cands.push(v.join("bin").join(&name));
+    }
+    let name_s = name.to_string_lossy().into_owned();
+    if let Some(Ok(p)) = crate::bundle::ensure_file(crate::bundle::PDFIUM, &[name_s.as_str()]) {
+        cands.push(p);
     }
     if let Some(dir) = std::env::current_exe().ok().and_then(|p| p.parent().map(Path::to_path_buf)) {
         cands.push(dir.join(&name));

@@ -1175,8 +1175,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "filetime"
+version = "0.2.29"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5c287a33c7f0a620c38e641e7f60827713987b3c0f26e8ddc9462cc69cf75759"
+dependencies = [
+ "cfg-if",
+ "libc",
+]
+
+[[package]]
 name = "filetool-cli"
-version = "0.2.1"
+version = "0.3.0-dev"
 dependencies = [
  "chrono",
  "filetool-core",
@@ -1187,7 +1197,7 @@ dependencies = [
 
 [[package]]
 name = "filetool-core"
-version = "0.2.1"
+version = "0.3.0-dev"
 dependencies = [
  "chrono",
  "encoding_rs",
@@ -1200,6 +1210,7 @@ dependencies = [
  "pdfium-render",
  "serde",
  "serde_json",
+ "tar",
  "tempfile",
  "thiserror 2.0.21",
  "unicode-normalization",
@@ -1208,11 +1219,12 @@ dependencies = [
  "windows-sys 0.61.2",
  "winreg",
  "zip",
+ "zstd",
 ]
 
 [[package]]
 name = "filetool-svc"
-version = "0.2.1"
+version = "0.3.0-dev"
 dependencies = [
  "chrono",
  "filetool-core",
@@ -3976,6 +3988,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "tar"
+version = "0.4.46"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3f6221d9a6003c78398e3b239969f352578258df48c8eb051caadae0015bc840"
+dependencies = [
+ "filetime",
+ "libc",
+]
+
+[[package]]
 name = "target-lexicon"
 version = "0.12.16"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5032,7 +5054,7 @@ checksum = "d4ca08e5ef825b65b056d9efbd95c8750683f0a6d0466d02e96dc2e4e360f3d2"
 
 [[package]]
 name = "win-filetool"
-version = "0.2.1"
+version = "0.3.0-dev"
 dependencies = [
  "filetool-core",
  "image",
@@ -5692,6 +5714,34 @@ dependencies = [
  "crc32fast",
  "log",
  "simd-adler32",
+]
+
+[[package]]
+name = "zstd"
+version = "0.13.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e91ee311a569c327171651566e07972200e76fcfe2242a4fa446149a3881c08a"
+dependencies = [
+ "zstd-safe",
+]
+
+[[package]]
+name = "zstd-safe"
+version = "7.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "64d80649ab6db9d9f6f9c80a40becd948eda4714a0a5ac8c4d157a32231c7882"
+dependencies = [
+ "zstd-sys",
+]
+
+[[package]]
+name = "zstd-sys"
+version = "2.1.2+zstd.1.5.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "481ada9c543b2323cbb7bbdbb5249177fbf0188ed959ed2c15e4b22421c84ed3"
+dependencies = [
+ "cc",
+ "pkg-config",
 ]
 
 [[package]]

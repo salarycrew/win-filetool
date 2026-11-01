@@ -553,3 +553,40 @@ filetool-cli search --via service / svc-status / svc-watch    (같은 클라이�
 
 - 낱말 나누기에서 `<`(낱말 처음, `!` 뒤 포함)는 `Open{not}`, 묶음 안의 `>`는 `Close`. `size:>1mb`·`dm:<2024`처럼 낱말 가운데 또는 `:` 바로 뒤의
   `<` `>`는 비교 기호로 낱말에 남는다. 해석은 재귀(`parse_seq`): 묶음 하나가 낱말 하나처럼 AND/OR에 들어간다. 닫지 않은 묶음은 끝에서 닫고, 묶음 밖의 `>`는 글자.
+
+## 0.3.0 바탕(W1) — 설치 없는 exe 하나 + 앱에 든 도구
+
+### 포장
+- `dist-win/파일도구_<버전>_portable.exe` = `win-filetool.exe` + 도구 묶음 `tools.pack`(exe 뒤에 덧붙임, Windows는 무시하고 실행).
+  설치본(`_x64-setup.exe`)은 같은 `tools.pack`을 exe 옆에 둔다. 형식·푸는 규칙은 `crates/core/src/bundle.rs` 머리말.
+- 묶음 안 도구: `ffmpeg`(ffmpeg.exe·ffprobe.exe, LGPL 최소 빌드 `scripts/build-ffmpeg.sh`), `pdfium`(pdfium.dll + licenses/),
+  `lo`(줄인 LibreOffice `scripts/trim-libreoffice.ps1`, poppler 쓰는 xpdfimport 없음), `notices`(THIRD-PARTY-NOTICES.txt).
+  도구마다 `tar` → `zstd -19 --long=27` 덩어리라 도구별로 따로 푼다.
+- 푸는 곳 `%LOCALAPPDATA%\kr.salarycrew.winfiletool\tools\<앱버전>-<해시16>\<도구>\` (`.partial` → 이름 바꾸기, `.<도구>.lock` 잠금).
+  쓸 수 없으면 exe 옆 `tools\`. 새 버전이 풀리면 지난 버전 폴더는 지운다(쓰는 중이면 다음에). 시험용 `WIN_FILETOOL_TOOLS_DIR`, `WIN_FILETOOL_BUNDLE`.
+- 도구 찾는 순서: 앱에 든 도구 → 직접 지정한 경로 → PATH → 설치 폴더. `settings.json`의 `tools.prefer_custom: true`(고급)이면 직접 지정한 경로가 먼저.
+  ffmpeg는 처음 쓸 때 바로 풀고(0.1초 안), LibreOffice는 첫 문서 작업 때 푼다(약 3초).
+- LibreOffice 프로필: `tools\<버전>\lo-profile-1..3` 돌려 쓰기 + 잠금(동시 변환 3개까지, 넘으면 빌 때까지 기다림). 재사용한 프로필로 실패하면 지우고 한 번 더.
+- 영상: 앱에 든 ffmpeg는 libx264가 없어 `h264_mf`(Media Foundation). 메신저용은 목표 크기를 넘으면 비트레이트를 낮춰 최대 3번 만든다
+  (`media::next_video_kbps`). 사용자가 지정한 ffmpeg에 libx264가 있으면 예전 인자 그대로.
+- 휴대용 설정: exe 옆 `win-filetool-data\`(또는 `portable.txt`)가 있고 쓸 수 있으면 `settings.json`·`watch-state.json`을 그 안에.
+  검색 색인·풀어 놓은 도구는 언제나 PC의 LOCALAPPDATA.
+- WebView2: 창을 만들기 전에 레지스트리(HKLM WOW6432Node / HKLM / HKCU `EdgeUpdate\Clients\{F3017226-…}` `pv`)를 보고, 없으면 한국어 안내 창
+  → [확인]이면 Evergreen 부트스트래퍼 주소를 열고 끝낸다.
+
+### 화면과의 약속(Tauri 명령·이벤트) — 파일 `src-tauri/src/cmd_runtime.rs`
+
+| 이름 | 인자 | 돌려주는 값 |
+|---|---|---|
+| `app_info` | 없음 | `{ name, version, notices, notices_path, config_dir, config_source: "env"\|"portable"\|"default", webview2 }` — [앱 정보] 화면. `notices`는 고지 전문(약 1.3 MB 글) |
+| `tools_bundle_status` | 없음 | `{ present, file, dir, tools: [{ name, ready, packed_bytes, bytes }], unpacked: [{ tool, dir, secs, files, bytes }] }` |
+| `tools_prepare` | `{ tool: "lo" \| "ffmpeg" \| "pdfium" \| "notices" }` | 푼 폴더 경로(문자열). 묶음이 없으면 오류 글 |
+
+| 이벤트 | 내용 |
+|---|---|
+| `tools_unpack_progress` | `{ tool, fraction }` (0.0 → 1.0, 2%마다). 문서 변환(`convert_one`)이 처음 LibreOffice를 쓸 때도 자동으로 온다 → "문서 도구 준비 중(약 3초)" 표시, `fraction == 1`이면 닫기 |
+
+- `convert_one` 결과의 `note`에 메신저용 재시도가 있으면 `", 크기를 맞추려고 N번 만듦"`, 끝내 넘으면 `" (목표 X MB보다 큼)"`이 붙는다.
+- 오류 글(코어 `Error`의 한국어): 도구 준비 실패 → "앱에 든 도구를 준비하지 못했습니다. 디스크 공간(약 0.5GB)과 폴더 권한을 확인해 주세요. (…)",
+  문서 결과 없음 → "결과 파일이 생기지 않았습니다(이 형식을 읽지 못했거나 파일이 손상됐을 수 있음).", 동시 변환이 오래 막힘 → "다른 문서 변환이 끝나지 않아 기다리다 멈췄습니다. 잠시 뒤 다시 해 주세요."
+- CLI 점검: `filetool-cli bundle-status | bundle-unpack [도구…] | app-info [--notices] | webview2`.

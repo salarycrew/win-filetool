@@ -71,6 +71,10 @@ pub fn tool_paths(f: &Flags) -> ToolPaths {
     if let Some(v) = f.get("--soffice") {
         p.soffice = Some(v.into());
     }
+    // 명령줄로 준 경로는 앱에 든 도구보다 먼저
+    if f.get("--ffmpeg").is_some() || f.get("--soffice").is_some() {
+        p.prefer_custom = true;
+    }
     p
 }
 

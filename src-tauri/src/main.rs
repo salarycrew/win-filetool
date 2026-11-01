@@ -12,6 +12,7 @@
 //! 2c: 빠른 검색 서비스(`filetool-svc`, 선택 설치)가 답하면 그 서비스가 색인한 드라이브는 서비스에 묻고(상태 줄 "빠른 색인(서비스)"),
 //!     나머지 루트만 앱이 색인한다. 서비스가 없거나 멈추면 조용히 앱 색인으로. [설정] > 검색에서 설치/제거(UAC 1번).
 
+mod cmd_runtime;
 mod icons;
 mod remote;
 
@@ -1048,6 +1049,10 @@ fn start_watch_thread(app: AppHandle) {
 }
 
 fn main() {
+    // 0.3.0: WebView2가 없으면 창을 만들다 꺼지므로 먼저 확인하고, 없으면 한국어 안내 후 끝낸다
+    if !cmd_runtime::ensure_webview2() {
+        std::process::exit(2);
+    }
     tauri::Builder::default()
         // 한 번만 실행: 두 번째 실행은 기존 창을 앞으로(자동 실행 인자로 온 것은 조용히 무시)
         .plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
@@ -1070,11 +1075,12 @@ fn main() {
             }
         })
         .setup(|app| {
-            // 시험용: WIN_FILETOOL_CONFIG_DIR로 설정 폴더를 바꿀 수 있다(사용자 설정을 건드리지 않고 점검)
-            let config_dir = std::env::var_os("WIN_FILETOOL_CONFIG_DIR")
-                .map(PathBuf::from)
-                .or_else(|| app.path().app_config_dir().ok())
-                .unwrap_or_else(|| std::env::temp_dir().join("win-filetool"));
+            // 설정 폴더: WIN_FILETOOL_CONFIG_DIR(시험용) → exe 옆 win-filetool-data\(휴대용, 0.3.0) → %APPDATA%
+            let default_dir = app.path().app_config_dir().unwrap_or_else(|_| std::env::temp_dir().join("win-filetool"));
+            let exe_dir = std::env::current_exe().ok().and_then(|p| p.parent().map(Path::to_path_buf));
+            let (config_dir, config_source) = filetool_core::portable::config_dir(exe_dir.as_deref(), default_dir);
+            app.manage(cmd_runtime::RuntimeInfo { config_dir: config_dir.clone(), config_source });
+            cmd_runtime::install_progress_events(app.handle());
             let settings = Settings::load(&config_dir);
             // 2c: 빠른 검색 서비스가 답하면 그 서비스가 맡은 드라이브는 앱 색인에서 뺀다(최대 1.5초만 기다림)
             let remote = Arc::new(Remote::default());
@@ -1161,7 +1167,10 @@ fn main() {
             file_icons,
             ui_get,
             ui_set,
-            startup_query
+            startup_query,
+            cmd_runtime::app_info,
+            cmd_runtime::tools_bundle_status,
+            cmd_runtime::tools_prepare
         ])
         .build(tauri::generate_context!())
         .expect("파일 도구를 시작하지 못했습니다")

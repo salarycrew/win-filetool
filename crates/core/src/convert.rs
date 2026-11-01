@@ -124,6 +124,12 @@ pub fn convert_file(
             if let Some(d) = r.duration {
                 note.push_str(&format!(", 원본 길이 {d:.1}초"));
             }
+            if r.tries > 1 {
+                note.push_str(&format!(", 크기를 맞추려고 {}번 만듦", r.tries));
+            }
+            if let Some(t) = r.target_bytes.filter(|t| r.bytes > *t) {
+                note.push_str(&format!(" (목표 {}보다 큼)", human_bytes(t)));
+            }
             (r.output, note)
         }
         Op::Doc { target } => {

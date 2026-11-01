@@ -10,7 +10,7 @@ use filetool_core::docs::DocTarget;
 use filetool_core::imageconv::{ImageOpts, ImgFormat};
 use filetool_core::media::{self, MediaPreset};
 use filetool_core::process::Cancel;
-use filetool_core::tools::{self, SearchEnv, Toolset};
+use filetool_core::tools::{self, SearchEnv, Tool, Toolset};
 use filetool_core::watch::{WatchRule, Watcher};
 use filetool_core::{exif, pdf, samples, Error, Result};
 
@@ -204,7 +204,7 @@ pub fn run(dir: &Path, args: &[String]) -> Result<ExitCode> {
     }
 
     // 4) 문서
-    match ts.soffice.as_deref() {
+    match ts.get(Tool::Soffice).ok() {
         None => c.skip("문서", "LibreOffice 없음 — 문서 변환 desktop 미확인"),
         Some(_) => docs_checks(&mut c, &ts, dir, f.get("--apple").map(PathBuf::from))?,
     }

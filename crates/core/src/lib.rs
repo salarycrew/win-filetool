@@ -10,11 +10,13 @@
 //! - 1c: [`pdfcompress`]: PDF 압축, [`img2pdf`]: 이미지 → PDF, [`pdfrender`]: PDF → 이미지(PDFium)·이미지 꺼내기,
 //!   [`autostart`]: 윈도 시작 시 실행(HKCU Run)
 //! - 2a: [`search`]: 전체 파일 즉시 검색(색인·스캔·실시간 갱신·질의 언어)
+//! - 0.3.0 W1: [`bundle`]: 앱에 든 도구 묶음 풀기, [`portable`]: 휴대용 설정 위치, [`runtime`]: WebView2 확인, [`notices`]: 오픈소스 고지
 //!
 //! 원본은 절대 덮어쓰지 않는다. 출력 경로가 이미 있으면 [`paths::unique_path`]로
 //! ` (1)`, ` (2)` …를 붙인 새 이름을 쓴다.
 
 pub mod autostart;
+pub mod bundle;
 pub mod convert;
 pub mod docs;
 pub mod error;
@@ -24,12 +26,15 @@ pub mod imageconv;
 pub mod img2pdf;
 pub mod media;
 pub mod nfc;
+pub mod notices;
 pub mod pages;
 pub mod paths;
 pub mod pdf;
 pub mod pdfcompress;
 pub mod pdfrender;
+pub mod portable;
 pub mod process;
+pub mod runtime;
 pub mod samples;
 pub mod search;
 pub mod settings;
