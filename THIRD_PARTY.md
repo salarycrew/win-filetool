@@ -21,6 +21,9 @@ GPL·AGPL 부품은 넣지 않았습니다.
 사용자 PC에 설치된 한컴오피스 한글은 앱에 들어 있지 않고, 있을 때 Windows 자동화(COM)로 부를 뿐입니다.
 한글 변환용 보안 모듈 DLL은 한컴 예제를 재배포하지 않고 앱 코드가 만듭니다(`crates/core/src/hwp/hancom.rs`).
 
+글자 인식(OCR, 0.4)은 Windows에 들어 있는 `Windows.Media.Ocr`를 부릅니다(앱에 인식 모델·글꼴을 넣지 않음, 인터넷 사용 없음). 부르는 데 쓰는 `windows` 크레이트(MIT OR Apache-2.0)는
+Tauri가 이미 쓰던 같은 판(0.62)입니다. 검색용 보이지 않는 글자에 쓰는 글리프 없는 글꼴은 앱 코드가 만듭니다(`crates/core/src/ocr/textlayer.rs`, Tesseract GlyphLessFont와 같은 생각, 코드는 새로 씀).
+
 ## 저장소에만 있는 시험 자료 (배포본에 없음)
 
 | 파일 | 출처 | 라이선스 |

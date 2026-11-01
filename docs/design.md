@@ -45,6 +45,10 @@ crates/core   filetool-core  — Tauri 비의존 코어. Linux에서 cargo test�
   img2pdf.rs  이미지 → PDF: JPEG는 바이트 그대로(DCTDecode), EXIF 회전은 그리기 행렬로. 나머지는 Flate(+SMask), HEIC는 1b 경로 → JPEG
   pdfrender.rs PDF → 이미지: PDFium(pdfium-render, 실행 중에 pdfium.dll 불러옴). 들어 있는 이미지 꺼내기(lopdf, PDFium 불필요)
   autostart.rs 윈도 시작 시 실행: HKCU Run 값 만들기·읽기·지우기(winreg, Windows에서만)
+  -- 0.4 --
+  ocr/        글자 인식(Windows.Media.Ocr): 그림 다듬기·방향, 보이지 않는 글자 층(글리프 없는 글꼴), 스캔 PDF·그림 → TXT, PDF → Word 줄
+  imgredact.rs 사진 가리기(검은 상자 + 제출용 글, EXIF 없음)
+  pdfedit/redact.rs 진짜 가리기(가린 쪽 그림으로, 숨은 내용·문서 정보 지우기), 찾아서 가리기, 남았는지 확인
   -- 2a --
   search/index.rs   메모리 색인(이름 창고 + 부모 번호, 열별 배열), 지운 표시·정리, 루트 바꿔 끼우기, 파일 저장·읽기
   search/scan.rs    IndexSource 트레잇 + DirWalkSource(FindFirstFileExW 병렬 훑기), 제외 패턴, 고정 드라이브 찾기
@@ -982,3 +986,97 @@ Word → PPT(`doc_to_pptx`)는 한글이면 `hwp::convert(… Docx)`로 docx를 
 그림 뽑기(항목별 압축, OLE·링크·그림 아님·없는 데이터, 같은 그림, WMF), 크기·개수·합계 한도와 압축 폭탄, 경로 빠져나가기, 보안 모듈 DLL 구조.
 `tests/hwp_030.rs`는 LibreOffice 시험 자료의 한글 97 파일(MPL-2.0, `tests/data/030/hwp/README.md`)로 LO 길을 확인한다(LO가 있을 때 변환까지).
 정부 배포 실제 문서(HWP 4 + HWPX 2)는 저장소에 넣지 않고 Windows 시험 PC에서 CLI(`hwp-info`, `hwp-convert`, `doc-to-pptx`, `hwp-images`)로 점검했다.
+
+## 0.4 OCR·가리기
+
+0.4 part A. 코어 `crates/core/src/ocr/`(글자 인식), `crates/core/src/pdfedit/redact.rs`(PDF 가리기), `crates/core/src/imgredact.rs`(사진 가리기),
+점검용 PDF `pdfedit/testpdf040.rs`, Tauri 명령 `src-tauri/src/cmd_040a.rs`, CLI `filetool-cli help-ocr`(`crates/cli/src/ocr040.rs`). 시험 `crates/core/tests/ocr_redact_040.rs`.
+
+### 글자 인식(OCR)
+
+- **엔진**: Windows 내장 `Windows.Media.Ocr`(WinRT, `windows` 크레이트 0.62 — Tauri가 이미 쓰는 판, MIT/Apache-2.0). 모델을 받거나 인터넷에 보내지 않는다.
+  Tesseract 등은 넣지 않는다. 언어: 한국어(`ko`)가 있으면 한국어(영어·숫자도 함께 읽음) → 사용자 프로필 언어 → 설치된 첫 언어.
+  한국어가 없으면 결과에 `hint`(설정 → 시간 및 언어 → 언어 → 한국어 → 언어 옵션 → 광학 문자 인식)를 붙이고 있는 언어로 읽는다. 언어가 하나도 없으면 오류.
+  엔진 객체는 작업 스레드 안에서 만들고 그 스레드에서만 쓴다(`Recognizer`는 `Send`가 아님).
+- **그림 다듬기**: 흑백, 1~99% 밝기 폭이 170 미만이면 대비를 늘림(어두운 사진). 긴 변이 `OcrEngine::MaxImageDimension`(시험 PC 10000px)을 넘으면 줄이고,
+  1200px보다 작으면 최대 2.5배 키움(작은 캡처), 4천만 화소 상한. 쪽은 PDFium으로 300dpi(옵션 200)에 그린다.
+- **방향**: 처음 읽은 결과가 약하면(2자 이상 한글·영숫자 낱말의 글자 수 < 40 또는 그런 낱말 비율 < 55%) 90·270·180도로 돌려 다시 읽고,
+  1.5배+8자 넘게 잘 읽힌 방향을 고른다. 낱말 상자는 원래 그림 좌표로 되돌리고 글 방향 `rot`을 기록한다.
+- **보이지 않는 글자 층**: 이 코드가 만든 TrueType 글꼴(글리프 2개 — 0번 빈 글리프, 1번은 0,-200~500,800 사각형 윤곽. 렌더 모드 3이라 그려지지 않음.
+  윤곽이 없는 글리프를 정확히 90도로 돌리면 PDFium이 글자 상자를 0으로 보고 글자 추출에서 빼서 윤곽을 둠)을 Type0/Identity-H로 넣는다(Tesseract GlyphLessFont와 같은 생각, 코드는 새로 씀).
+  글자 코드 = 유니코드(BMP, 그 밖은 U+FFFD), `CIDToGIDMap`은 모든 코드 → 1번, ToUnicode는 `<XX00> <XXFF> <XX00>` 구간(D8~DF 대리 영역 제외).
+  낱말마다 `3 Tr`, 글자 크기 = 낱말 상자 높이, 기준선 = 상자 아래에서 20%, `Tz`로 낱말 너비를 맞추고, 같은 줄 다음 낱말까지 빈칸 한 글자를 붙여 복사하면 낱말 사이가 띄어진다.
+  보이는 쪽 좌표 → 사용자 공간은 `PageGeom::visual_to_user`(/Rotate·CropBox 반영). 원래 내용은 `q … Q`로 감싸고 그 위에 붙인다 — 보이는 모양은 1픽셀도 바뀌지 않는다(시험).
+- **건너뛰기**: 쪽 글자(보이지 않는 글자 포함)가 10자 이상이면 이미 글자가 있는 쪽으로 보고 건너뛴다. "이미 글자가 있는 쪽도 다시 인식"을 켜면
+  인식한 낱말 중 원래 글자 상자와 40% 넘게 겹치는 것은 빼고(그림 속 글자만) 더한다. 모든 쪽에 글자가 있으면 오류("모든 쪽에 이미 글자가 있어서…").
+- **PDF → Word**: `pdf_to_docx`에 `ocr: true`를 주면 스캔본 쪽(글자 20자 미만 + 큰 그림)을 글자 인식해 pdflayout 줄(`Line`, 칸은 낱말 틈이 줄 높이 2.5배 넘으면 나눔)로 바꾸고
+  원래 분석(문단·제목·표)을 그대로 탄다. 10자 미만으로 읽히면 그 쪽은 예전처럼 쪽 그림. **기본은 끔(쪽 그림)** — 모양이 원본과 같고 틀린 글자가 없기 때문(보고서의 정확도 참고).
+
+### 진짜 가리기(PDF)
+
+1. 양식 칸(Widget)만 쪽 내용으로 굳힌다(`forms::flatten_doc_with(…, widgets_only)`) → 값이 양식 사전에 남지 않음. 다른 주석은 그대로.
+2. 문서 전체: Info·모든 `/Metadata`(XMP)·`PieceInfo`, 첨부(`EmbeddedFiles`·`FileAttachment` 주석·`AF`·`Collection`), 자바스크립트(이름 트리 `JavaScript`,
+   JS 동작을 가리키는 `A`/`OpenAction`/`Next`, 모든 `AA`, JS 동작의 `JS`), 숨긴 레이어(`OCProperties /D`의 OFF/BaseState로 꺼진 OCG·OCMD — 쪽과 한 단계 Form XObject의
+   `/OC … BDC … EMC` 조각과 숨긴 XObject `Do`, 숨긴 주석을 지우고 `OCProperties`를 없앰; 내용을 못 읽은 쪽은 그림으로 바꿈), 태그 구조(`StructTreeRoot`·`MarkInfo`·`StructParent(s)`)를 지운다.
+   책갈피(Outlines)는 남긴다.
+3. 가릴 곳이 있는 쪽만: 정리한 문서를 PDFium으로 200dpi(옵션 300)로 그리고 상자(+1px)를 검게 칠한 그림(JPEG 품질 88, 흑백이면 DeviceGray)으로 쪽 내용을 바꾼다.
+   그 쪽의 `Annots`·`Thumb`·`B`·`AA`·`CropBox` 등은 지우고 `MediaBox` = 보이는 크기, `Rotate 0`. 가리지 않은 쪽은 글자·글꼴 그대로.
+4. (기본 켬) 가린 쪽 그림을 글자 인식해 글자 층을 다시 얹는다. 검은 상자와 조금이라도 겹치는 낱말은 넣지 않는다. 글자 인식을 못 쓰면 `hint`.
+5. 새 파일로 저장(쓰지 않는 객체 삭제, 증분 저장 기록 없음). 결과 `이름_가림.pdf`, 원본 그대로.
+6. **확인**(`verify`): PDFium 글자 추출(빈칸 무시·대소문자 무시), 모든 스트림을 풀어 바이트로(UTF-8, UTF-16BE, 각각의 16진 글자 대·소문자, Latin-1),
+   모든 문자열·이름 객체(UTF-16 BOM 풀기)와 트레일러, 남은 Info/XMP. 가린 상자 안 PDFium 글자 수(`chars_in_marks`)도 0이어야 `clean`.
+
+**찾아서 가리기**: PDFium 글자(글자마다 `loose_bounds` → 보이는 쪽 좌표) 위에서 찾는다. 글자가 10자 미만인 쪽은 글자 인식 낱말(낱말 상자를 글자 수로 나눔)에서도 찾는다.
+찾는 말은 글자 사이 빈칸 허용·대소문자 무시. 규칙(겹치면 앞의 것): 주민등록번호(`YYMMDD-[1-8]XXXXXX`, 날짜 확인 + 검증 숫자 — 맞으면 확실,
+빼기표가 있고 성별 1~4인데 검증 숫자가 틀리면 "확인 필요"로 목록 뒤에(2020년 10월 이후 번호는 검증 숫자가 없음), 이어 쓴 13자리·외국인등록번호는 검증 숫자가 맞을 때만,
+뒷자리를 `*`로 가린 번호도), 전화(010·지역번호·`+82`·`(031)`·15xx), 이메일, 계좌(숫자 묶음 3~5개·10~16자리, 날짜·전화 모양 제외). 앞뒤가 숫자면 뺀다.
+같은 줄 글자 상자는 합쳐(돌린 쪽은 세로로) 상자 하나, 1pt 여유. 화면은 목록(체크) + 미리보기 위 상자로 보여 주고 [가리기] 확인 뒤에만 적용한다.
+
+### 사진 가리기(신분증 사본)
+
+JPG/PNG/HEIC(+BMP·TIFF·WebP) → EXIF 방향을 픽셀에 적용한 사진 위 상자(px)를 검게 칠함(흐림 없음). "○○ 제출용" 글을 주면 그림 한 장짜리 임시 PDF(긴 변 1600pt 안)에
+0.3.0 워터마크(글, 30도, 바둑판, 진하기 0.42, #3C3C3C, 크기 = 긴 변/16)를 얹고 PDFium으로 원래 px로 다시 그린 뒤 상자를 한 번 더 칠한다.
+결과 `이름_가림.jpg`(품질 92; PNG는 `.png`), EXIF·위치 정보 없음. 임시 폴더는 끝나면 지움.
+
+### 명령(Tauri) — 오류는 PDF 편집과 같은 `{ code, message }`
+
+| 명령 | 인자 | 반환 | 결과 이름 |
+|---|---|---|---|
+| `ocr_status` | — | `{ available, languages: string[], korean, using?, max_image_dimension, hint? }` | — |
+| `ocr_pdf` | `job, path, password?, opts?: OcrPdfOpts, outDir?` | `{ output, pages, ocr_pages, skipped_text_pages, empty_pages, rotated_pages, words, chars, language, millis, ms_per_page, note, hint? }` | `_글자인식.pdf` |
+| `ocr_text` | `job, path, password?, outDir?` | `{ input, output, pages, ocr_pages, chars, language, millis, note, text, hint? }` (`text`는 앞 20만 자, [글자 복사]용) | `_글자.txt` |
+| `pdf_to_docx` | (0.3.0) + `ocr?: boolean` | (0.3.0) + `ocr_pages` | `_Word.docx` |
+| `redact_find` | `job, path, password?, terms: string[], presets: ("rrn"\|"phone"\|"email"\|"account")[], ocr?: boolean(기본 true)` | `{ hits: Hit[], pages, ocr_pages, unread_pages, note, hint? }` | — |
+| `redact_apply` | `job, path, password?, marks: Mark[], opts?: RedactOpts, outDir?` | `{ output, pages, redacted_pages, marks, ocr_pages, removed, verify, note, hint? }` | `_가림.pdf` |
+| `image_redact_preview` | `path` | `{ data_url, width, height }`(방향 바로잡은 원래 px) | — |
+| `image_redact` | `path, opts: { boxes: {x,y,w,h}[], text? }, outDir?` | `{ input, output, width, height, boxes, text, note }` | `_가림.jpg`/`.png` |
+
+```jsonc
+// OcrPdfOpts
+{ "dpi": 300 /* 100~400 */, "redo_text_pages": false, "pages": null /* "1-3,5" */ }
+// Mark — 보이는 쪽 pt, 원점 왼쪽 위(0.3.0 좌표와 같음)
+{ "page": 1, "x": 72, "y": 80, "w": 200, "h": 18 }
+// Hit
+{ "id": 1, "page": 1, "text": "900101-1234568", "kind": "rrn", "label": "주민등록번호", "rects": [Mark], "source": "text" /* | "ocr" */, "rank": 0 /* 1 = 확인 필요 */ }
+// RedactOpts
+{ "dpi": 200 /* 200|300 */, "ocr": true, "check_terms": ["찾아서 고른 글", "…"] }
+// removed
+{ "annotations": 1, "links": 1, "form_fields": 1, "attachments": 1, "javascript": 3, "hidden_layers": 1, "metadata": true, "structure": false }
+// verify
+{ "clean": true, "terms": 11, "text_hits": [], "streams": 6, "stream_hits": 0, "string_hits": 0, "has_info": false, "has_xmp": false, "chars_in_marks": 0 }
+```
+
+진행: `ocr_pdf`·`ocr_text`(PDF)·`redact_find`는 쪽마다, `redact_apply`는 그리기 절반 + 바꾸기·인식 절반. 멈추면(`cancel_jobs`) `cancelled`, 만들던 파일은 남지 않는다.
+
+### 화면
+
+- PDF 편집 도구: **글자 인식(OCR)**(읽는 방법 꼼꼼하게 300dpi/빠르게 200dpi, 이미 글자가 있는 쪽도 다시 인식), **가리기**(미리보기 위에서 끌어 상자 그리기·옮기기·Delete로 지우기 /
+  찾아서 가리기: 찾을 말 + 주민등록번호·전화·이메일·계좌 체크 → 목록(쪽·종류·글, 체크) + 미리보기 위 상자, 그림 선명도 200/300, 가린 쪽도 글자 인식) → 확인 창 → 결과.
+- 변환: PDF 카드 **글자 인식(OCR)**·**글자 뽑기(OCR)**·**가리기**(PDF 편집의 가리기로), Word로 카드에 "스캔한 쪽: 글자 인식해서 글로 넣기"(기본 끔),
+  사진 카드 **이미지에서 글자 뽑기**(결과 줄에 [글자 복사])·**가리기(신분증 사본)**(사진 한 장, 끌어서 상자 + 얹을 글).
+
+### CLI
+
+`filetool-cli ocr status|pdf|text|docx|image|make-scan|make-photo`, `filetool-cli redact find|apply|verify|image`, `filetool-cli ocr-selftest <빈 폴더>`
+(`selftest`에도 `040`으로 들어감; `selftest <폴더> --only 040`). `ocr pdf --cancel-after N`은 N쪽 뒤 멈춤(취소 점검: 결과 파일이 없어야 함, 종료 코드 3).
+`redact apply|verify`는 남은 것이 있으면 종료 코드 4.
