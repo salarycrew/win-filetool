@@ -81,7 +81,7 @@ pub fn pdf_to_docx(input: &Path, out_dir: Option<&Path>, cancel: Option<&Cancel>
     if !input.is_file() {
         return Err(Error::Invalid(format!("파일이 없습니다: {}", input.display())));
     }
-    let layout = pdflayout::analyze(input, &AnalyzeOpts { images: true, render_scanned: true }, cancel, progress)?;
+    let layout = pdflayout::analyze(input, &AnalyzeOpts { images: true, render_scanned: true, keep_running: false }, cancel, progress)?;
     let stem = input.file_stem().map(|s| crate::nfc::to_nfc(&s.to_string_lossy())).unwrap_or_else(|| "문서".into());
     let doc = build_doc(&layout, &stem);
     if let Some(c) = cancel {
@@ -133,7 +133,7 @@ pub fn pdf_to_txt(input: &Path, out_dir: Option<&Path>, cancel: Option<&Cancel>,
     if !input.is_file() {
         return Err(Error::Invalid(format!("파일이 없습니다: {}", input.display())));
     }
-    let layout = pdflayout::analyze(input, &AnalyzeOpts { images: false, render_scanned: false }, cancel, progress)?;
+    let layout = pdflayout::analyze(input, &AnalyzeOpts { images: false, render_scanned: false, keep_running: false }, cancel, progress)?;
     let text = pdflayout::plain_text(&layout);
     let chars = text.chars().filter(|c| !c.is_whitespace()).count();
     let mut bytes = vec![0xEF, 0xBB, 0xBF];

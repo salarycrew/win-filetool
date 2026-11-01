@@ -262,7 +262,7 @@ fn layout_frame_for_rotated_text() {
     if !pdfium_ok() {
         return;
     }
-    let l = pdflayout::analyze(&data("회전쪽.pdf"), &pdflayout::AnalyzeOpts { images: false, render_scanned: false }, None, &mut noop).unwrap();
+    let l = pdflayout::analyze(&data("회전쪽.pdf"), &pdflayout::AnalyzeOpts { images: false, render_scanned: false, keep_running: false }, None, &mut noop).unwrap();
     // 2쪽은 /Rotate 90: 글자는 사용자 좌표에서 가로이므로 틀은 그대로, 화면과는 방향이 다름
     assert!(l.pages[0].upright && !l.pages[1].upright);
     assert!(l.pages[1].disp_w > l.pages[1].disp_h);

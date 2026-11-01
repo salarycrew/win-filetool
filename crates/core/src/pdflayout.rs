@@ -320,6 +320,8 @@ fn read_page(page: &PdfPage, want_images: bool) -> std::result::Result<RawPage, 
         }
         let Ok(bd) = ch.loose_bounds() else { continue };
         let space = c.is_whitespace() || c == '\u{A0}';
+        // 기호 글꼴(OpenSymbol·Symbol·Wingdings)의 사설 영역 글머리표 → •
+        let c = if ('\u{E000}'..='\u{F8FF}').contains(&c) && { let f = ch.font_name().to_lowercase(); f.contains("symbol") || f.contains("wingding") || f.contains("dings") } { '•' } else { c };
         let (ox, oy) = ch.origin().map(|(x, y)| (x.value, y.value)).unwrap_or((bd.left().value, bd.bottom().value));
         let font = ch.font_name();
         let fl = font.to_lowercase();
@@ -842,6 +844,8 @@ pub struct AnalyzeOpts {
     pub images: bool,
     /// 스캔본 쪽을 그림으로 그릴지
     pub render_scanned: bool,
+    /// 머리글·바닥글·쪽 번호를 남길지(PPT 편집 가능본은 모양 그대로가 목적이라 남김)
+    pub keep_running: bool,
 }
 
 /// PDF 전체 분석. 진행률은 쪽 단위.
@@ -907,7 +911,9 @@ pub(crate) fn analyze_doc(input: &Path, doc: &PdfDocument, opts: &AnalyzeOpts, c
         });
         progress(i as u32 + 1, n);
     }
-    drop_running(&mut pages);
+    if !opts.keep_running {
+        drop_running(&mut pages);
+    }
     let mut hist: HashMap<i32, usize> = HashMap::new();
     for p in &pages {
         for it in &p.items {

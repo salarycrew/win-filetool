@@ -204,7 +204,7 @@ pub fn pdf_to_pptx(input: &Path, out_dir: Option<&Path>, mode: PptMode, dpi: Opt
         PptMode::Editable => {
             // 분석이 쪽 진행률의 앞 70%, 슬라이드 만들기가 뒤 30%
             let total = n as u32 * 10;
-            let layout = pdflayout::analyze_doc(input, &doc, &AnalyzeOpts { images: true, render_scanned: true }, cancel, &mut |i, _| progress(i * 7, total))?;
+            let layout = pdflayout::analyze_doc(input, &doc, &AnalyzeOpts { images: true, render_scanned: true, keep_running: true }, cancel, &mut |i, _| progress(i * 7, total))?;
             for (i, p) in layout.pages.iter().enumerate() {
                 if let Some(c) = cancel {
                     c.check()?;
