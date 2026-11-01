@@ -81,8 +81,9 @@ export function installTips() {
       if (!t.getAttribute("aria-label") && !(t.innerText || "").trim()) t.setAttribute("aria-label", t.title);
       t.removeAttribute("title");
     }
-    const label = t.dataset.tip || t.getAttribute("aria-label") || "";
     const shown = (t.innerText || "").replace(/\s+/g, " ").trim();
+    // 글자가 보이는 요소(끌어다 놓는 곳 등)는 aria-label만으로는 말풍선을 띄우지 않는다(title에서 온 설명만)
+    const label = t.dataset.tip || (shown ? "" : t.getAttribute("aria-label")) || "";
     // 이름이 이미 다 보이면 말풍선 없음
     return label && label !== shown ? label : "";
   };
