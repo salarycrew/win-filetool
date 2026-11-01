@@ -22,6 +22,8 @@ pub const USAGE: &str = "0.4 글자 인식(OCR)·가리기 (공통: --password �
   filetool-cli redact apply <pdf> (--marks 상자.json | --words … --presets …) [--dpi 200|300] [--no-ocr]   이름_가림.pdf + 확인 결과
   filetool-cli redact verify <pdf> <글...>                        글이 파일 어디에든 남았는지(JSON)
   filetool-cli redact image <jpg|png|heic> [--boxes x,y,w,h;x,y,w,h] [--text 은행_제출용]   사진 가리기(이름_가림.jpg, 위치·촬영 정보 없음)
+  filetool-cli ocr make-scan <글자.pdf> <출력.pdf> [--dpi 200] [--rotate 0|90|180|270] [--pages N]   점검용 스캔본(그림만 있는 PDF)
+  filetool-cli ocr make-photo <글자.pdf> <출력.jpg> [--page 1]   점검용 휴대폰 사진 흉내(흐리고 기울어짐)
   filetool-cli ocr-selftest <빈 폴더>                              가리기·글자 인식 점검(이 PC에 OCR이 있으면 인식까지)";
 
 const SWITCHES: [&str; 3] = ["--redo", "--no-ocr", "--json"];
@@ -167,6 +169,16 @@ pub fn run(cmd: &str, args: &[String]) -> Result<Option<ExitCode>> {
                 let o = pdf2docx::pdf_to_docx_with(&f, a.out().as_deref(), Some(rec.as_ref()), None, &mut |_, _| {})?;
                 json(&o);
             }
+        }
+        ("ocr", "make-scan") => {
+            let (src, dst) = (PathBuf::from(a.rest.get(2).ok_or_else(|| Error::Invalid(USAGE.into()))?), PathBuf::from(a.rest.get(3).ok_or_else(|| Error::Invalid(USAGE.into()))?));
+            let n = testpdf040::make_scan_n(&src, &dst, a.num("--dpi", 200u32)?, a.num("--rotate", 0u16)?, a.num("--pages", 0u32)?)?;
+            println!("{{\"output\": {:?}, \"pages\": {n}}}", dst.display().to_string());
+        }
+        ("ocr", "make-photo") => {
+            let (src, dst) = (PathBuf::from(a.rest.get(2).ok_or_else(|| Error::Invalid(USAGE.into()))?), PathBuf::from(a.rest.get(3).ok_or_else(|| Error::Invalid(USAGE.into()))?));
+            testpdf040::make_photo(&src, a.num("--page", 1u32)?, &dst)?;
+            println!("{{\"output\": {:?}}}", dst.display().to_string());
         }
         ("ocr", "image") => {
             let rec = ocr::engine(lang)?;

@@ -142,12 +142,20 @@ pub fn make_secrets(path: &Path) -> Result<bool> {
 
 /// 글자 PDF(`src`)의 쪽들을 `dpi`로 그려 그림만 있는 PDF(`dst`)로. `rotate`: 그림을 시계 방향으로 돌려 넣을 각도(누운 스캔 흉내)
 pub fn make_scan(src: &Path, dst: &Path, dpi: u32, rotate: u16) -> Result<u32> {
+    make_scan_n(src, dst, dpi, rotate, 0)
+}
+
+/// [`make_scan`] + 쪽을 되풀이해 `pages`쪽으로 채움(0 = 원래 쪽 수). 큰 스캔본(50쪽) 속도·취소 점검용
+pub fn make_scan_n(src: &Path, dst: &Path, dpi: u32, rotate: u16, pages: u32) -> Result<u32> {
     let p = crate::pdfrender::pdfium()?;
     let pdf = p.load_pdf_from_file(src, None).map_err(|e| crate::pdfrender::open_err(src, e))?;
     let mut doc = Document::with_version("1.5");
     let pages_id = doc.new_object_id();
     let mut kids = Vec::new();
-    for page in pdf.pages().iter() {
+    let n = pdf.pages().len() as u32;
+    let total = if pages == 0 { n } else { pages };
+    for k in 0..total {
+        let page = pdf.pages().get((k % n.max(1)) as i32).map_err(|e| crate::pdfrender::render_err(src, e))?;
         let img = crate::ocr::pdf::render(&page, dpi, src)?.to_rgb8();
         let img = match rotate {
             90 => image::imageops::rotate90(&img),
@@ -178,4 +186,31 @@ pub fn make_scan(src: &Path, dst: &Path, dpi: u32, rotate: u16) -> Result<u32> {
     doc.save_to(&mut bytes).map_err(io_err(dst))?;
     crate::paths::write_new(dst, &bytes)?;
     Ok(n)
+}
+
+/// 휴대폰으로 찍은 것 같은 사진(JPG): 쪽 하나를 그려 흑백·낮은 대비(밝기 70~185)·2도 기울임·살짝 흐림·잡음, JPEG 품질 60
+pub fn make_photo(src: &Path, page: u32, dst: &Path) -> Result<()> {
+    let p = crate::pdfrender::pdfium()?;
+    let pdf = p.load_pdf_from_file(src, None).map_err(|e| crate::pdfrender::open_err(src, e))?;
+    let pg = pdf.pages().get(page.saturating_sub(1) as i32).map_err(|e| crate::pdfrender::render_err(src, e))?;
+    let img = crate::ocr::pdf::render(&pg, 150, src)?.to_luma8();
+    let (w, h) = img.dimensions();
+    // 2도 돌리기(가장 가까운 점), 바깥은 회색 책상
+    let (s, c) = 2f32.to_radians().sin_cos();
+    let (cx, cy) = (w as f32 / 2.0, h as f32 / 2.0);
+    let mut seed = 12345u32;
+    let out = image::GrayImage::from_fn(w, h, |x, y| {
+        let (dx, dy) = (x as f32 - cx, y as f32 - cy);
+        let (sx, sy) = (c * dx + s * dy + cx, -s * dx + c * dy + cy);
+        let v = if sx >= 0.0 && sy >= 0.0 && (sx as u32) < w && (sy as u32) < h { img.get_pixel(sx as u32, sy as u32)[0] as f32 } else { 120.0 };
+        // 낮은 대비 + 위쪽이 어두운 그늘 + 잡음
+        seed = seed.wrapping_mul(1_103_515_245).wrapping_add(12345);
+        let noise = ((seed >> 16) % 21) as f32 - 10.0;
+        let shade = 1.0 - 0.18 * (1.0 - y as f32 / h as f32);
+        image::Luma([((70.0 + v * (115.0 / 255.0)) * shade + noise).clamp(0.0, 255.0) as u8])
+    });
+    let out = image::imageops::blur(&out, 0.8);
+    let mut jpg = Vec::new();
+    image::codecs::jpeg::JpegEncoder::new_with_quality(&mut jpg, 60).encode_image(&out).map_err(|e| crate::Error::Invalid(e.to_string()))?;
+    crate::paths::write_new(dst, &jpg)
 }
