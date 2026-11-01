@@ -199,15 +199,20 @@ pub fn since_start_ms(start: Instant) -> f64 {
 
 pub struct StartTime(pub Instant);
 
+/// 시작 단계 시각 적기(`WIN_FILETOOL_STARTUP_LOG`가 있을 때만): "단계 ms"
+pub fn mark(stage: &str, start: Instant) {
+    if let Some(p) = std::env::var_os("WIN_FILETOOL_STARTUP_LOG").filter(|v| !v.is_empty()) {
+        use std::io::Write;
+        if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(p) {
+            let _ = writeln!(f, "{stage} {:.0}", since_start_ms(start));
+        }
+    }
+}
+
 /// 화면이 첫 화면을 다 그렸을 때 부른다. `WIN_FILETOOL_STARTUP_LOG=<파일>`이면 그 파일에 한 줄 덧붙인다.
 #[tauri::command]
 pub fn ui_ready(start: State<'_, StartTime>, what: Option<String>) -> f64 {
     let ms = since_start_ms(start.0);
-    if let Some(p) = std::env::var_os("WIN_FILETOOL_STARTUP_LOG").filter(|v| !v.is_empty()) {
-        use std::io::Write;
-        if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(p) {
-            let _ = writeln!(f, "{} {:.0}", what.as_deref().unwrap_or("home"), ms);
-        }
-    }
+    mark(what.as_deref().unwrap_or("home"), start.0);
     ms
 }

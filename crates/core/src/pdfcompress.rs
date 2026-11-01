@@ -550,6 +550,7 @@ pub fn compress_to_target(
     let n = TARGET_LADDER.len();
     let mut best: Option<(Vec<u8>, usize, usize, usize, Level)> = None;
     let mut i = 0;
+    let mut skipped_from: Option<usize> = None;
     while i < n {
         if let Some(c) = cancel {
             c.check()?;
@@ -563,11 +564,26 @@ pub fn compress_to_target(
             best = Some((bytes, total, re, down, level));
         }
         if len <= target || total == 0 {
-            // 목표에 닿았거나, 사진이 하나도 없으면(글자·선만 있는 PDF) 더 해 봐야 같다
+            // 목표에 닿았거나, 사진이 하나도 없으면(글자·선만 있는 PDF) 더 해 봐야 같다.
+            // 단계를 건너뛰어 닿았으면 건너뛴 단계(화질이 더 좋음)도 목표 안인지 한 번 더 본다.
+            if let (Some(k), true) = (skipped_from, len <= target) {
+                if k + 1 < i {
+                    let (b2, t2, r2, d2) = compress_doc_level(doc.clone(), TARGET_LADDER[i - 1], cancel)?;
+                    if (b2.len() as u64) <= target {
+                        best = Some((b2, t2, r2, d2, TARGET_LADDER[i - 1]));
+                    }
+                }
+            }
             break;
         }
         // 크기가 목표의 2배를 넘으면 한 단계씩 말고 두 단계 건너뛴다(50쪽 스캔에서 시간을 줄임)
-        i += if len > target.saturating_mul(2) && i + 2 < n { 2 } else { 1 };
+        if len > target.saturating_mul(2) && i + 2 < n {
+            skipped_from = Some(i);
+            i += 2;
+        } else {
+            skipped_from = None;
+            i += 1;
+        }
     }
     progress(n, n);
     let (bytes, total, re, down, level) = best.expect("한 번은 해 봄");

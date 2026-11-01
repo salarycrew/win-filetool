@@ -1140,6 +1140,7 @@ fn main() {
     if !cmd_runtime::ensure_webview2() {
         std::process::exit(2);
     }
+    cmd_core::mark("main", started);
     let ctx_queue = cmd_core::CtxQueue::default();
     ctx_queue.push_args(std::env::args());
     tauri::Builder::default()
@@ -1168,7 +1169,8 @@ fn main() {
                 }
             }
         })
-        .setup(|app| {
+        .setup(move |app| {
+            cmd_core::mark("setup", started);
             // 설정 폴더: WIN_FILETOOL_CONFIG_DIR(시험용) → exe 옆 win-filetool-data\(휴대용, 0.3.0) → %APPDATA%
             let default_dir = app.path().app_config_dir().unwrap_or_else(|_| std::env::temp_dir().join("win-filetool"));
             let exe_dir = std::env::current_exe().ok().and_then(|p| p.parent().map(Path::to_path_buf));
@@ -1188,6 +1190,7 @@ fn main() {
                 });
                 rx.recv_timeout(Duration::from_millis(1500)).unwrap_or_default()
             };
+            cmd_core::mark("service-poll", started);
             // 검색 서비스: 저장한 색인을 불러오고 배경에서 다시 스캔, 실시간 갱신(창이 없어도 트레이에서 계속)
             let search = SearchService::start(search_config(&settings.search, &covered));
             let search_settings = settings.search.clone();
@@ -1220,6 +1223,7 @@ fn main() {
             if !autostart::is_autostart_launch(std::env::args()) {
                 show_main(app.handle());
             }
+            cmd_core::mark("window-shown", started);
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![

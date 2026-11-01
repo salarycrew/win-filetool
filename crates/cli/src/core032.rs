@@ -423,7 +423,10 @@ fn run_all(dir: &Path, only: &[String], f: &Flags) -> ExitCode {
                     ok += 1;
                     let refp = o.join("ref").join(format!("{}.pdf", p.file_stem().unwrap().to_string_lossy()));
                     let refn = thumbs::page_count(&refp, None).ok();
-                    let (n, blanks) = blank_pages(&c.output).unwrap_or((0, vec![0]));
+                    // 참고 PDF(원본 기관이 낸 PDF)에서도 빈 쪽이면 원래 빈 쪽 — 그 쪽은 빼고 본다
+                    let ref_blank = if refn.is_some() { blank_pages(&refp).map(|b| b.1).unwrap_or_default() } else { Vec::new() };
+                    let (n, all_blanks) = blank_pages(&c.output).unwrap_or((0, vec![0]));
+                    let blanks: Vec<u32> = all_blanks.iter().copied().filter(|b| !ref_blank.contains(b)).collect();
                     let pass = n > 0 && blanks.is_empty() && refn.map(|r| r == n).unwrap_or(true) && left.is_empty();
                     rows.push(Row {
                         job: "4 문서→PDF",
@@ -431,7 +434,7 @@ fn run_all(dir: &Path, only: &[String], f: &Flags) -> ExitCode {
                         pass,
                         secs,
                         out: mb(size(&c.output)),
-                        note: format!("{n}쪽{} · 빈 쪽 {blanks:?}{}", refn.map(|r| format!("(참고 PDF {r}쪽)")).unwrap_or_default(), if left.is_empty() { String::new() } else { format!(" · 남은 프로세스 {left:?}") }),
+                        note: format!("{n}쪽{} · 빈 쪽 {blanks:?}{}{}", refn.map(|r| format!("(참고 PDF {r}쪽)")).unwrap_or_default(), if ref_blank.is_empty() { String::new() } else { format!(" (참고 PDF에서도 빈 쪽 {ref_blank:?}은 뺌)") }, if left.is_empty() { String::new() } else { format!(" · 남은 프로세스 {left:?}") }),
                     });
                 }
                 Err(e) => {

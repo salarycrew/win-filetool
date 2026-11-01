@@ -133,18 +133,20 @@ async function takeCtx() {
 }
 listen<null>("ctx-ready", () => { takeCtx(); });
 
+// 첫 화면(홈)은 스크립트가 돌자마자 그린다 — 백엔드 답을 기다리지 않음(0.3.2 빠른 시작).
+// 시작 인자(--tab=, --search=, 우클릭 묶음)는 그다음에 묻고, 새 버전 확인은 첫 화면을 그린 뒤에.
+go("home", undefined, false);
+requestAnimationFrame(() => setTimeout(() => invoke("ui_ready", { what: "home" }).catch(() => {}), 0));
 (async () => {
-  // 첫 화면(홈)은 바로 그린다 — 설정 읽기를 기다리지 않음(0.3.2 빠른 시작)
   const [t, q] = await Promise.all([
     invoke<string | null>("startup_tab").catch(() => null),
     invoke<string | null>("startup_query").catch(() => null),
   ]);
-  const start = q ? "search" : pick(t) ?? "home";
-  go(start, q ? { query: q } : undefined, false);
-  requestAnimationFrame(() => setTimeout(() => invoke("ui_ready", { what: start }).catch(() => {}), 0));
-  takeCtx();
+  const start = q ? "search" : pick(t);
+  if (start && start !== "home") go(start, q ? { query: q } : undefined, false);
+  await takeCtx();
+  initUpdate();
 })();
-initUpdate();
 listen<string>("goto-tab", (t) => { const id = pick(t); if (id) go(id); });
 
 // 단축키: Ctrl+F = 검색, Ctrl+O = 파일 고르기(변환)
