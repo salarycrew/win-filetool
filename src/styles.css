@@ -546,7 +546,7 @@ textarea.ex.big { height: 360px; margin-top: 8px; }
 .job-top { margin: -8px 0 8px -6px; }
 h1.title .tile { display: inline-grid; vertical-align: -8px; margin-right: 10px; }
 .dz.job-dz { min-height: 260px; }
-.job-fl { max-height: 320px; }
+.job-fl { max-height: 420px; }
 .job-opt { margin-top: 12px; }
 .pg-strip { list-style: none; padding: 6px 8px 10px 40px; }
 .thumbs { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; max-height: 260px; overflow-y: auto; }

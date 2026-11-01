@@ -124,7 +124,7 @@ export function friendly(e: unknown): Friendly {
   if (/암호가 걸린 한글 파일/.test(m)) return f("locked", "lock", "암호가 걸린 한글 파일이에요", "한글에서 암호를 풀고 다시 넣어 주세요.");
   if (/배포용 한글 파일/.test(m)) return f("unsupported", "lock", "배포용 한글 파일이에요", m.replace(/^.*?실행 실패:\s*/, "").replace(/^[^:]*\.hwpx?:\s*/i, ""));
   if (code === "password_required" || /암호가 걸린|암호.*(필요|있어)|encrypted|password/i.test(m))
-    return f("locked", "lock", "암호가 걸린 PDF예요", "암호를 알고 있으면 [PDF 편집]에서 열거나 [암호 걸기·풀기]로 먼저 풀어 주세요. 여러 개를 넣었을 때는 이 파일만 건너뛰어요.");
+    return f("locked", "lock", "암호가 걸린 PDF예요", "암호를 알고 있으면 [더 보기] → PDF 편집에서 열어 풀 수 있어요. 여러 개를 넣었을 때는 이 파일만 건너뛰어요.");
   if (code === "wrong_password") return f("locked", "lock", "암호가 맞지 않아요", "대문자·소문자와 한/영 상태를 확인하고 다시 넣어 주세요.");
   // 0.3.0 QA-05: 빈 파일 · 저장할 권한 없는 폴더는 "잠시 뒤 다시"가 아니라 할 일을 알려 준다
   if (code === "empty_file" || /빈 파일입니다|0바이트|file is empty|empty file/i.test(m))

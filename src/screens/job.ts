@@ -280,7 +280,8 @@ async function eachItem(pg: HTMLElement, newRun: () => number, targetBytes: numb
         else results.push({ input: it.path, output: o.output, before: o.before, after: o.after, note: o.reached ? undefined : o.note });
       } else if (job.id === "office2pdf") {
         const o = await invoke<{ output: string }>("convert_one", { job: j, path: it.path, op: { kind: "doc", target: "pdf" }, outDir: null });
-        results.push({ input: it.path, output: o.output, before: it.size ?? null });
+        // 형식이 바뀌므로 크기 비교("N배 커졌어요")는 하지 않는다
+        results.push({ input: it.path, output: o.output, pill: "PDF" });
       } else if (job.id === "macname") {
         await fixName(it);
       }
