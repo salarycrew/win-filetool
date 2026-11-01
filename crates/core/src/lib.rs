@@ -59,6 +59,7 @@ pub mod search;
 pub mod settings;
 pub mod tempdir;
 pub mod tools;
+pub mod update;
 pub mod watch;
 pub mod zipnfc;
 pub mod ziptool;

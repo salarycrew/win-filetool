@@ -5,6 +5,10 @@ edition.workspace = true
 license.workspace = true
 description = "파일 도구 (Tauri 2 앱)"
 
+[features]
+# 0.3.1 시험용 exe만: 새 버전 확인 주소를 WIN_FILETOOL_UPDATE_URL로 바꿀 수 있게(배포 빌드에서는 켜지 않음)
+update-test = []
+
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 
@@ -20,4 +24,4 @@ image = { version = "0.25.10", default-features = false, features = ["png"] }
 
 [target.'cfg(windows)'.dependencies]
 # 2c: 빠른 검색 서비스 설치/제거 단추(ShellExecuteExW runas)
-windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_System_Threading", "Win32_System_Registry", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging", "Win32_Graphics_Gdi", "Win32_Storage_FileSystem", "Win32_System_Com"] }
+windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_System_Threading", "Win32_System_Registry", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging", "Win32_Graphics_Gdi", "Win32_Storage_FileSystem", "Win32_System_Com", "Win32_Networking_WinHttp"] }

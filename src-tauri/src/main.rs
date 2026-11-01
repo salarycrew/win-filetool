@@ -18,6 +18,7 @@ mod cmd_office;
 mod cmd_tools;
 mod cmd_hwp;
 mod cmd_ui;
+mod cmd_update;
 mod icons;
 mod remote;
 
@@ -1230,7 +1231,13 @@ fn main() {
             // 0.3.0 화면(W5) 읽기 전용 도우미
             cmd_ui::file_stats,
             cmd_ui::list_files,
-            cmd_ui::image_data_url
+            cmd_ui::image_data_url,
+            // 0.3.1 새 버전 알림
+            cmd_update::update_view,
+            cmd_update::update_check,
+            cmd_update::update_set_enabled,
+            cmd_update::update_skip,
+            cmd_update::update_open
         ])
         .build(tauri::generate_context!())
         .expect("파일 도구를 시작하지 못했습니다")

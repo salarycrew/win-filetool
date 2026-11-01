@@ -20,6 +20,9 @@ pub struct Settings {
     /// ux3: 다시 켤 때 기억할 화면 상태(마지막 탭, 창 위치·크기, 검색 정렬, 열 너비)
     #[serde(default)]
     pub ui: UiState,
+    /// 0.3.1: 새 버전 알림(켬/끔, 마지막 확인, 넘긴 판)
+    #[serde(default)]
+    pub update: crate::update::UpdateSettings,
 }
 
 /// ux3: 화면 상태. 모두 없으면 기본값(검색 탭, 기본 창 크기, 이름 오름차순)

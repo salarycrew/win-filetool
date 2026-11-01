@@ -219,6 +219,11 @@ select.txt { padding-right: 4px; }
 .note.warn { background: var(--warn-soft); } .note.warn .ic { color: var(--warn); }
 .note.ok { background: var(--ok-soft); } .note.ok .ic { color: var(--ok); }
 .note .btn { margin-left: auto; }
+/* 0.3.1 새 버전 알림 띠 */
+.upd { max-width: 1080px; margin: 0 auto 12px; flex-wrap: wrap; }
+.upd .grow { flex: 1; min-width: 140px; }
+.upd .btn { margin-left: 0; }
+.pane.flush > .upd { width: 100%; max-width: none; flex: none; }
 ul.peek { margin: 6px 0; padding-left: 18px; font-size: 12px; color: var(--text-2); max-height: 180px; overflow: auto; }
 
 /* ---------- 진행·결과 ---------- */

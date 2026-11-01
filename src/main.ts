@@ -11,6 +11,7 @@ import { organizeScreen } from "./screens/organize";
 import { searchScreen } from "./screens/search";
 import { watchScreen } from "./screens/watch";
 import { settingsScreen } from "./screens/settings";
+import { initUpdate } from "./update";
 import { aboutScreen } from "./screens/about";
 
 const MAIN: Screen[] = [convertScreen, pdfEditScreen, organizeScreen, searchScreen, watchScreen];
@@ -120,6 +121,7 @@ const pick = (t: string | null | undefined): ScreenId | null => (!t ? null : IDS
   const start = q ? "search" : pick(t) ?? pick(ui.tab) ?? "convert";
   go(start, q ? { query: q } : undefined, false);
 })();
+initUpdate();
 listen<string>("goto-tab", (t) => { const id = pick(t); if (id) go(id); });
 
 // 단축키: Ctrl+F = 검색, Ctrl+O = 파일 고르기(변환)

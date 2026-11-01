@@ -6,6 +6,7 @@ import { $, bindSegs, confirmDlg, esc, seg, toast, toggle } from "../ui";
 import { themePref, setThemePref, ThemePref } from "../theme";
 import { resetWelcome } from "../welcome";
 import { go } from "../router";
+import { showBanner, UpdateOutcome, UpdateView } from "../update";
 
 interface AutostartStatus { enabled: boolean; value: string | null; matches_exe: boolean; supported: boolean }
 interface ServiceInfo { installed: boolean; state: string; running: boolean; start_type: string; account: string }
@@ -34,6 +35,8 @@ function render() {
       <span class="state off svc-chip"><i></i>…</span><button type="button" class="btn accent svc-up" data-svc="update" aria-label="빠른 검색 서비스 다시 설치(갱신)" title="빠른 검색 서비스 다시 설치(갱신)" hidden>${I("refresh")}다시 설치(갱신)</button><button type="button" class="btn svc-btn" disabled>…</button></div>
     <div class="sc"><span class="sc-ic">${I("keyboard")}</span><div class="sc-t"><b>단축키로 검색 열기</b><span>어디서든 눌러 검색 창을 띄워요. 칸을 누르고 쓸 단축키를 누르세요</span></div>
       <input class="txt sm hk" id="hk" placeholder="예: Ctrl+Alt+F" aria-label="단축키" readonly>${toggle("hk-on", false, "")}</div>
+    <div class="sc upd-sc"><span class="sc-ic">${I("refresh")}</span><div class="sc-t"><b>새 버전 나오면 알려 주기</b><span class="upd-state">GitHub에서 최신 버전 번호만 확인해요(하루 한 번까지)</span></div>
+      <button type="button" class="btn" data-act="upd-check">지금 확인</button>${toggle("upd-on", true, "")}</div>
     <div class="adv ${advOpen ? "open" : ""}"><button type="button" class="adv-h" aria-expanded="${advOpen}" data-act="adv">${I("tool")}<span class="sc-t"><b>고급</b><span>검색할 곳·제외할 폴더·변환 도구·서비스 명령</span></span>${I("down", "chev")}</button>
       <div class="adv-b" ${advOpen ? "" : "hidden"}>
         <div class="ar col"><div class="sc-t"><b>검색할 곳</b><span>비워 두면 모든 드라이브를 찾아요</span></div><ul class="roots-l"></ul>
@@ -56,7 +59,28 @@ async function loadAll() {
   invoke<AutostartStatus>("autostart_get").then(showAutostart).catch((e) => { $(".as-state", root)!.textContent = friendly(e).title; });
   refreshSearch();
   refreshSvc();
+  refreshUpd();
   if (advOpen) loadTools();
+}
+
+const UPD_HINT = "GitHub에서 최신 버전 번호만 확인해요(하루 한 번까지)";
+async function refreshUpd(msg?: string) {
+  const v = await invoke<UpdateView>("update_view").catch(() => null);
+  if (!v) return;
+  const t = $<HTMLInputElement>("#upd-on", root);
+  if (t) { t.checked = v.enabled; t.closest(".tg")!.querySelector(".tg-l")!.textContent = v.enabled ? "켬" : "끔"; }
+  const st = $(".upd-state", root);
+  if (st) st.textContent = msg ?? (v.enabled ? UPD_HINT : "꺼져 있어요. [지금 확인]을 누를 때만 확인해요");
+}
+async function checkNow(btn: HTMLButtonElement) {
+  btn.disabled = true;
+  $(".upd-state", root)!.textContent = "확인하는 중…";
+  const o = await invoke<UpdateOutcome>("update_check", { force: true }).catch(() => ({ state: "failed" }) as UpdateOutcome);
+  btn.disabled = false;
+  const v = await invoke<UpdateView>("update_view").catch(() => null);
+  const msg = o.state === "newer" ? `새 버전 ${o.version}가 나왔어요` : o.state === "latest" ? `최신 버전이에요 (${v?.current ?? ""})` : "확인하지 못했어요. 인터넷 연결을 확인하고 나중에 다시 해 보세요";
+  refreshUpd(msg);
+  if (o.state === "newer" && v) showBanner({ ...v, banner: { version: o.version, url: o.url } });
 }
 
 function showAutostart(st: AutostartStatus) {
@@ -185,6 +209,8 @@ export const settingsScreen: Screen = {
         const hk = hotkeyDraft || view.settings.hotkey;
         if (t.checked && !hk) { toast("왼쪽 칸을 누르고 쓸 단축키를 먼저 누르세요"); t.checked = false; return; }
         saveSearch({ ...view.settings, hotkey: hk, hotkey_enabled: t.checked });
+      } else if (t.id === "upd-on") {
+        try { showBanner(await invoke<UpdateView>("update_set_enabled", { enabled: t.checked })); refreshUpd(); } catch (err) { toast(friendly(err).title); t.checked = !t.checked; }
       }
     });
     root.addEventListener("input", (e) => { if ((e.target as HTMLElement).id === "excludes") (e.target as HTMLElement).dataset.dirty = "1"; });
@@ -224,8 +250,10 @@ export const settingsScreen: Screen = {
         case "save-ex": if (view) saveSearch({ ...view.settings, excludes: ($<HTMLTextAreaElement>("#excludes", root)!).value.split("\n").map((x) => x.trim()).filter(Boolean) }); break;
         case "welcome": resetWelcome(); toast("변환 화면에 안내를 다시 보여 드려요"); go("convert"); break;
         case "about": go("about"); break;
+        case "upd-check": checkNow(b as HTMLButtonElement); break;
       }
     });
+    document.addEventListener("ft-update", () => refreshUpd());
     render();
   },
   show() { visible = true; loadAll(); },
