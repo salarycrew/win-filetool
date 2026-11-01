@@ -226,7 +226,7 @@ function render() {
   root.innerHTML = `<h1 class="title">PDF 편집</h1>
     <div class="filecard">${FT("pdf", 36)}<div class="fc-t"><b title="${esc(d.path)}">${esc(fileName(d.path))}${sources.length > 1 ? ` 외 ${sources.length - 1}개` : ""}</b>
       <span class="pe-meta"></span></div>
-      <button type="button" class="btn subtle" data-act="open">${I("upload")}<span class="hide-n">다른 PDF 열기</span></button></div>
+      <button type="button" class="btn subtle" data-act="open" aria-label="다른 PDF 열기">${I("upload")}<span class="hide-n">다른 PDF 열기</span></button></div>
     <div class="pe-result" hidden></div><div class="pe-busy" hidden></div>
     <div class="pe-main"></div>`;
   renderResult();

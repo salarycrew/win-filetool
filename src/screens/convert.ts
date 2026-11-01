@@ -657,7 +657,7 @@ function fileCards(): string {
     const it = items[0];
     return `<div class="filecard"><div class="ftw">${FT(it.kind === "dir" ? "folder" : extOf(it.path), 36)}${it.locked ? `<span class="lockbadge">${I("lock")}</span>` : ""}</div>
       <div class="fc-t"><b title="${esc(it.path)}">${esc(fileName(it.path))}</b><span>${esc(fileMeta(it))} · ${esc(dirOf(it.path))}</span></div>
-      ${phase === "run" ? "" : `<button type="button" class="btn subtle" data-act="more">${I("plus")}<span class="hide-n">더 넣기</span></button><button type="button" class="btn subtle" data-act="clear">${I("x")}<span class="hide-n">다른 파일</span></button>`}</div>`;
+      ${phase === "run" ? "" : `<button type="button" class="btn subtle" data-act="more" aria-label="더 넣기">${I("plus")}<span class="hide-n">더 넣기</span></button><button type="button" class="btn subtle" data-act="clear" aria-label="다른 파일">${I("x")}<span class="hide-n">다른 파일</span></button>`}</div>`;
   }
   const total = items.reduce((a, x) => a + (x.size ?? 0), 0);
   const kinds = groups().map((g) => CLS_LABEL[g.cls](g.items.length)).join(" · ");
@@ -666,7 +666,7 @@ function fileCards(): string {
       ${phase === "run" ? "" : `<span class="fl-b"><button type="button" class="ib" data-up="${i}" title="위로" aria-label="${esc(fileName(it.path))} 위로" ${i === 0 ? "disabled" : ""}>${I("up")}</button><button type="button" class="ib" data-down="${i}" title="아래로" aria-label="${esc(fileName(it.path))} 아래로" ${i === items.length - 1 ? "disabled" : ""}>${I("down")}</button><button type="button" class="ib" data-rm="${i}" title="빼기" aria-label="${esc(fileName(it.path))} 빼기">${I("x")}</button></span>`}</li>`).join("");
   return `<div class="filecard multi"><div class="fc-head"><div class="stack">${items.slice(0, 3).map((x) => FT(x.kind === "dir" ? "folder" : extOf(x.path), 32)).join("")}</div>
       <div class="fc-t"><b>${items.length}개 넣었어요</b><span>${esc(kinds)}${total ? ` · ${human(total)}` : ""}</span></div>
-      ${phase === "run" ? "" : `<button type="button" class="btn subtle" data-act="more">${I("plus")}<span class="hide-n">더 넣기</span></button><button type="button" class="btn subtle" data-act="clear">${I("x")}<span class="hide-n">모두 빼기</span></button>`}</div>
+      ${phase === "run" ? "" : `<button type="button" class="btn subtle" data-act="more" aria-label="더 넣기">${I("plus")}<span class="hide-n">더 넣기</span></button><button type="button" class="btn subtle" data-act="clear" aria-label="모두 빼기">${I("x")}<span class="hide-n">모두 빼기</span></button>`}</div>
     <ul class="fl">${rows}</ul></div>`;
 }
 
