@@ -16,10 +16,10 @@
       {
         "label": "main",
         "title": "파일 도구",
-        "width": 820,
-        "height": 860,
+        "width": 1000,
+        "height": 680,
         "minWidth": 640,
-        "minHeight": 560,
+        "minHeight": 520,
         "dragDropEnabled": true,
         "visible": false
       }

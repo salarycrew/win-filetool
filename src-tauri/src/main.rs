@@ -15,6 +15,7 @@
 mod cmd_runtime;
 mod cmd_pdfedit;
 mod cmd_office;
+mod cmd_ui;
 mod icons;
 mod remote;
 
@@ -1200,7 +1201,11 @@ fn main() {
             cmd_pdfedit::pdf_info_clear,
             cmd_pdfedit::pdf_form_list,
             cmd_pdfedit::pdf_form_fill,
-            cmd_pdfedit::pdf_flatten
+            cmd_pdfedit::pdf_flatten,
+            // 0.3.0 화면(W5) 읽기 전용 도우미
+            cmd_ui::file_stats,
+            cmd_ui::list_files,
+            cmd_ui::image_data_url
         ])
         .build(tauri::generate_context!())
         .expect("파일 도구를 시작하지 못했습니다")
