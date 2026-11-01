@@ -46,6 +46,8 @@ pub enum Bullet {
     None,
     Char(String),
     Number,
+    /// 번호 목록을 이 번호부터(나눠진 슬라이드에서 이어 세기)
+    NumberFrom(u32),
 }
 
 #[derive(Debug, Clone, PartialEq, Default)]
@@ -174,6 +176,7 @@ fn paras_xml(paras: &[Para], in_table: bool) -> String {
         }
         let ppr = match &p.bullet {
             Bullet::Number => format!(r#"<a:pPr marL="{}" indent="-{indent}" lvl="{}" algn="{algn}">{inner}<a:buFont typeface="+mj-lt"/><a:buAutoNum type="arabicPeriod"/></a:pPr>"#, indent * (p.level as i64 + 1), p.level.min(8)),
+            Bullet::NumberFrom(n) => format!(r#"<a:pPr marL="{}" indent="-{indent}" lvl="{}" algn="{algn}">{inner}<a:buFont typeface="+mj-lt"/><a:buAutoNum type="arabicPeriod" startAt="{}"/></a:pPr>"#, indent * (p.level as i64 + 1), p.level.min(8), (*n).max(1)),
             Bullet::Char(b) => format!(r#"<a:pPr marL="{}" indent="-{indent}" lvl="{}" algn="{algn}">{inner}<a:buFont typeface="Arial"/><a:buChar char="{}"/></a:pPr>"#, indent * (p.level as i64 + 1), p.level.min(8), esc(b)),
             Bullet::None => format!(r#"<a:pPr marL="0" indent="0" algn="{algn}">{inner}<a:buNone/></a:pPr>"#),
         };

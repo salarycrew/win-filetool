@@ -77,6 +77,7 @@ fn word_to_ppt_structure() {
     let all: String = (1..=11).map(|i| part(&r.output, &format!("ppt/slides/slide{i}.xml"))).collect();
     assert!(part(&r.output, "ppt/slides/slide1.xml").contains("2026년 3분기 영업 보고서"));
     assert!(all.contains("다음 분기 계획 (계속)"));
+    assert!(all.contains(r#"startAt="6""#) || all.contains(r#"startAt="7""#), "나눠진 번호 목록은 이어 셈");
     // 그림 설명은 글머리표 없는 글(buNone)로 그림 아래에
     let cap = all.find("그림 1. 월별 매출 추이").expect("캡션");
     let before = &all[..cap];

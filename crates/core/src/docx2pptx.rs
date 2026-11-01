@@ -635,7 +635,24 @@ fn emit(deck: &mut Deck, sec: &Section) {
         }
         return;
     }
-    let chunks = chunk(&sec.items);
+    let mut chunks = chunk(&sec.items);
+    // 나눠진 번호 목록은 다음 슬라이드에서 이어 센다
+    let mut seen = 0u32;
+    for ch in chunks.iter_mut() {
+        let mut first = true;
+        for p in ch.iter_mut() {
+            if p.bullet == Bullet::Number && p.level == 0 {
+                seen += 1;
+                if first && seen > 1 {
+                    p.bullet = Bullet::NumberFrom(seen);
+                }
+                first = false;
+            } else if p.level == 0 {
+                seen = 0;
+                first = true;
+            }
+        }
+    }
     let mut imgs = sec.images.iter();
     if chunks.is_empty() && sec.images.is_empty() && sec.tables.is_empty() {
         // 내용 없는 제목 → 구역 표시 슬라이드
