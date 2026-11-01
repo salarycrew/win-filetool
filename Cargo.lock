@@ -1198,6 +1198,7 @@ dependencies = [
  "memchr",
  "notify",
  "pdfium-render",
+ "quick-xml",
  "serde",
  "serde_json",
  "tempfile",
