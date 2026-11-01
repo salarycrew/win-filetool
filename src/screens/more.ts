@@ -13,7 +13,7 @@ const ENTRIES: { id: ScreenId; t: string; d: string; ic: string; tone: string }[
 ];
 
 export const moreScreen = {
-  id: "more", title: "더 보기", icon: "grid",
+  id: "more", title: "더 보기", icon: "more",
   init(root: HTMLElement) {
     root.innerHTML = `<h1 class="title">더 보기</h1><p class="sub">자주 쓰는 6가지 말고도 이런 일을 할 수 있어요.</p>
       <div class="cards two more-l">${ENTRIES.map((e) => `<button type="button" class="card" data-to="${e.id}"><span class="tile tone-${e.tone}">${I(e.ic)}</span>

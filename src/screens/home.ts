@@ -56,7 +56,7 @@ async function take(paths: string[]) {
 }
 
 export const homeScreen = {
-  id: "home", title: "홈", icon: "grid",
+  id: "home", title: "홈", icon: "home",
   init(el: HTMLElement) {
     root = el;
     root.addEventListener("click", async (e) => {

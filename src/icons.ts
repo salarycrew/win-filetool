@@ -53,6 +53,8 @@ export const P: Record<string, string> = {
   unlock: '<rect x="5" y="10.5" width="14" height="10" rx="2"/><path d="M8 10.5V8a4 4 0 0 1 7.7-1.5M12 14.5v2.5"/>',
   crop: '<path d="M6 2.5V16a2 2 0 0 0 2 2h13.5"/><path d="M2.5 6H16a2 2 0 0 1 2 2v13.5"/>',
   a4: '<rect x="5.5" y="3" width="13" height="18" rx="1"/><path d="M8.5 15l2-5 2 5M9.1 13.5h2.8M15.5 10v5M14 13.5h2.5"/>',
+  home: '<path d="M4 10.5 12 4l8 6.5V19a1 1 0 0 1-1 1h-4.5v-5.5h-5V20H5a1 1 0 0 1-1-1z"/>',
+  more: '<circle cx="6" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="18" cy="12" r="1.6"/>',
   grid: '<rect x="3.5" y="3.5" width="7" height="7" rx="1"/><rect x="13.5" y="3.5" width="7" height="7" rx="1"/><rect x="3.5" y="13.5" width="7" height="7" rx="1"/><rect x="13.5" y="13.5" width="7" height="7" rx="1"/>',
   form: '<rect x="4" y="3.5" width="16" height="17" rx="1.5"/><path d="M7.5 8h9M7.5 12h9M7.5 16h5"/>',
   flatten: '<path d="M4 8.5h16M4 12h16M4 15.5h16"/><path d="m9 4 3 2.5L15 4M9 20l3-2.5 3 2.5"/>',
