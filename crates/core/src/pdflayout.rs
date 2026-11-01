@@ -325,7 +325,13 @@ fn read_page(page: &PdfPage, want_images: bool) -> std::result::Result<RawPage, 
         let fl = font.to_lowercase();
         let weight = ch.font_weight().map(|w| matches!(w, PdfFontWeight::Weight600 | PdfFontWeight::Weight700Bold | PdfFontWeight::Weight800 | PdfFontWeight::Weight900 | PdfFontWeight::Custom(600..))).unwrap_or(false);
         let bold = weight || fl.contains("bold") || fl.contains("black") || fl.contains("heavy") || ch.font_is_bold_reenforced();
-        let italic = ch.font_is_italic() || fl.contains("italic") || fl.contains("oblique");
+        // 기울임 글꼴이 없어 글자를 비스듬히 그린 경우(LibreOffice·Word의 가짜 기울임): 글자 행렬의 두 축이 직각이 아님
+        let sheared = ch.matrix().map(|m| {
+            let (a, b, c, d) = (m.a(), m.b(), m.c(), m.d());
+            let n = ((a * a + b * b) * (c * c + d * d)).sqrt();
+            n > 0.0 && ((a * c + b * d) / n).abs() > 0.12
+        });
+        let italic = ch.font_is_italic() || fl.contains("italic") || fl.contains("oblique") || sheared.unwrap_or(false);
         raws.push(Raw {
             c,
             l: bd.left().value,
@@ -1036,6 +1042,26 @@ fn build_table(lines: &[Line], hrules: &[(f32, f32, f32)], vrules: &[(f32, f32, 
                 Some(c) if a <= c.1 + 1.0 => c.1 = c.1.max(b),
                 _ => cols.push((a, b)),
             }
+        }
+    }
+    if !by_rules {
+        // 선 없는 표: 한 줄에 함께 나온 적이 없는 이웃 열은 같은 열(가운데 머리글 ↔ 오른쪽 정렬 숫자)
+        loop {
+            let used: Vec<Vec<bool>> = lines
+                .iter()
+                .map(|l| {
+                    let mut u = vec![false; cols.len()];
+                    for c in &l.cells {
+                        if let Some(k) = cols.iter().position(|(a, b)| c.x0 >= a - 1.0 && c.x0 <= b + 1.0) {
+                            u[k] = true;
+                        }
+                    }
+                    u
+                })
+                .collect();
+            let Some(k) = (0..cols.len().saturating_sub(1)).find(|&k| !used.iter().any(|u| u[k] && u[k + 1])) else { break };
+            cols[k].1 = cols[k + 1].1;
+            cols.remove(k + 1);
         }
     }
     if cols.len() < 2 {

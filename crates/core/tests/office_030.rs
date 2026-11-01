@@ -139,7 +139,7 @@ fn pdf_to_word_libreoffice_pdf() {
     assert_eq!(count(&doc, r#"<w:pStyle w:val="Heading1"/>"#), 5);
     assert_eq!(count(&doc, r#"<w:pStyle w:val="ListNumber"/>"#), 9);
     assert_eq!(count(&doc, r#"<w:pStyle w:val="Caption"/>"#), 1);
-    assert_eq!(count(&doc, "<w:tr>") + count(&doc, "<w:tr><w:trPr>"), 5);
+    assert_eq!(count(&doc, "<w:tr>"), 5);
     assert!(doc.contains("<w:drawing>"));
     // 2단계 글머리표(수도권)
     assert!(doc.contains(r#"<w:ilvl w:val="1"/>"#));
@@ -190,6 +190,50 @@ fn pdf_to_word_two_columns_reading_order() {
     let p4 = text.lines().find(|l| l.starts_with("[4]")).unwrap();
     assert!(p4.ends_with("읽어야 합니다."), "{p4}");
     assert!(!text.contains("무단 배포"), "쪽 번호가 붙은 바닥글은 한 쪽짜리여도 뺌");
+}
+
+#[test]
+fn pdf_to_word_borderless_table_bold_italic_link() {
+    if !pdfium_ok() {
+        return;
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let r = pdf2docx::pdf_to_docx(&data("선없는표.pdf"), Some(dir.path()), None, &mut noop).unwrap();
+    assert_eq!((r.headings, r.tables), (1, 1), "{r:?}");
+    let doc = part(&r.output, "word/document.xml");
+    assert_eq!(count(&doc, "<w:gridCol "), 4, "테두리 없는 표도 4열(가운데 머리글·오른쪽 정렬 숫자)");
+    assert_eq!(count(&doc, "<w:tr>"), 4);
+    assert_eq!(count(&doc, "<w:tblHeader/>"), 1);
+    // 굵게·기울임·링크
+    let bold_run = doc.split("<w:r>").find(|r| r.contains("굵은 글씨")).unwrap();
+    assert!(bold_run.contains("<w:b/>"), "{bold_run}");
+    let it_run = doc.split("<w:r>").find(|r| r.contains("기울인 글씨")).unwrap();
+    assert!(it_run.contains("<w:i/>"), "{it_run}");
+    assert!(part(&r.output, "word/_rels/document.xml.rels").contains("https://example.org/report"));
+    let text = docx_text(&r.output);
+    assert!(text.contains("2,180") && text.contains("표 아래 문단입니다."));
+}
+
+#[test]
+fn word_to_ppt_keeps_emf() {
+    use filetool_core::ooxml::docx::{Block, Doc, Run};
+    let dir = tempfile::tempdir().unwrap();
+    // EMF 머리(레코드 1, 40바이트 위치에 " EMF")를 가진 그림
+    let mut emf = vec![1u8, 0, 0, 0, 108, 0, 0, 0];
+    emf.resize(40, 0);
+    emf.extend_from_slice(b" EMF");
+    emf.resize(120, 7);
+    let mut d = Doc::new("emf");
+    d.blocks = vec![Block::Heading { level: 1, runs: vec![Run::plain("도형")] }, Block::Image { bytes: emf.clone(), name: "chart.emf".into(), w: 914_400, h: 457_200 }];
+    let src = dir.path().join("도형.docx");
+    d.save(&src).unwrap();
+    let r = docx2pptx::doc_to_pptx(&src, Some(dir.path()), None, None, &mut noop).unwrap();
+    assert_eq!(parts_matching(&r.output, "ppt/media/"), vec!["ppt/media/image1.emf".to_string()]);
+    let mut z = zip::ZipArchive::new(std::fs::File::open(&r.output).unwrap()).unwrap();
+    let mut b = Vec::new();
+    z.by_name("ppt/media/image1.emf").unwrap().read_to_end(&mut b).unwrap();
+    assert_eq!(b, emf, "EMF는 바꾸지 않고 그대로");
+    assert!(part(&r.output, "[Content_Types].xml").contains(r#"Extension="emf" ContentType="image/x-emf""#));
 }
 
 #[test]

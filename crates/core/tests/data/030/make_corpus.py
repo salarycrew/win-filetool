@@ -14,6 +14,7 @@
   스캔본.pdf       쪽을 150dpi 회색 그림으로(기울기 0.7°, 잡티) — 글자 없음
   암호.pdf         여는 암호(1234)가 걸린 PDF
   회전쪽.pdf       2쪽이 /Rotate 90
+  선없는표.pdf     테두리 없는 표(가운데 머리글·오른쪽 정렬 숫자), 굵게·기울임·하이퍼링크
   엣지인쇄.html    Edge "PDF로 인쇄"용 원본(엣지인쇄.pdf는 Windows에서 msedge --print-to-pdf로 만든다)
   이미지모음.pptx  같은 그림을 두 슬라이드에 + 다른 그림
   그림표.xlsx      그림 두 장이 든 시트
@@ -193,6 +194,41 @@ def make_report_docx(path, two_col_only=False):
     doc.save(path)
 
 
+def make_noborder_docx(path):
+    from docx.enum.text import WD_ALIGN_PARAGRAPH
+    from docx.opc.constants import RELATIONSHIP_TYPE as RT
+    doc = Document()
+    set_font(doc)
+    doc.add_paragraph("선 없는 표 시험", style="Heading 1")
+    p = doc.add_paragraph("이 문단에는 ")
+    p.add_run("굵은 글씨").bold = True
+    p.add_run("와 ")
+    p.add_run("기울인 글씨").italic = True
+    p.add_run(", 그리고 ")
+    rid = doc.part.relate_to("https://example.org/report", RT.HYPERLINK, is_external=True)
+    h = OxmlElement("w:hyperlink")
+    h.set(qn("r:id"), rid)
+    r = OxmlElement("w:r")
+    t = OxmlElement("w:t")
+    t.text = "누리집 링크"
+    r.append(t)
+    h.append(r)
+    p._p.append(h)
+    p.add_run("가 들어 있습니다.")
+    rows = [("품목", "1월", "2월", "합계"), ("사과", "1,200", "980", "2,180"), ("배", "640", "1,020", "1,660"), ("포도", "75", "90", "165")]
+    t = doc.add_table(rows=len(rows), cols=4)  # 기본 표 스타일: 테두리 없음
+    for ri, row in enumerate(rows):
+        for ci, v in enumerate(row):
+            cell = t.cell(ri, ci)
+            cell.text = v
+            par = cell.paragraphs[0]
+            par.alignment = WD_ALIGN_PARAGRAPH.CENTER if ri == 0 else (WD_ALIGN_PARAGRAPH.RIGHT if ci > 0 else WD_ALIGN_PARAGRAPH.LEFT)
+            if ri == 0:
+                par.runs[0].bold = True
+    doc.add_paragraph("표 아래 문단입니다.")
+    doc.save(path)
+
+
 def soffice_convert(src, fmt, outdir):
     with tempfile.TemporaryDirectory() as prof:
         subprocess.run([SOFFICE, f"-env:UserInstallation=file://{prof}", "--headless", "--norestore", "--convert-to", fmt, "--outdir", str(outdir), str(src)],
@@ -287,6 +323,9 @@ def main():
     with tempfile.TemporaryDirectory() as tmp:
         tmp = Path(tmp)
         make_report_docx(tmp / "두단.docx", two_col_only=True)
+        make_noborder_docx(tmp / "선없는표.docx")
+        soffice_convert(tmp / "선없는표.docx", "pdf", tmp)
+        shutil.copy(tmp / "선없는표.pdf", out / "선없는표.pdf")
         soffice_convert(out / "보고서.docx", "pdf", tmp)
         soffice_convert(tmp / "두단.docx", "pdf", tmp)
         soffice_convert(out / "보고서.docx", "odt", tmp)
