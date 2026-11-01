@@ -225,7 +225,11 @@ pub fn extract_images(input: &Path, out_dir: Option<&Path>) -> Result<ImagesOut>
     match kind(input) {
         Some("pdf") => {
             let t0 = Instant::now();
-            let r = crate::pdfrender::extract_images_named(input, out_dir, "_이미지")?;
+            // 암호 PDF 안내가 "압축할 수 없습니다"(1c 공용 함수 문구)로 나오지 않게
+            let r = crate::pdfrender::extract_images_named(input, out_dir, "_이미지").map_err(|e| match e {
+                Error::Pdf { path, message } if message.contains("암호") => Error::Pdf { path, message: "암호가 걸린 PDF에서는 그림을 꺼낼 수 없습니다. PDF 프로그램에서 암호를 풀어 저장한 뒤 다시 시도하세요".into() },
+                e => e,
+            })?;
             Ok(ImagesOut { input: r.input, folder: r.folder, files: r.files, duplicates: 0, skipped: r.skipped, millis: t0.elapsed().as_millis() as u64, note: r.note })
         }
         Some(k) => extract_office(input, k, out_dir),

@@ -355,6 +355,8 @@ fn extract_images_office_and_pdf() {
         let f = officeimages::extract_images(&data("엣지인쇄.pdf"), Some(dir.path())).unwrap();
         assert_eq!(f.folder.unwrap().file_name().unwrap().to_string_lossy(), "엣지인쇄_이미지");
         assert_eq!(f.files.len(), 1);
+        let e = officeimages::extract_images(&data("암호.pdf"), Some(dir.path())).unwrap_err().to_string();
+        assert!(e.contains("암호가 걸린 PDF에서는 그림을 꺼낼 수 없습니다"), "{e}");
     }
     let e = officeimages::extract_images(&data("make_corpus.py"), Some(dir.path())).unwrap_err().to_string();
     assert!(e.contains("Word·PowerPoint·Excel·PDF"), "{e}");
