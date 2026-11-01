@@ -538,7 +538,10 @@ async function showPreview() {
   const stage = $(".pv-stage", root)!;
   const maxW = Math.max(240, Math.min(stage.clientWidth || 520, 720));
   const ar = info.visual_width / info.visual_height;
-  const maxH = Math.max(320, Math.min(window.innerHeight - 220, 760));
+  // 0.3.1: 좁은 창(설정 칸이 미리보기 아래로 내려갈 때)·큰 화면 배율에서는 미리보기를 낮춰 [서명 넣기] 같은 단추가 덜 밀리게
+  const wrap = stage.closest<HTMLElement>(".tool-wrap");
+  const stacked = !!wrap && getComputedStyle(wrap).gridTemplateColumns.trim().split(/\s+/).length < 2;
+  const maxH = stacked ? Math.max(200, Math.min(window.innerHeight * 0.45, 760)) : Math.max(320, Math.min(window.innerHeight - 220, 760));
   const w = Math.round(Math.min(maxW, maxH * ar));
   const pageEl = $<HTMLElement>(".pv-page", root)!;
   pageEl.style.width = `${w}px`;
