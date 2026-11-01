@@ -1,15 +1,19 @@
 #!/usr/bin/env python3
-"""앱에 넣을 도구 묶음(tools.pack) 만들기 — 형식은 crates/core/src/bundle.rs 참고.
+"""앱에 넣을 도구 묶음(tools.pack)과 0.3.3 문서 도구 묶음 만들기 — 형식은 crates/core/src/bundle.rs, doctools.rs 참고.
 
 도구마다 tar(이름 순, 시각·소유자 고정) → `zstd -19 --long=27 -T0`로 압축한 덩어리를 이어 붙이고,
 목록(JSON) + 목록 길이(u64 LE) + 묶음 전체 길이(u64 LE) + "WFTTOOL1"을 붙인다.
 
   ffmpeg  : third_party/ffmpeg/win-x64/bin/{ffmpeg,ffprobe}.exe          (scripts/build-ffmpeg.sh)
   pdfium  : third_party/pdfium/win-x64/bin/pdfium.dll + licenses/        (scripts/fetch-pdfium.sh)
-  lo      : third_party/libreoffice/lo-trim/                             (scripts/trim-libreoffice.ps1 결과)
   notices : THIRD-PARTY-NOTICES.txt                                      (scripts/make-notices.py)
 
+0.3.3부터 LibreOffice(lo)는 앱 묶음에 넣지 않는다. 따로 "문서 도구" 묶음 하나(= lo 덩어리 그대로, tar → zstd)를 만들어
+공개 저장소 릴리스에 올리고, 앱은 필요할 때 받아서 exe에 고정한 SHA-256으로 확인한다.
+  lo      : third_party/libreoffice/lo-trim/                             (scripts/trim-libreoffice.ps1 결과)
+
 사용: python3 scripts/make-tools-pack.py <출력 tools.pack> <THIRD-PARTY-NOTICES.txt>
+      python3 scripts/make-tools-pack.py --doctools <출력 win-filetool-doctools-N.zst>
 """
 import hashlib
 import io
@@ -29,13 +33,16 @@ FIXED_MTIME = 1767225600  # 2026-01-01T00:00:00Z
 def entries(notices):
     ff = TP / "ffmpeg" / "win-x64" / "bin"
     pd = TP / "pdfium" / "win-x64"
-    lo = TP / "libreoffice" / "lo-trim"
     yield "ffmpeg", [(ff / "ffmpeg.exe", "ffmpeg.exe"), (ff / "ffprobe.exe", "ffprobe.exe")]
     files = [(pd / "bin" / "pdfium.dll", "pdfium.dll")]
     files += [(f, f"licenses/{f.name}") for f in sorted((pd / "licenses").iterdir())]
     yield "pdfium", files
-    yield "lo", [(f, f.relative_to(lo).as_posix()) for f in sorted(lo.rglob("*")) if f.is_file()]
     yield "notices", [(Path(notices), "THIRD-PARTY-NOTICES.txt")]
+
+
+def lo_files():
+    lo = TP / "libreoffice" / "lo-trim"
+    return [(f, f.relative_to(lo).as_posix()) for f in sorted(lo.rglob("*")) if f.is_file()]
 
 
 def tar_bytes(files):
@@ -63,6 +70,15 @@ def zstd(data):
 
 
 def main():
+    if len(sys.argv) == 3 and sys.argv[1] == "--doctools":
+        out = Path(sys.argv[2])
+        t0 = time.time()
+        raw, total = tar_bytes(lo_files())
+        z = zstd(raw)
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_bytes(z)
+        print(f"{out}: 파일 {len(lo_files())}개, {total} B → {len(z)} B, sha256 {hashlib.sha256(z).hexdigest()} ({time.time() - t0:.1f}초)")
+        return
     if len(sys.argv) < 3:
         print(__doc__)
         sys.exit(2)

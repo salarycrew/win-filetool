@@ -97,7 +97,7 @@ function dropTo(paths: string[]) {
   } catch { /* 브라우저 미리보기 */ }
 })();
 
-// ---------- 문서 도구 처음 풀 때(약 3초) ----------
+// ---------- 도구 처음 풀 때(문서 도구는 받은 뒤 한 번) ----------
 
 let prepEl: HTMLElement | null = null;
 listen<{ tool: string; fraction: number }>("tools_unpack_progress", (p) => {
@@ -107,7 +107,7 @@ listen<{ tool: string; fraction: number }>("tools_unpack_progress", (p) => {
     prepEl = el(`<div class="prep" role="status" aria-live="polite"><span class="spin"></span><span class="prep-t"></span><span class="bar"><i></i></span></div>`);
     document.body.appendChild(prepEl);
   }
-  $(".prep-t", prepEl)!.textContent = p.tool === "lo" ? "문서 도구 준비 중(약 3초) — 처음 한 번만 해요" : "도구 준비 중 — 처음 한 번만 해요";
+  $(".prep-t", prepEl)!.textContent = p.tool === "lo" ? "문서 도구 푸는 중 — 처음 한 번만 해요" : "도구 준비 중 — 처음 한 번만 해요";
   $<HTMLElement>(".bar i", prepEl)!.style.width = `${Math.round(p.fraction * 100)}%`;
 });
 

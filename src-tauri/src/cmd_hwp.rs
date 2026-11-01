@@ -7,7 +7,6 @@
 use std::path::Path;
 
 use filetool_core::hwp::{self, HwpCaps};
-use filetool_core::tools::Tool;
 use tauri::State;
 
 use crate::{blocking, AppState, CmdResult};
@@ -16,6 +15,8 @@ use crate::{blocking, AppState, CmdResult};
 /// `{format:"hwp97"|"hwp5"|"hwpx"|"damaged", version?, encrypted, distribution, can_pdf, can_pptx, can_images, route:"hancom"|"libreoffice"|"none", message?}`
 #[tauri::command]
 pub async fn hwp_capabilities(state: State<'_, AppState>, path: String) -> CmdResult<HwpCaps> {
-    let soffice = state.toolset().get(Tool::Soffice).is_ok();
+    // 0.3.3: 문서 도구(LibreOffice)는 없으면 받을 수 있으므로 "있다"고 본다(한글 97 → PDF를 보여 주고, 할 때 받기)
+    let _ = &state;
+    let soffice = true;
     blocking(move || hwp::capabilities(Path::new(&path), soffice)).await
 }

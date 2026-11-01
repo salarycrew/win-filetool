@@ -25,7 +25,7 @@ pub struct Flags {
     pub rest: Vec<String>,
 }
 
-const SWITCHES: [&str; 1] = ["--no-exif"];
+const SWITCHES: [&str; 2] = ["--no-exif", "--no-range"];
 
 impl Flags {
     pub fn parse(args: &[String]) -> Self {

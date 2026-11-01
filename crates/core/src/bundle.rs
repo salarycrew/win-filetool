@@ -291,16 +291,7 @@ impl Bundle {
     fn extract(&self, e: &Entry, to: &Path) -> Result<()> {
         let mut f = File::open(&self.file).map_err(io_err(&self.file))?;
         f.seek(SeekFrom::Start(self.pack_start + e.offset)).map_err(io_err(&self.file))?;
-        let counting = Counting { inner: std::io::BufReader::new(f).take(e.len), read: 0, total: e.len, last: 0.0, tool: e.name.clone() };
-        let mut dec = zstd::stream::read::Decoder::new(counting).map_err(|err| prep_err(&self.file, err))?;
-        // --long=27 로 압축했으므로 큰 창을 허락한다
-        dec.window_log_max(31).map_err(|err| prep_err(&self.file, err))?;
-        std::fs::create_dir_all(to).map_err(|err| prep_err(to, err))?;
-        let mut ar = tar::Archive::new(dec);
-        ar.set_preserve_permissions(false);
-        ar.set_overwrite(true);
-        ar.unpack(to).map_err(|err| prep_err(to, err))?;
-        Ok(())
+        unpack_tar_zst(std::io::BufReader::new(f).take(e.len), e.len, &e.name, to)
     }
 
     /// 지난 버전 폴더 지우기: 이름을 바꿀 수 있는(아무도 쓰지 않는) 폴더만 `.trash-…`로 옮긴 뒤 지운다. 지운 폴더 목록.
@@ -321,9 +312,12 @@ impl Bundle {
                 continue;
             }
             // `<버전>-<16자 해시>` 모양만(사용자가 둔 다른 폴더는 건드리지 않는다)
-            let looks_like_version = name.rsplit_once('-').is_some_and(|(_, h)| h.len() == 16 && h.chars().all(|c| c.is_ascii_hexdigit()));
-            if !looks_like_version {
+            if !looks_like_version_dir(&name) {
                 continue;
+            }
+            // 0.3.3: 예전 판이 풀어 둔 LibreOffice는 지우지 않고 문서 도구로 옮겨 쓴다(다시 받지 않게)
+            if p.join("lo").is_dir() {
+                let _ = crate::doctools::migrate(&self.root);
             }
             let trash = self.root.join(format!(".trash-{name}-{}", std::process::id()));
             if std::fs::rename(&p, &trash).is_ok() {
@@ -333,6 +327,27 @@ impl Bundle {
         }
         removed
     }
+}
+
+/// `tar` → zstd(`--long=27`) 덩어리를 `to`에 푼다(진행률은 [`set_progress_hook`]으로, 도구 이름 `tool`).
+/// 앱 묶음의 도구와 0.3.3 문서 도구 묶음([`crate::doctools`])이 같이 쓴다.
+pub fn unpack_tar_zst<R: Read>(reader: R, total: u64, tool: &str, to: &Path) -> Result<()> {
+    let counting = Counting { inner: reader, read: 0, total, last: 0.0, tool: tool.to_string() };
+    let mut dec = zstd::stream::read::Decoder::new(counting).map_err(|err| prep_err(to, err))?;
+    // --long=27 로 압축했으므로 큰 창을 허락한다
+    dec.window_log_max(31).map_err(|err| prep_err(to, err))?;
+    std::fs::create_dir_all(to).map_err(|err| prep_err(to, err))?;
+    let mut ar = tar::Archive::new(dec);
+    ar.set_preserve_permissions(false);
+    ar.set_overwrite(true);
+    ar.unpack(to).map_err(|err| prep_err(to, err))?;
+    report(tool, 1.0);
+    Ok(())
+}
+
+/// `<판>-<16자 해시>` 모양의 판 폴더 이름인지(사용자가 둔 다른 폴더·`doctools`는 아님)
+pub fn looks_like_version_dir(name: &str) -> bool {
+    !name.starts_with('.') && name.rsplit_once('-').is_some_and(|(_, h)| h.len() == 16 && h.chars().all(|c| c.is_ascii_hexdigit()))
 }
 
 fn prep_err(p: &Path, e: std::io::Error) -> Error {

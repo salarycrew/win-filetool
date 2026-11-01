@@ -134,12 +134,8 @@ pub fn convert_file(
             (r.output, note)
         }
         Op::Doc { target } => {
-            // 한글은 설치된 한글로 바꿀 수 있어 LibreOffice가 없어도 된다(W6)
-            let out = if crate::hwp::is_hwp_path(input) {
-                crate::hwp::convert(tools.get(Tool::Soffice).ok(), input, out_dir, *target, cancel, docs::DOC_TIMEOUT)?
-            } else {
-                docs::convert(tools.get(Tool::Soffice)?, input, out_dir, *target, cancel, docs::DOC_TIMEOUT)?
-            };
+            // 0.3.3: 한글 → 이 PC의 한글, Office 형식 → 이 PC의 Office, 그 밖은 문서 도구(LibreOffice, 없으면 받으라고 알림)
+            let out = docs::convert_auto(tools, input, out_dir, *target, cancel, docs::DOC_TIMEOUT)?;
             let n = std::fs::metadata(&out).map(|m| m.len()).unwrap_or(0);
             (out, human_bytes(n))
         }

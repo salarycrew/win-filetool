@@ -63,6 +63,7 @@ const SEARCH = [
   ["계약서 스캔본.jpg", "D:\\스캔\\2025", 3_400_000], ["용역계약서_서명.pdf", "C:\\Users\\me\\OneDrive\\공유", 412_000], ["표준계약서_양식.docx", "D:\\자료\\양식", 44_000], ["근로계약서_2026.pdf", "C:\\Users\\me\\Documents\\회사", 220_000],
 ] as const;
 let lastQ = "";
+let mockDocTools = false;
 
 const H: Record<string, (a: Args) => unknown> = {
   ui_get: () => ({ tab: q.get("s") ?? undefined }),
@@ -107,8 +108,10 @@ const H: Record<string, (a: Args) => unknown> = {
   extract_images: async (a) => { await job(a, 2); return { folder: `${dir(String(a.path))}\\${stemOf(String(a.path))}_이미지`, files: Array(7).fill("x") }; },
   doc_to_pptx: async (a) => { emit("tools_unpack_progress", { tool: "lo", fraction: 0.2 }); await sleep(600); emit("tools_unpack_progress", { tool: "lo", fraction: 1 }); await job(a); return { output: out(String(a.path), "_PPT", "pptx"), slides: 9 }; },
   convert_one: async (a) => {
-    await job(a, 8);
     const op = a.op as { kind: string; target?: string; format?: string; preset?: string };
+    // 0.3.3: Pages·Keynote·Numbers는 문서 도구가 있어야(브라우저 미리보기에서 "받을까요?" 흐름 보기)
+    if (op.kind === "doc" && /\.(pages|key|numbers)$/i.test(String(a.path)) && !mockDocTools) throw "이 작업에는 문서 도구가 필요해요. 한 번만 받으면 돼요(약 106 MB).";
+    await job(a, 8);
     const e = op.kind === "doc" ? op.target! : op.kind === "image" ? op.format! : ({ mp4: "mp4", messenger: "mp4", mp3: "mp3", m4a: "m4a", gif: "gif" } as Record<string, string>)[op.preset!];
     return { input: a.path, output: out(String(a.path), op.preset === "messenger" ? "_메신저" : "", e), note: "" };
   },
@@ -161,7 +164,12 @@ const H: Record<string, (a: Args) => unknown> = {
   autostart_get: () => ({ enabled: false, value: null, matches_exe: true, supported: true }),
   autostart_set: (a) => ({ enabled: a.enabled, value: null, matches_exe: true, supported: true }),
   tools_status: () => [{ tool: "ffmpeg", label: "영상·소리(ffmpeg)", found: true, path: "…", source: "앱에 든 도구", version: "8.1" }, { tool: "soffice", label: "문서(LibreOffice)", found: true, path: "…", source: "앱에 든 도구", version: "25.8" }],
-  tools_bundle_status: () => ({ present: true, tools: [{ name: "ffmpeg", ready: true, bytes: 1 }, { name: "lo", ready: false, bytes: 1 }, { name: "pdfium", ready: true, bytes: 1 }] }),
+  doctools_status: () => ({ ready: mockDocTools, soffice: mockDocTools ? "…\\doctools\\lo\\program\\soffice.exe" : null, dir: "…", source: mockDocTools ? "download" : null, lo_version: "26.2.6.3", download_mb: 106, unpacked_mb: 445, partial_bytes: 0, url: "https://github.com/…", asset: "win-filetool-doctools-1.zst", sha256: "…", engines: { hancom: true, word: true, excel: true, powerpoint: true }, office: { word: true, excel: true, powerpoint: true, version: "16", x64: true } }),
+  doctools_download: async (a) => { for (let i = 1; i <= 10; i++) { await sleep(150); emit("doctools-progress", { job: a.job, done: i * 10_544_310, total: 105_443_108 }); } mockDocTools = true; return "…\\soffice.exe"; },
+  doctools_install_file: async () => { await sleep(500); mockDocTools = true; return "…\\soffice.exe"; },
+  doctools_remove: async () => { mockDocTools = false; return H.doctools_status({}); },
+  doctools_needed: () => false,
+  tools_bundle_status: () => ({ present: true, tools: [{ name: "ffmpeg", ready: true, bytes: 1 }, { name: "pdfium", ready: true, bytes: 1 }] }),
   pdfium_status: () => "앱에 든 PDFium",
   update_view: () => ({ enabled: true, current: "0.3.1", banner: null }),
   update_check: () => ({ state: "latest" }),

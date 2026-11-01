@@ -42,6 +42,7 @@
   DeleteRegValue HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "win-filetool"
   DeleteRegValue HKCU "Software\HNC\HwpAutomation\Modules" "WinFileToolPathCheck"
   RMDir /r "$LOCALAPPDATA\kr.salarycrew.winfiletool\hwp"
+  RMDir /r "$LOCALAPPDATA\kr.salarycrew.winfiletool\office"
   ReadRegStr $0 HKLM "SYSTEM\CurrentControlSet\Services\FileToolSvc" "ImagePath"
   StrCmp $0 "" wft_svc_done
   IfSilent wft_svc_done

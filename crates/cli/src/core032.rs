@@ -237,7 +237,7 @@ fn page_nonblank(p: &Path, pw: Option<&str>, page: u32) -> Result<bool> {
 }
 
 /// 결과 PDF의 빈 쪽 번호들
-fn blank_pages(p: &Path) -> Result<(u32, Vec<u32>)> {
+pub(crate) fn blank_pages(p: &Path) -> Result<(u32, Vec<u32>)> {
     let n = thumbs::page_count(p, None)?;
     let mut blanks = Vec::new();
     for i in 1..=n {
@@ -255,7 +255,7 @@ fn leftovers() -> Vec<String> {
         let out = std::process::Command::new("tasklist").args(["/FO", "CSV", "/NH"]).output();
         if let Ok(o) = out {
             let s = String::from_utf8_lossy(&o.stdout).to_lowercase();
-            return ["soffice.bin", "soffice.exe", "soffice.com", "hwp.exe", "ffmpeg.exe", "ffprobe.exe"]
+            return ["soffice.bin", "soffice.exe", "soffice.com", "hwp.exe", "winword.exe", "excel.exe", "powerpnt.exe", "ffmpeg.exe", "ffprobe.exe"]
                 .iter()
                 .filter(|n| s.contains(&format!("\"{n}\"")))
                 .map(|n| n.to_string())
@@ -412,8 +412,12 @@ fn run_all(dir: &Path, only: &[String], f: &Flags) -> ExitCode {
         let h = hashes(&ins);
         let t_all = Instant::now();
         let (mut ok, mut fails) = (0usize, Vec::new());
+        // 0.3.3: 길(한글·Office COM·문서 도구). WIN_FILETOOL_HIDE_COM=1이면 한글·Office 없이 문서 도구로
+        let engines = filetool_core::docs::Engines::detect();
+        println!("길: {engines:?} · 문서 도구 {}", if ts.soffice.is_some() { "있음" } else { "없음" });
         for p in &ins {
             let t0 = Instant::now();
+            let via = crate::doctools033::engine_label(filetool_core::docs::engine_for(p, DocTarget::Pdf, &engines));
             let r = convert::convert_file(&ts, p, Some(&out_root), &Op::Doc { target: DocTarget::Pdf }, None, &mut |_| {});
             let secs = t0.elapsed().as_secs_f64();
             let name = p.file_name().unwrap().to_string_lossy().into_owned();
@@ -434,12 +438,12 @@ fn run_all(dir: &Path, only: &[String], f: &Flags) -> ExitCode {
                         pass,
                         secs,
                         out: mb(size(&c.output)),
-                        note: format!("{n}쪽{} · 빈 쪽 {blanks:?}{}{}", refn.map(|r| format!("(참고 PDF {r}쪽)")).unwrap_or_default(), if ref_blank.is_empty() { String::new() } else { format!(" (참고 PDF에서도 빈 쪽 {ref_blank:?}은 뺌)") }, if left.is_empty() { String::new() } else { format!(" · 남은 프로세스 {left:?}") }),
+                        note: format!("{via} · {n}쪽{} · 빈 쪽 {blanks:?}{}{}", refn.map(|r| format!("(참고 PDF {r}쪽)")).unwrap_or_default(), if ref_blank.is_empty() { String::new() } else { format!(" (참고 PDF에서도 빈 쪽 {ref_blank:?}은 뺌)") }, if left.is_empty() { String::new() } else { format!(" · 남은 프로세스 {left:?}") }),
                     });
                 }
                 Err(e) => {
                     fails.push(name.clone());
-                    rows.push(Row { job: "4 문서→PDF", case: name.clone(), pass: name.contains("손상"), secs, out: "-".into(), note: format!("실패(다음 파일 계속): {e}") });
+                    rows.push(Row { job: "4 문서→PDF", case: name.clone(), pass: name.contains("손상"), secs, out: "-".into(), note: format!("{via} · 실패(다음 파일 계속): {e}") });
                 }
             }
         }

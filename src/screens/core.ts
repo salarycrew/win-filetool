@@ -64,10 +64,10 @@ export function byName<T extends { path: string }>(xs: T[]): T[] {
   return [...xs].sort((a, b) => coll.compare(name(a.path), name(b.path)));
 }
 
-export type FailKind = "locked" | "missing-tool" | "damaged" | "unsupported" | "busy" | "cancelled" | "space" | "other";
+export type FailKind = "locked" | "missing-tool" | "need-doctools" | "damaged" | "unsupported" | "busy" | "cancelled" | "space" | "other";
 const REASON: Record<FailKind, string> = {
   locked: "암호가 걸려 있어요", damaged: "파일이 손상됐거나 읽을 수 없어요", unsupported: "이 일로는 바꿀 수 없는 파일이에요",
-  "missing-tool": "변환 도구를 쓸 수 없어요", busy: "다른 프로그램이 쓰고 있어요", cancelled: "멈췄어요", space: "디스크 공간이 모자라요", other: "끝내지 못했어요",
+  "missing-tool": "변환 도구를 쓸 수 없어요", "need-doctools": "문서 도구가 필요해요(받지 않음)", busy: "다른 프로그램이 쓰고 있어요", cancelled: "멈췄어요", space: "디스크 공간이 모자라요", other: "끝내지 못했어요",
 };
 
 /** "10개 중 9개 완료, 1개는 암호가 걸려 있어요" */

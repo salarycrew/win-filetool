@@ -13,10 +13,12 @@
 //! - [`detect`]: 내용으로 형식 알아보기
 //! - [`hancom`]: (Windows) 설치된 한글을 COM 자동화로 PDF·DOCX 저장
 //! - [`images`]: 그림 원본 꺼내기
+//! - [`scrub`]: (0.3.3) 한글에 넘기는 임시 복사본에서 문서 스크립트(매크로) 빼기
 
 pub mod detect;
 pub mod hancom;
 pub mod images;
+pub mod scrub;
 
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -34,7 +36,7 @@ use crate::process::Cancel;
 pub enum Route {
     /// 설치된 한글 프로그램(COM 자동화)
     Hancom,
-    /// 앱에 든 LibreOffice(한글 97 이전만)
+    /// 문서 도구 LibreOffice(한글 97 이전만, 0.3.3부터 처음 쓸 때 받음)
     Libreoffice,
     /// 바꿀 수 없음
     None,
@@ -169,11 +171,15 @@ pub fn convert(soffice: Option<&Path>, input: &Path, out_dir: Option<&Path>, tar
     if !matches!(target, DocTarget::Pdf | DocTarget::Docx) {
         return Err(Error::Unsupported(format!("{} → {}", input.display(), target.ext())));
     }
-    let caps = capabilities_for(&detect(input)?, hancom::available(), soffice.is_some());
+    // 0.3.3: 문서 도구(LibreOffice)는 받을 수 있으므로 "있다"고 보고 길을 고른 뒤, 아직 없으면 받으라고 알린다
+    let caps = capabilities_for(&detect(input)?, hancom::available(), true);
     let mode = if caps.distribution { hancom::Mode::PrintPdf } else { hancom::Mode::Save };
     match caps.route {
         Route::Hancom => hancom::convert_mode(input, out_dir, target, mode, cancel, timeout.min(hancom::TIMEOUT)).map(|r| r.output),
-        Route::Libreoffice => crate::docs::convert_lo(soffice.expect("route libreoffice → soffice"), input, out_dir, target, cancel, timeout),
+        Route::Libreoffice => match soffice {
+            Some(so) => crate::docs::convert_lo(so, input, out_dir, target, cancel, timeout),
+            None => Err(Error::NeedDocTools(crate::doctools::download_mb())),
+        },
         Route::None => Err(Error::Invalid(caps.message.unwrap_or_else(|| MSG_NEED_HANCOM.into()))),
     }
 }

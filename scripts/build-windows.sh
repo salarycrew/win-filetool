@@ -8,8 +8,11 @@
 #   - 1c: PDFium(scripts/fetch-pdfium.sh → third_party/pdfium), makensis(scripts/fetch-nsis.sh → ~/.local/opt/nsis-3.10)
 #   - 0.3.0: ffmpeg LGPL 빌드(scripts/build-ffmpeg.sh → third_party/ffmpeg, 없으면 여기서 빌드),
 #            줄인 LibreOffice(scripts/trim-libreoffice.ps1 결과를 third_party/libreoffice/lo-trim/에 둔다), zstd, python3
+#   - 0.3.3: LibreOffice는 앱에 넣지 않고 "문서 도구" 묶음(third_party/doctools/win-filetool-doctools-1.zst)으로 따로 둔다.
+#            없으면 lo-trim에서 만들고, SHA-256이 앱에 고정한 값(crates/core/src/doctools.rs)과 다르면 멈춘다.
 # 결과(dist-win/):
-#   - 파일도구_<버전>_portable.exe   설치 없는 exe 하나(도구 묶음 tools.pack을 exe 뒤에 덧붙임, 처음 쓸 때 LOCALAPPDATA에 풂)
+#   - 파일도구_<버전>_portable.exe   설치 없는 exe 하나(도구 묶음 tools.pack — ffmpeg·PDFium·고지 — 을 exe 뒤에 덧붙임)
+#   - win-filetool-doctools-1.zst(+ .sha256)  문서 도구 묶음(릴리스에 따로 올림, 앱이 필요할 때 받음)
 #   - 파일도구_<버전>_x64-setup.exe  사용자별 설치 파일(관리자 권한 불필요, tools.pack·filetool-svc.exe 포함)
 #   - THIRD-PARTY-NOTICES.txt, sources/(ffmpeg·LAME·dav1d·zlib 소스 묶음 그대로 + configure 줄 + 빌드·줄이기 스크립트)
 #   - cli/filetool-cli.exe            점검·자동화용(휴대용 exe와 같은 폴더에 두면 그 안의 도구를 씀)
@@ -29,9 +32,19 @@ done
 [ -d node_modules ] || npm ci
 bash scripts/fetch-pdfium.sh >/dev/null
 [ -f third_party/ffmpeg/win-x64/bin/ffmpeg.exe ] || bash scripts/build-ffmpeg.sh
-[ -f third_party/libreoffice/lo-trim/program/soffice.exe ] || {
-  echo "줄인 LibreOffice가 없습니다: third_party/libreoffice/lo-trim (Windows에서 scripts/trim-libreoffice.ps1로 만든 폴더를 복사)" >&2; exit 1; }
 command -v zstd >/dev/null || { echo "필요한 도구가 없습니다: zstd" >&2; exit 1; }
+# 0.3.3 문서 도구 묶음: 고정 SHA-256과 같은지(앱이 받은 파일을 이 값으로 확인한다)
+DT_ASSET=$(grep -o 'pub const ASSET: &str = "[^"]*"' crates/core/src/doctools.rs | sed 's/.*"\(.*\)"/\1/')
+DT_SHA=$(grep -o 'pub const SHA256: &str = "[0-9a-f]*"' crates/core/src/doctools.rs | sed 's/.*"\(.*\)"/\1/')
+DT="third_party/doctools/$DT_ASSET"
+if [ ! -f "$DT" ]; then
+  [ -f third_party/libreoffice/lo-trim/program/soffice.exe ] || {
+    echo "문서 도구 묶음($DT)도, 줄인 LibreOffice(third_party/libreoffice/lo-trim)도 없습니다" >&2; exit 1; }
+  python3 scripts/make-tools-pack.py --doctools "$DT"
+fi
+got=$(sha256sum "$DT" | cut -d' ' -f1)
+[ "$got" = "$DT_SHA" ] || { echo "문서 도구 묶음 SHA-256이 앱에 고정한 값과 다릅니다: $got (고정 $DT_SHA)" >&2; exit 1; }
+echo "문서 도구 묶음: $DT_ASSET $(stat -c %s "$DT") B, SHA-256 고정값과 같음"
 
 # 0.3.0: 오픈소스 고지 + 도구 묶음(설치본 리소스와 휴대용 exe 덧붙이기에 같이 씀)
 mkdir -p target/tools
@@ -39,6 +52,14 @@ python3 scripts/make-notices.py target/tools/THIRD-PARTY-NOTICES.txt ${SOURCE_UR
 if [ "${TOOLS_PACK_REUSE:-}" != 1 ] || [ ! -f target/tools/tools.pack ]; then
   python3 scripts/make-tools-pack.py target/tools/tools.pack target/tools/THIRD-PARTY-NOTICES.txt
 fi
+# 0.3.3: 앱 묶음에 LibreOffice(lo)가 남아 있으면(예전 tools.pack 다시 쓰기) 멈춘다
+python3 - target/tools/tools.pack <<'PY'
+import json, sys
+f = open(sys.argv[1], "rb"); f.seek(0, 2); n = f.tell(); f.seek(n - 24); t = f.read(24)
+il = int.from_bytes(t[:8], "little"); f.seek(n - 24 - il); names = [e["name"] for e in json.loads(f.read(il))["tools"]]
+print("앱 묶음 도구:", ", ".join(names))
+sys.exit(1 if "lo" in names else 0)
+PY
 
 # exe 안에 빌드한 PC의 경로(/home/…, ~/.cargo/registry …)가 남지 않게(패닉 위치 문자열)
 export RUSTFLAGS="${RUSTFLAGS:-} --remap-path-prefix=$HOME/.cargo/registry/src=crates --remap-path-prefix=$HOME/.cargo/git/checkouts=git --remap-path-prefix=$HOME/.rustup=rustup --remap-path-prefix=$PWD=win-filetool"
@@ -72,6 +93,8 @@ cat "$REL/win-filetool.exe" target/tools/tools.pack > "$PORT"
 cp "$REL/filetool-cli.exe" dist-win/cli/
 cp target/tools/THIRD-PARTY-NOTICES.txt dist-win/
 cp LICENSE dist-win/LICENSE.txt
+cp "$DT" "dist-win/$DT_ASSET"
+(cd dist-win && sha256sum "$DT_ASSET" > "$DT_ASSET.sha256")
 # LGPL·MPL 부품의 정확한 소스(공개 소스 저장소에 올리는 묶음). SOURCES_SKIP_LO=1이면 LibreOffice 소스(약 530 MB)는 뺌
 bash scripts/make-sources.sh dist-win/sources "$VERSION"
 
@@ -99,6 +122,6 @@ for f in "$PORT" "$SETUP" "$REL/win-filetool.exe" "$REL/filetool-cli.exe" "$REL/
 done
 [ "$leak" = 0 ] || { echo "개인 정보 점검 실패" >&2; exit 1; }
 echo "개인 경로 점검: 없음"
-(cd dist-win && sha256sum "$(basename "$PORT")" "$(basename "$SETUP")" > SHA256SUMS.txt && cat SHA256SUMS.txt)
+(cd dist-win && sha256sum "$(basename "$PORT")" "$(basename "$SETUP")" "$DT_ASSET" > SHA256SUMS.txt && cat SHA256SUMS.txt)
 ls -l dist-win dist-win/cli
 sha256sum dist-win/cli/*.exe target/tools/tools.pack

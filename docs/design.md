@@ -1014,3 +1014,46 @@ Word → PPT(`doc_to_pptx`)는 한글이면 `hwp::convert(… Docx)`로 docx를 
 - **켜고 끄기**: 상태는 레지스트리 자체(앱·설치 파일이 같은 값을 봄). 설치본은 설치 파일이 `win-filetool.exe --ctx-menu=install`로 켜고(사용자가 끈 적이 있으면
   `settings.json`의 `context_menu_off`를 보고 그대로 둠), 지울 때 `--ctx-menu=remove` + NSIS `DeleteRegKey`로 지운다. 휴대용은 기본 꺼짐, [설정]에서 켠다.
   등록된 exe가 지금 exe와 다르면(휴대용을 옮김) [다시 연결]을 보여 준다.
+
+## 0.3.3 가벼운 판 — 문서 도구는 필요할 때만 받기
+
+결정(11-02): 판은 하나(가벼운 판). 앱 exe에서 LibreOffice(zstd 약 105 MB)를 빼고, 문서 → PDF는 이 PC의 한글·Microsoft Office(COM)로 한다.
+그것으로 안 될 때만 "문서 도구"(같은 LibreOffice)를 묻고 한 번 받는다.
+
+**길 고르기**(`docs::engine_for`, 순수 함수 `engine_for_ext` + 단위 시험):
+
+| 파일 | 한글·Office 있음 | 없음 |
+|---|---|---|
+| hwp·hwpx(한글 5·HWPX) | 한글 COM | 안 됨(그림 뽑기만) |
+| 한글 97 | 한글 COM | 문서 도구 |
+| doc·docx·docm·dot(x)·rtf·odt·txt | Word COM | 문서 도구 |
+| xls·xlsx·xlsm·xlsb·xlt(x)·ods·csv | Excel COM | 문서 도구 |
+| ppt·pptx·pptm·pps(x)·pot(x)·odp | PowerPoint COM | 문서 도구 |
+| Pages·Keynote·Numbers, fodt·fods·fodp·wpd | 문서 도구 | 문서 도구 |
+
+**아직 문서 도구가 필요한 일**(한글·Office가 다 있는 PC에서도): Pages·Keynote·Numbers → PDF / Word·PPT·엑셀 형식([더 보기] Word 형식으로·Office 형식으로),
+fodt·wpd 등 → PDF, Word → PPT의 입력이 Pages인 경우. Office가 없는 PC에서는 Word·엑셀·PPT → PDF와 Word → PPT(.doc·.odt·.rtf),
+한글이 없는 PC에서는 한글 97 → PDF·PPT. PDF → Word·PPT·TXT, 이미지 뽑기, PDF 편집은 원래 LibreOffice를 쓰지 않는다.
+Word → PPT의 .doc·.rtf·.odt는 0.3.3부터 Word가 있으면 Word로 docx를 먼저 만든다.
+
+**Office COM**(`msoffice.rs` + `msoffice.ps1`, 한글 길과 같은 규칙): PowerShell이 Office를 새로 띄움 → 새 프로세스가 없으면(열린 PowerPoint에 붙음)
+아무것도 안 하고 그만둠 → **문서를 열기 전에** `AutomationSecurity = 3`(msoAutomationSecurityForceDisable), 알림 끔, Word `DisableAutoMacros`,
+Excel `EnableEvents=false`·`AskToUpdateLinks=false`, Word `UpdateLinksAtOpen` 잠시 끔(끝나면 되돌림) → 임시 복사본을 읽기 전용·최근 파일 안 넣음
+(Word `AddToRecentFiles:=False`, Excel `AddToMru:=False`, `UpdateLinks:=0`, PowerPoint `WithWindow:=msoFalse`)으로 열기, 틀린 암호를 주어 암호 문서는 바로 실패
+→ 임시 폴더에 PDF(`ExportAsFixedFormat` / PowerPoint `SaveAs 32`) → 닫기·`Quit`. 끝나지 않으면 우리가 띄운 프로세스만 강제 종료(180초), 한 번에 하나(잠금 파일).
+있는지 보기는 레지스트리만(ProgID → CLSID → LocalServer32, `CurVer`로 판). OOXML 확장자인데 복합 파일이면 암호 문서로 보고 Office를 띄우지 않는다.
+PowerPoint가 겹쳐 못 하면 문서 도구가 이미 있을 때만 그것으로 한다.
+
+**문서 도구 묶음**(`doctools.rs`): `win-filetool-doctools-1.zst` = lo-trim의 tar → `zstd -19 --long=27`(0.3.0~0.3.2 앱 안 `lo` 덩어리와 같은 바이트,
+lo-trim에서 다시 만들어도 같은 SHA-256). 주소 `…/releases/download/v0.3.3/win-filetool-doctools-1.zst`, SHA-256 `355752ca…`과 크기 105,443,108 B는 exe에 고정.
+받기는 WinHTTP(시스템 프록시), 이어받기(`Range`, 서버가 200이면 처음부터), 멈추기·끊김이면 `.part`를 남김, 다 받으면 SHA-256 확인 → 다르면 지우고 거절 →
+`tools\doctools\lo.partial`에 풀고 이름 바꾸기. [파일로 넣기]는 고른 파일을 우리 폴더로 복사한 뒤 같은 확인(고른 파일은 지우지 않음).
+0.3.0~0.3.2가 풀어 둔 `tools\<판>-<해시>\lo`는 `doctools\lo`로 옮겨 쓴다(새 판의 지난 판 폴더 지우기도 먼저 옮김). 오류 `Error::NeedDocTools` →
+화면 `withDocTools()`가 한 번 묻고([받기]/[취소]) 받은 뒤 그 파일을 다시 한다. 같은 작업 안에서 [취소]하면 다시 묻지 않는다.
+
+**시험용 바꾸기**(`testhooks.rs`): `WIN_FILETOOL_HIDE_COM`·`HIDE_HANCOM`·`HIDE_OFFICE`·`DOCTOOLS_URL`·시간 제한 줄이기는 CLI와 `test-hooks` 기능 앱만 읽는다.
+배포 앱은 이 값들을 읽지 않는다(0.3.2까지 배포 앱도 읽던 `HIDE_HANCOM` 포함). 해시는 어디서도 바꿀 수 없다.
+
+**네트워크**(다시 점검): ① 새 버전 확인 `GET api.github.com/…/releases/latest`(하루 한 번까지, 끌 수 있음) ② 문서 도구 `GET github.com/…/releases/download/v0.3.3/…`
+(사용자가 [받기]를 누를 때만, 이어받기 때 `Range`). 둘 다 User-Agent `win-filetool/<판>`만, 쿠키·식별자 없음. 그 밖에 앱이 인터넷에 연결하는 코드는 없다
+(검색 서비스는 이름 있는 파이프, 화면은 로컬 WebView2).

@@ -9,6 +9,7 @@ import {
   $, $$, ResultLine, askPassword, bindResultButtons, bindSegs, checked, chk, dialog, errRow, errorPanel, esc, opt,
   progressPanel, resultRow, seg, segVal, setProgress, toast, value,
 } from "../ui";
+import { resetDocToolsAsk, withDocTools } from "../doctools";
 import { mountTrim, Trim, trimRange } from "../videotrim";
 import { welcomeHTML, bindWelcome } from "../welcome";
 
@@ -291,7 +292,7 @@ const ACTIONS: Record<Cls, Action[]> = {
       when: (xs) => xs.some((x) => hwpOk(x, "can_pdf")), pickItems: (xs) => xs.filter((x) => hwpOk(x, "can_pdf")),
       info: "글꼴과 모양을 그대로 담아요.",
       exec: (r) => each(r, async (it) => {
-        const o = await invoke<{ output: string; note: string }>("convert_one", { job: r.job(), path: it.path, op: { kind: "doc", target: "pdf" }, outDir: r.outDir });
+        const o = await withDocTools(() => invoke<{ output: string; note: string }>("convert_one", { job: r.job(), path: it.path, op: { kind: "doc", target: "pdf" }, outDir: r.outDir }));
         return { output: o.output };
       }),
     },
@@ -300,7 +301,7 @@ const ACTIONS: Record<Cls, Action[]> = {
       when: (xs) => xs.some((x) => hwpOk(x, "can_pptx")), pickItems: (xs) => xs.filter((x) => hwpOk(x, "can_pptx")),
       info: "문서의 제목마다 슬라이드를 한 장씩 만들고, 표·그림도 옮겨요.",
       exec: (r) => each(r, async (it) => {
-        const o = await invoke<{ output: string; slides: number }>("doc_to_pptx", { job: r.job(), path: it.path, outDir: r.outDir });
+        const o = await withDocTools(() => invoke<{ output: string; slides: number }>("doc_to_pptx", { job: r.job(), path: it.path, outDir: r.outDir }));
         return { output: o.output, pill: `슬라이드 ${o.slides}장` };
       }),
     },
@@ -318,14 +319,14 @@ const ACTIONS: Record<Cls, Action[]> = {
       id: "d2office", t: "Word 형식으로", d: "Pages 문서를 Word로", ic: "doc", tone: "blue", run: "Word로 바꾸기",
       when: (xs) => xs.some((x) => APPLE.includes(ext(x))), pickItems: (xs) => xs.filter((x) => APPLE.includes(ext(x))),
       info: "복잡한 서식은 조금 달라질 수 있어요.",
-      exec: (r) => each(r, async (it) => (await invoke<{ output: string }>("convert_one", { job: r.job(), path: it.path, op: { kind: "doc", target: "docx" }, outDir: r.outDir }))),
+      exec: (r) => each(r, async (it) => (await withDocTools(() => invoke<{ output: string }>("convert_one", { job: r.job(), path: it.path, op: { kind: "doc", target: "docx" }, outDir: r.outDir })))),
     },
   ],
   office: [
     {
       id: "o2pdf", t: "PDF로", d: "인쇄·공유용 PDF로 저장", ic: "pdf", tone: "red", run: "PDF로 바꾸기",
       info: "슬라이드·시트 모양을 그대로 담아요.",
-      exec: (r) => each(r, async (it) => (await invoke<{ output: string }>("convert_one", { job: r.job(), path: it.path, op: { kind: "doc", target: "pdf" }, outDir: r.outDir }))),
+      exec: (r) => each(r, async (it) => (await withDocTools(() => invoke<{ output: string }>("convert_one", { job: r.job(), path: it.path, op: { kind: "doc", target: "pdf" }, outDir: r.outDir })))),
     },
     {
       id: "o2img", t: "이미지만 뽑기", d: "들어 있는 사진·그림 꺼내기", ic: "images", tone: "green", run: "이미지 뽑기",
@@ -340,9 +341,9 @@ const ACTIONS: Record<Cls, Action[]> = {
     {
       id: "o2office", t: "Office 형식으로", d: "Keynote→PPT, Numbers→엑셀", ic: "slides", tone: "orange", run: "바꾸기",
       when: (xs) => xs.some((x) => APPLE.includes(ext(x))), pickItems: (xs) => xs.filter((x) => APPLE.includes(ext(x))),
-      exec: (r) => each(r, async (it) => (await invoke<{ output: string }>("convert_one", {
+      exec: (r) => each(r, async (it) => (await withDocTools(() => invoke<{ output: string }>("convert_one", {
         job: r.job(), path: it.path, op: { kind: "doc", target: ext(it) === "key" ? "pptx" : "xlsx" }, outDir: r.outDir,
-      }))),
+      })))),
     },
   ],
   image: [
@@ -809,6 +810,7 @@ async function run() {
     stopped: () => stopFlag,
   };
   try {
+    resetDocToolsAsk();
     await a.exec(r);
   } catch (e) {
     if (lastResults.length === 0 && !isCancelled(e) && e instanceof Error) {

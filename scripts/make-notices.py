@@ -4,8 +4,9 @@
 - Rust 의존성: `cargo metadata`(Windows x64 대상)에서 앱·CLI·서비스가 실제로 링크하는(normal) 크레이트만 모아
   이름·버전·라이선스와, 크레이트에 든 라이선스 파일 전문(같은 글은 한 번만)을 적는다.
   GPL/AGPL/LGPL만으로 된 라이선스가 있으면 멈춘다(앱에 링크하면 안 됨).
-- 앱에 든 별도 프로그램: ffmpeg·LAME·dav1d·zlib(소스 묶음 안 라이선스 파일), LibreOffice(license.txt·NOTICE — LibreOffice가 함께 싣는
-  서드파티 라이선스 모음), PDFium(LICENSE·licenses/).
+- 앱에 든 별도 프로그램: ffmpeg·LAME·dav1d·zlib(소스 묶음 안 라이선스 파일), PDFium(LICENSE·licenses/).
+- 0.3.3: LibreOffice는 앱에 들어 있지 않다(사용자가 "문서 도구"를 받는 경우에만 받아짐). LibreOffice의 license.txt·NOTICE·
+  LICENSE.html과 Visual C++ 런타임 안내는 문서 도구 묶음 안에 함께 있고, 여기에는 "받는 경우" 항목과 소스 받는 곳만 적는다.
 - 화면(프런트엔드) 묶음에 든 npm 패키지: package.json의 dependencies와 그 하위(node_modules의 package.json·LICENSE 파일), Vite 런타임 조각.
 - 시험에만 쓰는 자료(앱에 안 들어감): 한글 97 시험 파일(LibreOffice 회귀 자료, MPL-2.0) 출처.
 - LGPL/MPL 부품의 "소스 받는 곳": 기본 https://github.com/salarycrew/win-filetool-sources (--source-url로 바꿈).
@@ -156,7 +157,9 @@ def main():
                  "파일 도구 자체의 코드는 MIT 라이선스입니다(Copyright (c) 2026 salarycrew). 출처를 밝히면 누구나 다시 쓸 수 있습니다.\n"
                  "소스: https://github.com/salarycrew/win-filetool\n\n"
                  "이 앱은 아래 오픈소스 부품을 씁니다. 각 부품의 저작권과 라이선스는 아래와 같습니다.\n"
-                 "ffmpeg·LAME·LibreOffice·PDFium은 앱 안에 따로 든 프로그램(별도 실행 파일·DLL)이고, 앱 본체에 링크하지 않습니다.\n"
+                 "ffmpeg·LAME·PDFium은 앱 안에 따로 든 프로그램(별도 실행 파일·DLL)이고, 앱 본체에 링크하지 않습니다.\n"
+                 "LibreOffice는 앱에 들어 있지 않습니다. 사용자가 [문서 도구]를 받는 경우에만(GitHub 릴리스에서 한 번) 이 PC에 받아지는\n"
+                 "별도 프로그램이고, 그 라이선스 전문(license.txt·NOTICE·LICENSE.html)은 받은 문서 도구 폴더 안에 함께 있습니다.\n"
                  "GPL·AGPL 부품은 넣지 않았습니다(ffmpeg는 --enable-gpl 없이 빌드, LibreOffice는 poppler를 쓰는 PDF 가져오기 부품을 뺌).\n")
 
     # 1. 소스 받는 곳
@@ -173,7 +176,7 @@ def main():
         "- LAME 3.100 (LGPL-2.0-or-later): lame-3.100.tar.gz, 고치지 않은 원본. 원 출처 https://lame.sourceforge.io/\n"
         "- dav1d 1.5.1 (BSD-2-Clause): dav1d-1.5.1.tar.xz. 원 출처 https://code.videolan.org/videolan/dav1d\n"
         "- zlib 1.3.1 (zlib): zlib-1.3.1.tar.gz. 원 출처 https://zlib.net/\n"
-        f"- LibreOffice {lo_full} (MPL-2.0 등): 공식 Windows 설치본(x86-64 MSI)의 파일을 고치지 않고,\n"
+        f"- LibreOffice {lo_full} (MPL-2.0 등, 문서 도구를 받는 경우): 공식 Windows 설치본(x86-64 MSI)의 파일을 고치지 않고,\n"
         "  문서 → PDF 변환에 필요 없는 파일만 뺐습니다(뺀 목록: trim-libreoffice.ps1, GPL인 poppler PDF 가져오기 부품도 뺌).\n"
         f"  소스: libreoffice-{lo_full}.tar.xz, libreoffice-translations-{lo_full}.tar.xz\n"
         f"        (원 출처 https://download.documentfoundation.org/libreoffice/src/{lo_ver}/ , LibreOffice가 쓰는 외부 라이브러리 소스는 https://dev-www.libreoffice.org/src/ )\n"
@@ -191,12 +194,15 @@ def main():
         tp("LAME 3.100 — GNU Library General Public License 2", tar_member(src / "lame-3.100.tar.gz", {"COPYING"}))
         tp("dav1d 1.5.1 — BSD 2-Clause", tar_member(src / "dav1d-1.5.1.tar.xz", {"COPYING"}))
         tp("zlib 1.3.1 — zlib License", tar_member(src / "zlib-1.3.1.tar.gz", {"LICENSE"}))
-    lo = TP / "libreoffice" / "lo-trim"
-    for f in ("NOTICE", "license.txt"):
-        if (lo / f).is_file():
-            tp(f"LibreOffice {lo_full} — {f}", (lo / f).read_text(encoding="utf-8", errors="replace"))
-    tp("Microsoft Visual C++ 런타임 (LibreOffice와 함께 든 msvcp140.dll·vcruntime140.dll 등)",
-       "Microsoft Visual C++ 재배포 가능 파일입니다. Microsoft 소프트웨어 사용 조건(Visual Studio 재배포 파일)에 따라 함께 배포합니다.")
+    tp(f"LibreOffice {lo_full} — 문서 도구를 받는 경우 (앱에는 들어 있지 않음)",
+       "문서 → PDF는 먼저 이 PC의 한글·Microsoft Office로 합니다. 그것으로 안 되는 일(Pages·Keynote·Numbers, Office가 없는 PC 등)이 있을 때\n"
+       "앱이 묻고, 사용자가 [받기]를 고르면 GitHub 릴리스에서 \"문서 도구\"(줄인 LibreOffice, win-filetool-doctools-1.zst)를 한 번 받습니다.\n"
+       "받은 파일은 앱에 고정한 SHA-256과 같을 때만 %LOCALAPPDATA%\\kr.salarycrew.winfiletool\\tools\\doctools\\lo\\ 에 풉니다.\n\n"
+       "라이선스: Mozilla Public License 2.0 (https://www.mozilla.org/MPL/2.0/) 및 LibreOffice가 함께 싣는 서드파티 라이선스.\n"
+       "전문은 문서 도구 폴더의 license.txt·NOTICE·LICENSE.html에 있습니다(LibreOffice 공식 배포본의 파일 그대로).\n"
+       "Microsoft Visual C++ 런타임(msvcp140.dll·vcruntime140.dll 등)도 문서 도구 폴더 안에 있으며, Microsoft 소프트웨어 사용 조건\n"
+       "(Visual Studio 재배포 파일)에 따라 LibreOffice와 함께 배포합니다.\n"
+       "소스: 위 \"소스 받는 곳\"의 LibreOffice 항목(0.3.0~0.3.2와 같은 판이라 소스 저장소에 이미 있음).")
     if (TP / "pdfium" / "win-x64" / "LICENSE").is_file():
         tp("PDFium — LICENSE", (TP / "pdfium" / "win-x64" / "LICENSE").read_text(encoding="utf-8", errors="replace"))
     pd = TP / "pdfium" / "win-x64" / "licenses"
@@ -221,7 +227,7 @@ def main():
     parts.append(section("시험에만 쓰는 자료 (앱에 들어가지 않음, 소스 저장소에만 있음)"))
     parts.append("- crates/core/tests/data/030/hwp/hangul97-3.0.hwp — LibreOffice 소스의 hwpfilter 회귀 시험 자료\n"
                  "  (https://github.com/LibreOffice/core/blob/master/hwpfilter/qa/cppunit/data/pass/hangul97-3.0.hwp),\n"
-                 "  Mozilla Public License 2.0, 바꾸지 않은 원본. MPL-2.0 원문은 위 LibreOffice 고지에 있습니다.\n")
+                 "  Mozilla Public License 2.0, 바꾸지 않은 원본. MPL-2.0 원문: https://www.mozilla.org/MPL/2.0/\n")
 
     # 5. Rust 크레이트
     pkgs = cargo_packages()

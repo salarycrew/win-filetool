@@ -243,9 +243,15 @@ impl Tool {
         match self {
             Tool::Ffmpeg => (crate::bundle::FFMPEG, &["ffmpeg.exe"]),
             Tool::Ffprobe => (crate::bundle::FFMPEG, &["ffprobe.exe"]),
+            // 0.3.3: LibreOffice는 앱 묶음에 없다(문서 도구로 따로 받음, [`crate::doctools`])
             Tool::Soffice => (crate::bundle::LIBREOFFICE, &["program", "soffice.exe"]),
         }
     }
+}
+
+/// 0.3.3: 받은(또는 0.3.x에서 옮긴) 문서 도구의 soffice
+fn doctools_soffice() -> Option<PathBuf> {
+    crate::doctools::soffice()
 }
 
 /// 앱 묶음에 든 도구의 실행 파일 경로(풀지 않고 경로만). 묶음이 없거나 그 도구가 없으면 None.
@@ -312,7 +318,7 @@ pub struct ToolStatus {
 pub struct Toolset {
     pub ffmpeg: Option<PathBuf>,
     pub ffprobe: Option<PathBuf>,
-    /// 앱에 든 LibreOffice면 아직 풀리지 않았을 수 있다 → [`Toolset::get`]이 처음 쓸 때 푼다(약 3초)
+    /// 0.3.3: 받은 문서 도구 → 설정에서 고른 경로·설치된 LibreOffice 순. 없으면 [`Toolset::get`]이 [`crate::Error::NeedDocTools`]
     pub soffice: Option<PathBuf>,
     soffice_bundled: bool,
 }
@@ -353,8 +359,8 @@ impl Toolset {
                 (ffmpeg, ffprobe)
             }
         };
-        let bundled_lo = if custom_first(Tool::Soffice, user) { None } else { bundled_path(Tool::Soffice) };
-        let soffice_bundled = bundled_lo.is_some();
+        let bundled_lo = if custom_first(Tool::Soffice, user) { None } else { doctools_soffice() };
+        let soffice_bundled = false;
         let soffice = bundled_lo.or_else(|| find(Tool::Soffice, user.soffice.as_deref(), None, env).map(|f| f.0));
         Self { ffmpeg, ffprobe, soffice, soffice_bundled }
     }
@@ -370,10 +376,8 @@ impl Toolset {
             Tool::Ffprobe => &self.ffprobe,
             Tool::Soffice => &self.soffice,
         };
-        if tool == Tool::Soffice && self.soffice_needs_unpack() {
-            if let Some(r) = ensure_bundled(Tool::Soffice) {
-                r?;
-            }
+        if tool == Tool::Soffice && p.is_none() {
+            return Err(crate::Error::NeedDocTools(crate::doctools::download_mb()));
         }
         p.as_deref().ok_or_else(|| crate::Error::ToolMissing {
             tool: tool.stem().into(),
@@ -388,7 +392,10 @@ pub fn status_all(user: &ToolPaths, env: &SearchEnv) -> Vec<ToolStatus> {
     let ts = Toolset::discover(user, env);
     let src = |tool: Tool, p: &Option<PathBuf>| -> Option<(PathBuf, Source)> {
         let p = p.clone()?;
-        let bundled = bundled_path(tool).is_some_and(|b| b == p);
+        let bundled = match tool {
+            Tool::Soffice => doctools_soffice().is_some_and(|b| b == p),
+            _ => bundled_path(tool).is_some_and(|b| b == p),
+        };
         if bundled {
             return Some((p, Source::Bundled));
         }
@@ -417,10 +424,16 @@ pub fn status_all(user: &ToolPaths, env: &SearchEnv) -> Vec<ToolStatus> {
                 tool,
                 label: tool.label(),
                 found,
-                source: f.as_ref().map(|(_, s)| s.label()),
+                source: f.as_ref().map(|(_, s)| if tool == Tool::Soffice && *s == Source::Bundled { "받은 문서 도구" } else { s.label() }),
                 path: f.map(|(p, _)| p),
                 version,
-                guidance: if found { None } else { Some(tool.guidance()) },
+                guidance: if found {
+                    None
+                } else if tool == Tool::Soffice {
+                    Some("문서 도구를 아직 받지 않았어요. 필요한 일을 할 때 받거나, 위 [문서 도구]에서 받을 수 있어요.")
+                } else {
+                    Some(tool.guidance())
+                },
                 download_url: tool.download_url(),
             }
         })

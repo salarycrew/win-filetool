@@ -13,6 +13,7 @@
 //!     나머지 루트만 앱이 색인한다. 서비스가 없거나 멈추면 조용히 앱 색인으로. [설정] > 검색에서 설치/제거(UAC 1번).
 
 mod cmd_core;
+mod cmd_doctools;
 mod cmd_runtime;
 mod cmd_pdfedit;
 mod cmd_office;
@@ -1130,6 +1131,9 @@ fn forward_ctx_fast() -> bool {
 
 fn main() {
     let started = Instant::now();
+    // 0.3.3: 시험용 바꾸기(한글·Office 숨기기, 문서 도구 주소)는 개발 빌드·시험용 exe(`test-hooks`)에서만 읽는다
+    #[cfg(any(debug_assertions, feature = "test-hooks"))]
+    filetool_core::testhooks::enable();
     if let Some(code) = ctx_menu_cli() {
         std::process::exit(code);
     }
@@ -1227,6 +1231,11 @@ fn main() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            cmd_doctools::doctools_status,
+            cmd_doctools::doctools_needed,
+            cmd_doctools::doctools_download,
+            cmd_doctools::doctools_install_file,
+            cmd_doctools::doctools_remove,
             inspect_paths,
             nfc_preview,
             nfc_apply,

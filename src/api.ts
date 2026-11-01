@@ -111,13 +111,21 @@ export function asErr(e: unknown): CmdErr {
 export const isCancelled = (e: unknown) => asErr(e).code === "cancelled";
 export const needsPassword = (e: unknown) => { const c = asErr(e).code; return c === "password_required" || c === "wrong_password"; };
 
-export interface Friendly { title: string; body: string; detail: string; icon: string; kind: "locked" | "missing-tool" | "damaged" | "unsupported" | "busy" | "cancelled" | "space" | "other" }
+export interface Friendly { title: string; body: string; detail: string; icon: string; kind: "locked" | "missing-tool" | "need-doctools" | "damaged" | "unsupported" | "busy" | "cancelled" | "space" | "other" }
 
 /** 원래 오류 글은 [자세히]로만 보이고, 화면에는 무엇이 문제인지 + 할 일 한 문장 */
 export function friendly(e: unknown): Friendly {
   const { code, message: m } = asErr(e);
   const f = (kind: Friendly["kind"], icon: string, title: string, body: string): Friendly => ({ kind, icon, title, body, detail: m });
   if (code === "cancelled" || /취소했습니다|취소됨/.test(m)) return f("cancelled", "x", "멈췄어요", "만들던 파일은 남기지 않았어요.");
+  // 0.3.3 문서 도구(LibreOffice)를 받지 않음 · 받기 실패 · Office 문서 안내
+  if (/문서 도구가 필요해요/.test(m))
+    return f("need-doctools", "doc", "문서 도구가 필요해요", "이 파일은 문서 도구로만 바꿀 수 있어요. 한 번만 받으면 돼요. [설정] → 문서 도구에서 받거나, 인터넷이 없는 PC는 [파일로 넣기]로 넣을 수 있어요.");
+  if (/SHA-256 불일치/.test(m)) return f("other", "shield", "받은 파일이 원래 파일과 달라요", "받은 문서 도구가 이 앱이 아는 파일과 달라서 쓰지 않았어요. 다시 받아 주세요.");
+  if (/인터넷 연결을 확인하고 다시 해 주세요/.test(m)) return f("other", "warn", "인터넷 연결을 확인하고 다시 해 주세요", "인터넷이 없는 PC라면 [설정] → 문서 도구 → [파일로 넣기]로 넣을 수 있어요.");
+  if (/암호가 걸린 문서예요/.test(m)) return f("locked", "lock", "암호가 걸린 문서예요", "원래 프로그램(Word·엑셀·PowerPoint)에서 암호를 풀고 다시 넣어 주세요.");
+  if (/겹쳐 바꾸지 못했어요/.test(m)) return f("busy", "warn", "열려 있는 Office와 겹쳤어요", m.replace(/^.*?실행 실패:\s*/, ""));
+  if (/응답하지 않아 멈췄어요/.test(m)) return f("busy", "warn", "프로그램이 응답하지 않아 멈췄어요", m.replace(/^.*?실행 실패:\s*/, ""));
   // 0.3.1 한글 파일: PDF 안내("암호가 걸린 PDF예요")로 가지 않게 먼저
   if (/한글이 이 파일을 열지 못했어요/.test(m))
     return f("damaged", "warn", "한글이 이 파일을 열지 못했어요", "손상된 파일이거나 암호가 걸린 한글 파일일 수 있어요. 암호가 있으면 한글에서 풀고 다시 넣어 주세요.");

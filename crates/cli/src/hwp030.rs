@@ -51,10 +51,10 @@ pub fn run(cmd: &str, args: &[String]) -> Result<Option<ExitCode>> {
     for p in files {
         let p = Path::new(p);
         let r: Result<String> = (|| match cmd {
-            "hwp-info" => Ok(hwp::capabilities(p, soffice.is_some())?.to_json()),
+            "hwp-info" => Ok(hwp::capabilities(p, true)?.to_json()),
             "hwp-convert" => {
                 let t = target.unwrap_or(DocTarget::Pdf);
-                let caps = hwp::capabilities(p, soffice.is_some())?;
+                let caps = hwp::capabilities(p, true)?;
                 let t0 = Instant::now();
                 match caps.route {
                     Route::Hancom => {
@@ -64,7 +64,8 @@ pub fn run(cmd: &str, args: &[String]) -> Result<Option<ExitCode>> {
                         Ok(format!("{} -> {}  경로 hancom{} · 한글 쪽수 {} · {} ms", p.display(), r.output.display(), if caps.distribution { "(PDF로 인쇄)" } else { "" }, r.pages.map(|n| n.to_string()).unwrap_or("?".into()), r.millis))
                     }
                     Route::Libreoffice => {
-                        let o = docs::convert_lo(soffice.as_deref().expect("route"), p, out, t, None, docs::DOC_TIMEOUT)?;
+                        let so = soffice.as_deref().ok_or(Error::NeedDocTools(filetool_core::doctools::download_mb()))?;
+                        let o = docs::convert_lo(so, p, out, t, None, docs::DOC_TIMEOUT)?;
                         Ok(format!("{} -> {}  경로 libreoffice · {} ms", p.display(), o.display(), t0.elapsed().as_millis()))
                     }
                     Route::None => Err(Error::Invalid(caps.message.unwrap_or_default())),

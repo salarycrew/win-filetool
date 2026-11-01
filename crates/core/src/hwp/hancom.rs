@@ -10,8 +10,10 @@
 //!   (`WinFileToolPathCheck`)이라 다른 프로그램이 일부러 부르지 않는 한 쓰이지 않는다. 같은 사용자 권한의 프로그램은
 //!   이 레지스트리를 원래 직접 쓸 수 있으므로 새로 열리는 권한은 없다. 메시지 상자는 `SetMessageBoxMode`로 자동 응답,
 //!   창은 숨김, 암호 문서는 `suspendpassword`로 묻지 않고 실패.
+//! - 0.3.3 매크로: 여는 복사본에서 문서 스크립트(`Scripts`)를 먼저 뺀다([`super::scrub`]) — 자동 응답이 "실행할까요?"에 예라고 해도 돌 것이 없다.
 //! - 한 번에 하나(앱 전체 잠금 파일), 언제나 `Quit` + 끝나지 않으면 그 한글 프로세스만 강제 종료, 시간 제한·취소.
-//! - 시험용: `WIN_FILETOOL_HIDE_HANCOM=1`이면 한글이 없는 것처럼 동작한다.
+//! - 시험용: `WIN_FILETOOL_HIDE_HANCOM=1`(또는 `WIN_FILETOOL_HIDE_COM=1`)이면 한글이 없는 것처럼 동작한다.
+//!   0.3.3부터 배포 앱은 이 값을 읽지 않는다([`crate::testhooks`] — CLI·시험용 앱만).
 
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
@@ -45,7 +47,7 @@ pub struct Install {
 }
 
 fn hidden() -> bool {
-    std::env::var_os(HIDE_ENV).is_some_and(|v| !v.is_empty() && v != "0")
+    crate::testhooks::flag(HIDE_ENV) || crate::testhooks::flag(crate::testhooks::HIDE_COM)
 }
 
 /// 한글이 설치되어 자동화를 쓸 수 있는지(숨김 설정 반영)
@@ -397,6 +399,8 @@ mod win {
         let ext = input.extension().and_then(|e| e.to_str()).unwrap_or("hwp").to_ascii_lowercase();
         let tmp_in = job.path().join(format!("in.{ext}"));
         std::fs::copy(input, &tmp_in).map_err(io_err(input))?;
+        // 0.3.3: 한글에는 매크로 끄기 설정이 없어, 여는 복사본에서 문서 스크립트를 뺀다(원본은 그대로)
+        super::scrub::strip_scripts(&tmp_in)?;
         let tmp_out = job.path().join(format!("out.{}", target.ext()));
         let script = job.path().join("hancom.ps1");
         std::fs::write(&script, format!("\u{feff}{SCRIPT}")).map_err(io_err(&script))?;
@@ -462,7 +466,7 @@ pub fn convert_mode(input: &Path, out_dir: Option<&Path>, target: DocTarget, mod
     let Some(_inst) = inst else {
         return Err(Error::Invalid(super::MSG_NEED_HANCOM.into()));
     };
-    let timeout = std::env::var(TIMEOUT_ENV).ok().and_then(|v| v.parse().ok()).map(Duration::from_secs).unwrap_or(timeout);
+    let timeout = crate::testhooks::var(TIMEOUT_ENV).and_then(|v| v.trim().parse().ok()).map(Duration::from_secs).unwrap_or(timeout);
     #[cfg(windows)]
     {
         win::convert(&_inst, input, out_dir, target, mode, cancel, timeout)

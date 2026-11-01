@@ -43,3 +43,16 @@ test("0.3.1 한글 암호·배포용은 PDF 안내가 아니라 한글 안내", 
   // PDF 암호는 그대로
   assert.equal(friendly("암호가 걸린 PDF입니다").title, "암호가 걸린 PDF예요");
 });
+
+test("0.3.3 문서 도구·Office 안내", () => {
+  const need = friendly("이 작업에는 문서 도구가 필요해요. 한 번만 받으면 돼요(약 106 MB).");
+  assert.equal(need.kind, "need-doctools");
+  assert.match(need.body, /파일로 넣기/);
+  assert.equal(friendly("문서 도구 받기 실행 실패: 받은 문서 도구 파일이 원래 파일과 달라서(SHA-256 불일치) 쓰지 않았어요. 다시 받아 주세요.").title, "받은 파일이 원래 파일과 달라요");
+  assert.equal(friendly("문서 도구 받기 실행 실패: 인터넷 연결을 확인하고 다시 해 주세요. (HTTP 404)").title, "인터넷 연결을 확인하고 다시 해 주세요");
+  // Office 암호 문서는 PDF 암호 안내로 가지 않는다
+  const enc = friendly("Word 실행 실패: 암호가 걸린 문서예요. 원래 프로그램에서 암호를 풀고 다시 넣어 주세요.");
+  assert.equal(enc.title, "암호가 걸린 문서예요");
+  assert.equal(enc.kind, "locked");
+  assert.equal(friendly("PowerPoint 실행 실패: 열려 있는 PowerPoint과(와) 겹쳐 바꾸지 못했어요. PowerPoint 창을 모두 닫고 다시 해 주세요.").kind, "busy");
+});

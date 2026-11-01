@@ -36,8 +36,10 @@ fn tool_discovery_fake_dirs() {
     // 아무것도 없으면 못 찾음 + 안내
     assert!(tools::find(Tool::Ffmpeg, None, None, &env).is_none());
     let ts = Toolset::discover(&ToolPaths::default(), &env);
-    let err = ts.get(Tool::Soffice).unwrap_err().to_string();
-    assert!(err.contains("LibreOffice") && err.contains("msiexec /a"), "{err}");
+    // 0.3.3: LibreOffice가 없으면 "문서 도구가 필요해요"(화면이 받을지 묻는다)
+    let err = ts.get(Tool::Soffice).unwrap_err();
+    assert!(matches!(err, filetool_core::Error::NeedDocTools(106)), "{err}");
+    assert!(err.to_string().contains("문서 도구가 필요해요"), "{err}");
 
     // winget 패키지 폴더의 ffmpeg (+ 같은 폴더의 ffprobe)
     let wg = root.join("Local/Microsoft/WinGet/Packages/Gyan.FFmpeg_Microsoft.Winget.Source_8wekyb3d8bbwe/ffmpeg-9.0-full_build/bin");

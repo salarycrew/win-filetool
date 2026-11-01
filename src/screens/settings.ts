@@ -7,6 +7,7 @@ import { themePref, setThemePref, ThemePref } from "../theme";
 import { resetWelcome } from "../welcome";
 import { go } from "../router";
 import { showBanner, UpdateOutcome, UpdateView } from "../update";
+import { docToolsStatus, download as dtDownload, installFromFile } from "../doctools";
 
 interface AutostartStatus { enabled: boolean; value: string | null; matches_exe: boolean; supported: boolean }
 interface CtxStatus { enabled: boolean; matches_exe: boolean; registered_exe: string | null; supported: boolean }
@@ -40,13 +41,15 @@ function render() {
       <input class="txt sm hk" id="hk" placeholder="예: Ctrl+Alt+F" aria-label="단축키" readonly>${toggle("hk-on", false, "")}</div>
     <div class="sc upd-sc"><span class="sc-ic">${I("refresh")}</span><div class="sc-t"><b>새 버전 나오면 알려 주기</b><span class="upd-state">GitHub에서 최신 버전 번호만 확인해요(하루 한 번까지)</span></div>
       <button type="button" class="btn" data-act="upd-check">지금 확인</button>${toggle("upd-on", true, "")}</div>
+    <div class="sc dt-sc"><span class="sc-ic">${I("doc")}</span><div class="sc-t"><b>문서 도구</b><span class="dt-state">확인하는 중…</span></div>
+      <button type="button" class="btn" data-act="dt-file" hidden>${I("folder")}파일로 넣기</button><button type="button" class="btn accent" data-act="dt-get" hidden>받기</button><button type="button" class="btn" data-act="dt-del" hidden>${I("trash")}지우기</button></div>
     <div class="adv ${advOpen ? "open" : ""}"><button type="button" class="adv-h" aria-expanded="${advOpen}" data-act="adv">${I("tool")}<span class="sc-t"><b>고급</b><span>검색할 곳·제외할 폴더·변환 도구·서비스 명령</span></span>${I("down", "chev")}</button>
       <div class="adv-b" ${advOpen ? "" : "hidden"}>
         <div class="ar col"><div class="sc-t"><b>검색할 곳</b><span>비워 두면 모든 드라이브를 찾아요</span></div><ul class="roots-l"></ul>
           <div class="row"><button type="button" class="btn" data-act="add-root">${I("plus")}폴더 더하기</button><button type="button" class="btn subtle" data-act="reset-roots">모든 드라이브로</button><button type="button" class="btn subtle" data-act="rescan">${I("refresh")}다시 색인</button></div></div>
         <div class="ar col"><div class="sc-t"><b>제외할 폴더</b><span>한 줄에 하나씩. 이 폴더 안은 찾지 않아요</span></div><textarea class="ex" id="excludes" spellcheck="false"></textarea>
           <div class="row"><button type="button" class="btn" data-act="save-ex">제외 목록 저장</button><span class="hint s-state" aria-live="polite"></span></div></div>
-        <div class="ar col"><div class="sc-t"><b>변환 도구</b><span>영상(ffmpeg)·문서(LibreOffice)·PDF(PDFium) 도구는 앱에 들어 있어요</span></div><div class="tools-l hint">확인하는 중…</div></div>
+        <div class="ar col"><div class="sc-t"><b>변환 도구</b><span>영상(ffmpeg)·PDF(PDFium) 도구는 앱에 들어 있어요. 문서(LibreOffice)는 위 [문서 도구]로 받아요</span></div><div class="tools-l hint">확인하는 중…</div></div>
         <div class="ar col"><div class="sc-t"><b>빠른 검색 서비스 자세히</b><span>문제를 알릴 때 쓰는 정보예요</span></div><pre class="svc-cmd"></pre>
           <div class="row"><button type="button" class="btn svc-re" data-svc="update" hidden>${I("refresh")}빠른 검색 서비스 다시 설치(갱신)</button></div></div>
         <div class="ar"><div class="sc-t"><b>처음 안내 다시 보기</b><span>변환 화면 위에 짧은 안내를 다시 보여 드려요</span></div><button type="button" class="btn" data-act="welcome">다시 보기</button></div>
@@ -64,7 +67,24 @@ async function loadAll() {
   refreshSearch();
   refreshSvc();
   refreshUpd();
+  refreshDocTools();
   if (advOpen) loadTools();
+}
+
+/** 0.3.3 문서 도구 칸: 이 PC의 한글·Office, 받았는지, [받기]·[파일로 넣기]·[지우기] */
+async function refreshDocTools() {
+  const st = $(".dt-state", root);
+  if (!st) return;
+  const v = await docToolsStatus().catch((e) => { st.textContent = friendly(e).title; return null; });
+  if (!v) return;
+  const off = [v.office.word && "Word", v.office.excel && "엑셀", v.office.powerpoint && "PowerPoint"].filter(Boolean).join("·");
+  const pc = `이 PC: 한글 ${v.engines.hancom ? "있음" : "없음"} · Office ${off ? `있음(${off})` : "없음"}`;
+  st.textContent = v.ready
+    ? `받아 둠 — LibreOffice ${v.lo_version}, 약 ${v.unpacked_mb} MB${v.source === "0.3.x" ? "(예전 판에서 쓰던 것)" : ""}. Pages·Keynote·Numbers처럼 한글·Office로 안 되는 문서에 써요. ${pc}`
+    : `아직 받지 않음 — 한글·Office로 안 되는 문서(Pages·Keynote·Numbers 등)를 바꿀 때 한 번 받아요(약 ${v.download_mb} MB${v.partial_bytes ? `, ${Math.round(v.partial_bytes / 1e6)} MB 받아 둠` : ""}). ${pc}`;
+  ($("[data-act=dt-get]", root) as HTMLElement).hidden = v.ready;
+  ($("[data-act=dt-file]", root) as HTMLElement).hidden = v.ready;
+  ($("[data-act=dt-del]", root) as HTMLElement).hidden = !v.ready;
 }
 
 const UPD_HINT = "GitHub에서 최신 버전 번호만 확인해요(하루 한 번까지)";
@@ -271,6 +291,14 @@ export const settingsScreen: Screen = {
         case "welcome": resetWelcome(); toast("변환 화면에 안내를 다시 보여 드려요"); go("convert"); break;
         case "about": go("about"); break;
         case "upd-check": checkNow(b as HTMLButtonElement); break;
+        case "dt-get": if (await dtDownload()) toast("문서 도구를 받았어요"); refreshDocTools(); break;
+        case "dt-file": await installFromFile(); refreshDocTools(); break;
+        case "dt-del":
+          if (await confirmDlg("문서 도구를 지울까요?", "약 445 MB를 비워요. 나중에 필요하면 다시 받을 수 있어요.", "지우기", true)) {
+            try { await invoke("doctools_remove"); toast("문서 도구를 지웠어요"); } catch (err) { toast(friendly(err).title); }
+            refreshDocTools();
+          }
+          break;
       }
     });
     document.addEventListener("ft-update", () => refreshUpd());

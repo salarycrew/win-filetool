@@ -8,6 +8,8 @@ description = "파일 도구 (Tauri 2 앱)"
 [features]
 # 0.3.1 시험용 exe만: 새 버전 확인 주소를 WIN_FILETOOL_UPDATE_URL로 바꿀 수 있게(배포 빌드에서는 켜지 않음)
 update-test = []
+# 0.3.3 시험용 exe만: 한글·Office 숨기기(WIN_FILETOOL_HIDE_COM), 문서 도구 주소(WIN_FILETOOL_DOCTOOLS_URL) 바꾸기 + update-test
+test-hooks = ["update-test"]
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }

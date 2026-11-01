@@ -36,6 +36,9 @@ pub enum Error {
     PasswordRequired(PathBuf),
     #[error("암호가 맞지 않습니다. 다시 넣어 주세요 ({})", .0.display())]
     WrongPassword(PathBuf),
+    /// 0.3.3: 이 일에 문서 도구(LibreOffice)가 필요한데 아직 받지 않음(화면이 "받을까요?"를 띄움). 숫자는 받을 크기(MB)
+    #[error("이 작업에는 문서 도구가 필요해요. 한 번만 받으면 돼요(약 {0} MB).")]
+    NeedDocTools(u64),
     /// 0.3.0 QA-05: 0바이트 파일(잠시 뒤 다시 해도 소용없으니 따로 안내)
     #[error("빈 파일입니다(0바이트, 내용 없음): {}", .0.display())]
     EmptyFile(PathBuf),

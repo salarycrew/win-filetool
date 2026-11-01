@@ -1144,10 +1144,16 @@ pub fn doc_to_pptx(input: &Path, out_dir: Option<&Path>, soffice: Option<&Path>,
         job = JobDir::new("w2p")?;
         let made = crate::hwp::convert(soffice, input, Some(job.path()), DocTarget::Docx, cancel, docs::DOC_TIMEOUT.min(Duration::from_secs(300)))?;
         // 설치된 한글로 만들었으면 LibreOffice를 거치지 않았다
-        let via_lo = crate::hwp::capabilities(input, soffice.is_some()).is_ok_and(|c| c.route == crate::hwp::Route::Libreoffice);
+        let via_lo = crate::hwp::capabilities(input, true).is_ok_and(|c| c.route == crate::hwp::Route::Libreoffice);
         (made, via_lo)
+    } else if crate::msoffice::app_for(input) == Some(crate::msoffice::App::Word) && crate::msoffice::available(crate::msoffice::App::Word) {
+        // 0.3.3: .doc·.rtf·.odt 등은 이 PC의 Word로 docx를 먼저 만든다(문서 도구 없이)
+        job = JobDir::new("w2p")?;
+        let made = crate::msoffice::convert(input, Some(job.path()), DocTarget::Docx, cancel, docs::DOC_TIMEOUT.min(Duration::from_secs(300)))?.output;
+        (made, false)
     } else {
-        let so = soffice.ok_or_else(|| Error::ToolMissing { tool: "LibreOffice".into(), hint: "Word(.docx)가 아닌 문서는 먼저 Word 형식으로 바꾼 뒤 슬라이드를 만듭니다".into() })?;
+        // Word가 없거나 Pages 문서: 문서 도구(LibreOffice). 아직 없으면 받으라고 알린다
+        let so = soffice.ok_or(Error::NeedDocTools(crate::doctools::download_mb()))?;
         job = JobDir::new("w2p")?;
         let made = docs::convert(so, input, Some(job.path()), DocTarget::Docx, cancel, docs::DOC_TIMEOUT.min(Duration::from_secs(300)))?;
         (made, true)

@@ -7,6 +7,7 @@ import {
 import { FT, I, extOf } from "../icons";
 import { go, Screen } from "../router";
 import { $, ResultLine, askPassword, bindResultButtons, bindSegs, errRow, esc, opt, progressPanel, resultRow, seg, segVal, setProgress, toast } from "../ui";
+import { resetDocToolsAsk, withDocTools } from "../doctools";
 import { FailKind, JobDef, JobId, acceptsItem, byName, isNfd, jobDef, mbToBytes, summary } from "./core";
 
 type PItem = Item & { pw?: string; excluded?: Set<number>; open?: boolean; nfdCount?: number };
@@ -35,7 +36,7 @@ function optionsHTML(): string {
     case "photo":
       return opt("크기", seg("side", [["1920", "보통(1920px)"], ["1280", "작게(1280px)"], ["0", "크기 그대로"]], "1920"), "긴 쪽을 이 크기 이하로 줄이고 JPG로 저장해요. 촬영 날짜는 남겨요.");
     case "office2pdf":
-      return `<div class="info">${I("info")}<span>한글 파일은 이 PC에 한글이 있으면 한글로, 없으면 앱에 든 도구로 바꿔요. 여러 개도 한 번에 돼요.</span></div>`;
+      return `<div class="info">${I("info")}<span>한글 파일은 이 PC의 한글로, Word·엑셀·PPT는 이 PC의 Office로 바꿔요. 그것으로 안 되는 파일만 문서 도구를 한 번 받아요. 여러 개도 한 번에 돼요.</span></div>`;
     case "merge":
       return `<div class="info">${I("info")}<span>목록 순서대로 합쳐요. 빼고 싶은 쪽은 [쪽 고르기]에서 눌러 빼세요.</span></div>`;
     case "macname":
@@ -178,6 +179,7 @@ async function run() {
     targetBytes = mbToBytes(mb);
   }
   running = true; stopFlag = false; results = []; resultFolder = null;
+  resetDocToolsAsk();
   phase = "run";
   render();
   const pg = $(".panel.pg", root)!;
@@ -279,7 +281,8 @@ async function eachItem(pg: HTMLElement, newRun: () => number, targetBytes: numb
         else if (!o.output) results.push({ input: it.path, output: it.path, pill: "그대로", note: o.note });
         else results.push({ input: it.path, output: o.output, before: o.before, after: o.after, note: o.reached ? undefined : o.note });
       } else if (job.id === "office2pdf") {
-        const o = await invoke<{ output: string }>("convert_one", { job: j, path: it.path, op: { kind: "doc", target: "pdf" }, outDir: null });
+        // 0.3.3: 한글·Office로 안 되는 파일이 나오면 "문서 도구가 필요해요"를 한 번 묻고 받은 뒤 이어서
+        const o = await withDocTools(() => invoke<{ output: string }>("convert_one", { job: j, path: it.path, op: { kind: "doc", target: "pdf" }, outDir: null }));
         // 형식이 바뀌므로 크기 비교("N배 커졌어요")는 하지 않는다
         results.push({ input: it.path, output: o.output, pill: "PDF" });
       } else if (job.id === "macname") {

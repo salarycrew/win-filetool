@@ -1,4 +1,9 @@
-//! 문서 변환(LibreOffice headless `--convert-to`). 0.3.0부터 줄인 LibreOffice가 앱에 들어 있다([`crate::bundle`]).
+//! 문서 변환. 0.3.3부터 길을 고르는 순서([`engine_for`]):
+//! 1. 한글(`hwp`, `hwpx`) → 이 PC의 한글(COM, [`crate::hwp::hancom`]). 한글이 없을 때 한글 97 이전만 LibreOffice.
+//! 2. Word·Excel·PowerPoint 형식(doc·docx·xls·xlsx·ppt·pptx·rtf·odt·ods·odp 등) → 이 PC의 Microsoft Office(COM, [`crate::msoffice`]).
+//! 3. 그 밖(Pages·Keynote·Numbers, fodt·wpd 등)과 Office가 없는 PC → LibreOffice headless `--convert-to`.
+//!    LibreOffice는 앱에 넣지 않고 처음 필요할 때 "문서 도구"로 한 번 받는다([`crate::doctools`]). 아직 없으면
+//!    [`crate::Error::NeedDocTools`]로 알려 화면이 받을지 묻는다.
 //!
 //! 앱 전용 프로필(`-env:UserInstallation=file:///…`)을 써서 사용자의 LibreOffice 설정을 건드리지 않는다.
 //! 0.3.0: 프로필을 작업마다 새로 만들지 않고 작은 묶음(`lo-profile-1..N`)을 돌려 쓴다(첫 변환 1.9초 → 다음부터 0.5초).
@@ -197,7 +202,105 @@ pub fn acquire_profile(base: &Path, pool: usize, cancel: Option<&Cancel>, timeou
     }
 }
 
-/// 문서 한 개 변환. 한글(`.hwp`, `.hwpx`)은 [`crate::hwp::convert`]로 보낸다(설치된 한글 또는 한글 97이면 LibreOffice).
+/// 0.3.3: 문서 하나를 바꿀 길
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Engine {
+    /// 이 PC의 한글(COM)
+    Hancom,
+    /// 이 PC의 Microsoft Office(COM)
+    Office(crate::msoffice::App),
+    /// 문서 도구(LibreOffice) — 받은 것이 없으면 받아야 함
+    LibreOffice,
+    /// 바꿀 수 없음
+    None,
+}
+
+/// 이 PC에서 쓸 수 있는 COM 프로그램(레지스트리만 읽어 싸다, 시험용 숨김 반영)
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize)]
+pub struct Engines {
+    pub hancom: bool,
+    pub word: bool,
+    pub excel: bool,
+    pub powerpoint: bool,
+}
+
+impl Engines {
+    pub fn detect() -> Self {
+        use crate::msoffice::{available, App};
+        Engines { hancom: crate::hwp::hancom::available(), word: available(App::Word), excel: available(App::Excel), powerpoint: available(App::PowerPoint) }
+    }
+    pub fn office(&self, app: crate::msoffice::App) -> bool {
+        use crate::msoffice::App;
+        match app {
+            App::Word => self.word,
+            App::Excel => self.excel,
+            App::PowerPoint => self.powerpoint,
+        }
+    }
+}
+
+/// 길 고르기(순수 함수). `hwp`: 한글 파일이면 내용으로 알아낸 형식(아니면 None).
+/// LibreOffice는 받을 수 있으므로 "있다"고 보고 고른다(받았는지는 [`needs_doctools`]).
+pub fn engine_for_ext(ext: &str, hwp: Option<&crate::hwp::HwpInfo>, target: DocTarget, e: &Engines) -> Engine {
+    let ext = ext.to_ascii_lowercase();
+    if ext == "hwp" || ext == "hwpx" {
+        let Some(info) = hwp else { return Engine::None };
+        let caps = crate::hwp::capabilities_for(info, e.hancom, true);
+        if !caps.can_pdf || (caps.distribution && target != DocTarget::Pdf) || !matches!(target, DocTarget::Pdf | DocTarget::Docx) {
+            return Engine::None;
+        }
+        return match caps.route {
+            crate::hwp::Route::Hancom => Engine::Hancom,
+            crate::hwp::Route::Libreoffice => Engine::LibreOffice,
+            crate::hwp::Route::None => Engine::None,
+        };
+    }
+    if let Some(app) = crate::msoffice::app_for_ext(&ext) {
+        if crate::msoffice::can_make(app, target) && e.office(app) {
+            return Engine::Office(app);
+        }
+    }
+    if allowed_targets(Path::new(&format!("x.{ext}"))).contains(&target) {
+        return Engine::LibreOffice;
+    }
+    Engine::None
+}
+
+/// 파일 하나의 길(한글은 내용을 읽어 형식 확인)
+pub fn engine_for(p: &Path, target: DocTarget, e: &Engines) -> Engine {
+    let ext = p.extension().and_then(|x| x.to_str()).unwrap_or("");
+    let info = if crate::hwp::is_hwp_path(p) { crate::hwp::detect(p).ok() } else { None };
+    engine_for_ext(ext, info.as_ref(), target, e)
+}
+
+/// 이 파일들을 바꾸려면 문서 도구를 받아야 하는지(`lo_ready`: 이미 쓸 수 있는 LibreOffice가 있음)
+pub fn needs_doctools(paths: &[PathBuf], target: DocTarget, e: &Engines, lo_ready: bool) -> bool {
+    !lo_ready && paths.iter().any(|p| engine_for(p, target, e) == Engine::LibreOffice)
+}
+
+/// 0.3.3 문서 한 개 변환(앱·감시 폴더·CLI가 쓰는 길): 한글 → Office → 문서 도구 순([`engine_for`]).
+/// Office가 사용자가 연 PowerPoint와 겹쳐 못 하면, 문서 도구가 이미 있을 때만 그것으로 한다.
+pub fn convert_auto(tools: &crate::tools::Toolset, input: &Path, out_dir: Option<&Path>, target: DocTarget, cancel: Option<&Cancel>, timeout: Duration) -> Result<PathBuf> {
+    crate::error::ensure_nonempty(input)?;
+    if !input.is_file() {
+        return Err(Error::Invalid(format!("파일이 없습니다: {}", input.display())));
+    }
+    if crate::hwp::is_hwp_path(input) {
+        return crate::hwp::convert(tools.soffice.as_deref(), input, out_dir, target, cancel, timeout);
+    }
+    match engine_for(input, target, &Engines::detect()) {
+        Engine::Office(_) => match crate::msoffice::convert(input, out_dir, target, cancel, timeout) {
+            Ok(o) => Ok(o.output),
+            Err(e) if crate::msoffice::is_busy_error(&e) && tools.soffice.is_some() => convert_lo(tools.get(crate::tools::Tool::Soffice)?, input, out_dir, target, cancel, timeout),
+            Err(e) => Err(e),
+        },
+        Engine::LibreOffice => convert_lo(tools.get(crate::tools::Tool::Soffice)?, input, out_dir, target, cancel, timeout),
+        Engine::Hancom | Engine::None => Err(Error::Unsupported(format!("{} → {}", input.display(), target.ext()))),
+    }
+}
+
+/// 문서 한 개 변환(LibreOffice 경로를 알 때 — 점검·시험용). 한글(`.hwp`, `.hwpx`)은 [`crate::hwp::convert`]로 보낸다(설치된 한글 또는 한글 97이면 LibreOffice).
 pub fn convert(soffice: &Path, input: &Path, out_dir: Option<&Path>, target: DocTarget, cancel: Option<&Cancel>, timeout: Duration) -> Result<PathBuf> {
     crate::error::ensure_nonempty(input)?;
     if crate::hwp::is_hwp_path(input) {
@@ -300,6 +403,51 @@ mod tests {
         let b = profile_base(Path::new(r"D:\LO\program\soffice.exe"));
         assert_ne!(a, b);
         assert!(a.to_string_lossy().contains("lo-profiles"));
+    }
+
+    #[test]
+    fn engine_decision() {
+        use crate::hwp::{HwpFormat, HwpInfo};
+        use crate::msoffice::App;
+        let all = Engines { hancom: true, word: true, excel: true, powerpoint: true };
+        let none = Engines::default();
+        let only_word = Engines { word: true, ..Default::default() };
+        let info = |format| HwpInfo { format, version: None, encrypted: false, distribution: false, compressed: true, problem: None };
+        let pdf = DocTarget::Pdf;
+        // 한글+Office가 있는 PC: 핵심 문서는 모두 받지 않고 된다
+        for (ext, want) in [("docx", Engine::Office(App::Word)), ("doc", Engine::Office(App::Word)), ("rtf", Engine::Office(App::Word)), ("odt", Engine::Office(App::Word)), ("xlsx", Engine::Office(App::Excel)), ("xls", Engine::Office(App::Excel)), ("csv", Engine::Office(App::Excel)), ("pptx", Engine::Office(App::PowerPoint)), ("ppt", Engine::Office(App::PowerPoint))] {
+            assert_eq!(engine_for_ext(ext, None, pdf, &all), want, "{ext}");
+        }
+        assert_eq!(engine_for_ext("hwp", Some(&info(HwpFormat::Hwp5)), pdf, &all), Engine::Hancom);
+        assert_eq!(engine_for_ext("hwpx", Some(&info(HwpFormat::Hwpx)), pdf, &all), Engine::Hancom);
+        assert_eq!(engine_for_ext("hwp", Some(&info(HwpFormat::Hwp97)), pdf, &all), Engine::Hancom);
+        // LibreOffice만 되는 것: Pages·Keynote·Numbers, fodt·wpd
+        for ext in ["pages", "key", "numbers", "fodt", "wpd"] {
+            assert_eq!(engine_for_ext(ext, None, pdf, &all), Engine::LibreOffice, "{ext}");
+        }
+        assert_eq!(engine_for_ext("pages", None, DocTarget::Docx, &all), Engine::LibreOffice);
+        assert_eq!(engine_for_ext("key", None, DocTarget::Pptx, &all), Engine::LibreOffice);
+        // doc → docx(Word → PPT 앞 단계)는 Word, docx → pptx 같은 다른 종류는 안 됨
+        assert_eq!(engine_for_ext("doc", None, DocTarget::Docx, &all), Engine::Office(App::Word));
+        assert_eq!(engine_for_ext("docx", None, DocTarget::Pptx, &all), Engine::None);
+        // 한글·Office가 없는 PC: Office 형식·한글 97은 문서 도구, 현대 한글은 안 됨(받아도 못 함)
+        for ext in ["docx", "xlsx", "pptx", "doc", "xls", "ppt"] {
+            assert_eq!(engine_for_ext(ext, None, pdf, &none), Engine::LibreOffice, "{ext}");
+        }
+        assert_eq!(engine_for_ext("hwp", Some(&info(HwpFormat::Hwp97)), pdf, &none), Engine::LibreOffice);
+        assert_eq!(engine_for_ext("hwp", Some(&info(HwpFormat::Hwp5)), pdf, &none), Engine::None);
+        assert_eq!(engine_for_ext("hwpx", Some(&info(HwpFormat::Hwpx)), pdf, &none), Engine::None);
+        // Word만 있는 PC
+        assert_eq!(engine_for_ext("docx", None, pdf, &only_word), Engine::Office(App::Word));
+        assert_eq!(engine_for_ext("pptx", None, pdf, &only_word), Engine::LibreOffice);
+        assert_eq!(engine_for_ext("jpg", None, pdf, &all), Engine::None);
+        // 받아야 하는지
+        let t = tempfile::tempdir().unwrap();
+        let paths: Vec<PathBuf> = ["a.docx", "b.pptx"].iter().map(|n| t.path().join(n)).collect();
+        assert!(!needs_doctools(&paths, pdf, &all, false));
+        assert!(needs_doctools(&paths, pdf, &none, false));
+        assert!(!needs_doctools(&paths, pdf, &none, true));
+        assert!(needs_doctools(&[t.path().join("c.pages")], pdf, &all, false));
     }
 
     #[test]
