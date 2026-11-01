@@ -500,3 +500,11 @@ textarea.ex.big { height: 360px; margin-top: 8px; }
 
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { transition: none !important; animation: none !important; } }
 @media (forced-colors: active) { .card.on, .pcell.sel { outline: 2px solid Highlight; } }
+
+.pill.gray { background: var(--subtle-2); color: var(--text-2); }
+.pthumb img { -webkit-user-drag: none; pointer-events: none; }
+.tool-opts .opt { flex-direction: column; gap: 4px; }
+.tool-opts .opt-l { width: auto; padding-top: 0; }
+.tool-opts .opt-l:empty { display: none; }
+.sz { flex-direction: row; gap: 8px; align-items: center; }
+.sz .pill { margin-top: 0; }

@@ -249,17 +249,17 @@ function renderGridView() {
   main.innerHTML = `<div class="pe-bar" role="toolbar" aria-label="쪽 편집">
       <button type="button" class="btn" data-act="rotl" title="왼쪽으로 돌리기 (Shift+R)" aria-label="왼쪽으로 돌리기">${I("rotl")}</button>
       <button type="button" class="btn" data-act="rotr" title="오른쪽으로 돌리기 (R)" aria-label="오른쪽으로 돌리기">${I("rotr")}</button>
-      <button type="button" class="btn" data-act="del" title="고른 쪽 지우기 (Delete)">${I("trash")}<span>지우기</span></button>
+      <button type="button" class="btn" data-act="del" title="고른 쪽 지우기 (Delete)" aria-label="지우기">${I("trash")}<span>지우기</span></button>
       <span class="sep"></span>
-      <button type="button" class="btn" data-act="extract" title="고른 쪽만 새 PDF로">${I("extract")}<span>뽑기</span></button>
-      <button type="button" class="btn" data-act="blank" title="고른 쪽 뒤에 빈 쪽">${I("blank")}<span>빈 쪽</span></button>
-      <button type="button" class="btn" data-act="insert" title="고른 쪽 뒤에 다른 PDF 끼워 넣기">${I("insert")}<span>끼워 넣기</span></button>
-      <button type="button" class="btn" data-act="append" title="다른 PDF를 끝에 붙이기(합치기)">${I("merge")}<span>더하기</span></button>
+      <button type="button" class="btn" data-act="extract" title="고른 쪽만 새 PDF로" aria-label="뽑기">${I("extract")}<span>뽑기</span></button>
+      <button type="button" class="btn" data-act="blank" title="고른 쪽 뒤에 빈 쪽" aria-label="빈 쪽">${I("blank")}<span>빈 쪽</span></button>
+      <button type="button" class="btn" data-act="insert" title="고른 쪽 뒤에 다른 PDF 끼워 넣기" aria-label="끼워 넣기">${I("insert")}<span>끼워 넣기</span></button>
+      <button type="button" class="btn" data-act="append" title="다른 PDF를 끝에 붙이기(합치기)" aria-label="더하기">${I("merge")}<span>더하기</span></button>
       <span class="sep"></span>
       <button type="button" class="btn subtle" data-act="undo" title="되돌리기 (Ctrl+Z)" aria-label="되돌리기">${I("undo")}</button>
       <button type="button" class="btn subtle" data-act="redo" title="다시 하기 (Ctrl+Y)" aria-label="다시 하기">${I("redo")}</button>
       <span class="grow"></span>
-      <button type="button" class="btn accent" data-act="save" title="새 파일로 저장 (Ctrl+S)">${I("check")}<span>저장</span></button></div>
+      <button type="button" class="btn accent" data-act="save" title="새 파일로 저장 (Ctrl+S)" aria-label="저장">${I("check")}<span>저장</span></button></div>
     <div class="pe-status"><span class="pe-sel"></span><span class="hint">눌러서 고르기 · Ctrl/Shift로 여러 쪽 · 끌어서 순서 바꾸기</span></div>
     <div class="pgrid" role="listbox" aria-multiselectable="true" aria-label="쪽" tabindex="-1"></div>
     <h2 class="h2">도구</h2>
@@ -275,10 +275,10 @@ function renderGrid() {
     const info = pageOf(p);
     const on = sel.has(p.key);
     const ar = info ? (p.rotate % 180 ? info.visual_height / info.visual_width : info.visual_width / info.visual_height) : 0.707;
-    return `<div class="pcell ${on ? "sel" : ""}" role="option" aria-selected="${on}" tabindex="${p.key === (focusKey ?? pages[0]?.key) ? 0 : -1}" data-key="${p.key}"
+    return `<div class="pcell ${on ? "sel" : ""}" draggable="false" role="option" aria-selected="${on}" tabindex="${p.key === (focusKey ?? pages[0]?.key) ? 0 : -1}" data-key="${p.key}"
         aria-label="${i + 1}쪽${p.kind === "blank" ? " (빈 쪽)" : ""}${p.rotate ? `, ${p.rotate}도 돌림` : ""}">
       <div class="pthumb" style="--ar:${ar.toFixed(4)}">${p.kind === "blank" ? `<span class="blankpg">빈 쪽</span>` :
-        `<img alt="" data-k="${p.src}:${p.index}" style="${imgRot(p)}">`}</div>
+        `<img alt="" draggable="false" data-k="${p.src}:${p.index}" style="${imgRot(p)}">`}</div>
       <div class="pfoot"><span class="pnum">${i + 1}</span>${multi && p.kind === "page" ? `<span class="psrc" title="${esc(fileName(sources[p.src].path))}">${sources[p.src].letter}${p.index + 1}</span>` : ""}${p.rotate ? `<span class="prot">${I("rotr")}${p.rotate}°</span>` : ""}</div>
       <span class="pcheck">${I("check")}</span></div>`;
   }).join("");
@@ -379,6 +379,8 @@ let drag: { key: string; x: number; y: number; started: boolean; ghost?: HTMLEle
 function onPointerDown(e: PointerEvent) {
   const cell = (e.target as HTMLElement).closest<HTMLElement>(".pcell");
   if (!cell || e.button !== 0) return;
+  e.preventDefault(); // 그림 기본 끌기·글자 고르기 막기
+  cell.focus({ preventScroll: true });
   drag = { key: cell.dataset.key!, x: e.clientX, y: e.clientY, started: false, id: e.pointerId };
 }
 function onPointerMove(e: PointerEvent) {
@@ -1001,6 +1003,8 @@ export const pdfEditScreen: Screen = {
     root.addEventListener("pointerdown", onPointerDown);
     window.addEventListener("pointermove", onPointerMove);
     window.addEventListener("pointerup", onPointerUp);
+    window.addEventListener("pointercancel", (e) => { if (drag) { drag.started = false; drag.ghost?.remove(); root.classList.remove("dragging"); $$(".pcell.drop-b, .pcell.drop-a", root).forEach((c) => c.classList.remove("drop-b", "drop-a")); drag = null; } void e; });
+    root.addEventListener("dragstart", (e) => { if ((e.target as HTMLElement).closest?.(".pgrid")) e.preventDefault(); });
     root.addEventListener("keydown", (e) => {
       if ((e.target as HTMLElement).closest(".pgrid")) onGridKey(e);
       if ((e.target as HTMLElement).id === "pe-dz" && (e.key === "Enter" || e.key === " ")) { e.preventDefault(); pickAndOpen(); }

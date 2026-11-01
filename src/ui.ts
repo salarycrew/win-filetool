@@ -47,6 +47,9 @@ export function toggle(id: string, on: boolean, label = ""): string {
   return `<label class="tg"><span class="tg-l">${esc(label)}</span><input type="checkbox" role="switch" id="${esc(id)}" ${on ? "checked" : ""}><i></i></label>`;
 }
 export function opt(label: string, control: string, help = ""): string {
+  // 입력 칸에 이름 붙이기(화면 읽기·자동화): 이름이 없는 첫 입력에 aria-label
+  const plain = label.replace(/<[^>]*>/g, "").trim();
+  if (plain) control = control.replace(/<(input|select|textarea)(?![^>]*aria-label)(?![^>]*type="checkbox")/, `<$1 aria-label="${esc(plain)}"`);
   return `<div class="opt"><span class="opt-l">${label}</span><div class="opt-c">${control}${help ? `<span class="opt-help">${help}</span>` : ""}</div></div>`;
 }
 export const checked = (root: ParentNode, id: string) => ($<HTMLInputElement>(`#${id}`, root)?.checked ?? false);
@@ -149,9 +152,10 @@ export function resultRow(r: ResultLine): string {
   const ext = r.isFolder ? "folder" : extOf(r.output);
   const sz = r.before && r.after ? `${human(r.before)} → <b>${human(r.after)}</b>` : r.after ? `<b>${human(r.after)}</b>` : "";
   const pill = r.pill ?? sizePill(r.before, r.after);
+  const pillCls = /커졌|그대로|0장/.test(pill) ? "pill gray" : "pill";
   return `<div class="rr" data-out="${esc(r.output)}" data-folder="${r.isFolder ? 1 : 0}">${FT(ext, 32)}
     <div class="rr-n"><b title="${esc(r.output)}">${esc(name)}</b><span>${esc(r.note ? r.note : dirOf(r.output))}</span></div>
-    <div class="sz">${sz}${pill ? `<span class="pill">${esc(pill)}</span>` : ""}</div>
+    <div class="sz">${sz}${pill ? `<span class="${pillCls}">${esc(pill)}</span>` : ""}</div>
     <div class="rr-b">${r.isFolder ? "" : `<button type="button" class="btn accent" data-open="file">${I("open")}파일 열기</button>`}
     <button type="button" class="btn ${r.isFolder ? "accent" : ""}" data-open="folder">${I("folder")}폴더 열기</button></div></div>`;
 }
