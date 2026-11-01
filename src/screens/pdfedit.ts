@@ -520,7 +520,7 @@ function renderTool(id: string) {
   main.innerHTML = `<div class="tool-head"><button type="button" class="btn subtle" data-act="back">${I("back")}쪽 목록으로</button><h2 class="h2 inline">${esc(t.t)}</h2></div>
     <div class="tool-wrap ${t.preview ? "" : "nopv"}">
       ${t.preview ? `<div class="pv"><div class="pv-nav"><button type="button" class="ib" data-act="pv-prev" aria-label="앞 쪽">${I("left")}</button><span class="pv-n"></span><button type="button" class="ib" data-act="pv-next" aria-label="다음 쪽">${I("right")}</button></div>
-        <div class="pv-stage"><div class="pv-page"><img class="pv-img" alt=""><div class="pv-ov"></div></div></div></div>` : ""}
+        <div class="pv-stage"><div class="pv-page"><img class="pv-img" alt="쪽 미리보기"><div class="pv-ov"></div></div></div></div>` : ""}
       <div class="tool-opts optcard"><div class="oc-body"></div><div class="oc-foot"><span class="save">${I("folder")}<b>원본 옆</b><span class="path">${esc(dirOf(doc().path))}</span></span><button type="button" class="btn accent lg" data-act="apply"></button></div></div>
     </div>`;
   const body = $(".tool-opts .oc-body", main)!;
