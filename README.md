@@ -24,6 +24,8 @@ Windows에서 자주 하는 파일 일을 한곳에서 하는 무료 프로그�
 | ![PDF 편집 쪽 목록](docs/images/pdf-edit.png) | ![서명 넣기](docs/images/pdf-sign.png) |
 | **PDF로 할 수 있는 일** | **이름 한꺼번에 바꾸기** |
 | ![PDF 할 일 카드](docs/images/pdf-cards.png) | ![이름 바꾸기 미리보기](docs/images/organize-rename.png) |
+| **검색** | |
+| ![검색](docs/images/search.png) | |
 
 ## 다운로드
 
