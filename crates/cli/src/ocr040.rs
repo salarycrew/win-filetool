@@ -21,7 +21,7 @@ pub const USAGE: &str = "0.4 글자 인식(OCR)·가리기 (공통: --password �
   filetool-cli redact find <pdf> [--words 말1,말2] [--presets rrn,phone,email,account] [--no-ocr]   찾은 곳(JSON, 아무것도 바꾸지 않음)
   filetool-cli redact apply <pdf> (--marks 상자.json | --words … --presets …) [--dpi 200|300] [--no-ocr]   이름_가림.pdf + 확인 결과
   filetool-cli redact verify <pdf> <글...>                        글이 파일 어디에든 남았는지(JSON)
-  filetool-cli redact image <jpg|png|heic> [--boxes x,y,w,h;x,y,w,h] [--text "은행 제출용"]   사진 가리기(이름_가림.jpg, 위치·촬영 정보 없음)
+  filetool-cli redact image <jpg|png|heic> [--boxes x,y,w,h;x,y,w,h] [--text 은행_제출용]   사진 가리기(이름_가림.jpg, 위치·촬영 정보 없음)
   filetool-cli ocr-selftest <빈 폴더>                              가리기·글자 인식 점검(이 PC에 OCR이 있으면 인식까지)";
 
 const SWITCHES: [&str; 3] = ["--redo", "--no-ocr", "--json"];
