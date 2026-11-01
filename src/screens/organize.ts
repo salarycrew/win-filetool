@@ -314,7 +314,7 @@ async function nfcApply(folder: string) {
 
 function render() {
   root.innerHTML = `<h1 class="title">파일 정리</h1>
-    <div class="pivot" role="tablist">${TABS.map(([t, l, ic]) => `<button type="button" role="tab" aria-selected="${t === tab}" class="${t === tab ? "on" : ""}" data-tab="${t}">${I(ic)}<span>${l}</span></button>`).join("")}</div>
+    <div class="pivot" role="tablist">${TABS.map(([t, l, ic]) => `<button type="button" role="tab" aria-selected="${t === tab}" aria-label="${l}" title="${l}" class="${t === tab ? "on" : ""}" data-tab="${t}">${I(ic)}<span>${l}</span></button>`).join("")}</div>
     <div class="org-body" role="tabpanel"></div>`;
   ({ rename: renameUI, dup: dupUI, zip: zipUI, nfc: nfcUI })[tab]();
 }
