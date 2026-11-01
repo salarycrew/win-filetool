@@ -920,8 +920,9 @@ pub(crate) fn analyze_doc(input: &Path, doc: &PdfDocument, opts: &AnalyzeOpts, c
 #[derive(Debug, Clone, PartialEq)]
 pub enum Block {
     Heading { level: u32, spans: Vec<Span> },
-    Para { spans: Vec<Span>, list: Option<bool> },
-    Table { rows: Vec<Vec<Vec<Span>>> },
+    Para { spans: Vec<Span>, list: Option<bool>, level: u32, x0: f32 },
+    /// header: 첫 줄이 굵거나 색 바탕(머리글 줄)
+    Table { rows: Vec<Vec<Vec<Span>>>, header: bool },
     Image { bytes: Vec<u8>, ext: &'static str, w: f32, h: f32 },
     /// 스캔본 쪽 그림(JPEG) + 쪽 크기(pt)
     PageImage { jpeg: Vec<u8>, w: f32, h: f32 },
@@ -1128,15 +1129,15 @@ pub fn blocks_with(doc: &DocLayout, page_marks: bool) -> Vec<Block> {
 
     let mut out: Vec<Block> = Vec::new();
     let mut prev_scan = false;
-    let flush = |para: &mut Option<(Line, Vec<Span>, Option<bool>)>, out: &mut Vec<Block>| {
-        if let Some((_, spans, list)) = para.take() {
+    let flush = |para: &mut Option<(Line, Vec<Span>, Option<bool>, f32)>, out: &mut Vec<Block>| {
+        if let Some((_, spans, list, x0)) = para.take() {
             if !spans_text(&spans).trim().is_empty() {
-                out.push(Block::Para { spans, list });
+                out.push(Block::Para { spans, list, level: 0, x0 });
             }
         }
     };
     // 앞 쪽에서 이어지는 문단(Word용): (문단, 앞 쪽 오른쪽 끝, 앞 쪽 높이)
-    let mut para: Option<(Line, Vec<Span>, Option<bool>)> = None;
+    let mut para: Option<(Line, Vec<Span>, Option<bool>, f32)> = None;
     let mut prev_page: Option<(f32, f32)> = None;
     for (pi, p) in doc.pages.iter().enumerate() {
         if page_marks && pi > 0 {
@@ -1189,18 +1190,23 @@ pub fn blocks_with(doc: &DocLayout, page_marks: bool) -> Vec<Block> {
                         let run: Vec<Line> = items[i..j].iter().filter_map(|x| if let Item::Line(m) = x { Some(m.clone()) } else { None }).collect();
                         if run.len() >= 2 {
                             if let Some(rows) = build_table(&run, &p.hrules, &p.vrules) {
+                                let h0 = &run[0];
+                                let all_bold = rows[0].iter().flatten().filter(|s| !s.text.trim().is_empty()).all(|s| s.bold) && rows[0].iter().flatten().any(|s| !s.text.trim().is_empty());
+                                let mid = (h0.top + h0.bot) / 2.0;
+                                let shaded = p.shapes.iter().any(|sh| matches!(sh, PShape::Rect { x0, top, w, h, fill: Some(c), .. } if *c != [255, 255, 255] && mid > *top && mid < top + h && *x0 < h0.x1 && x0 + w > h0.x0 && *h < 3.0 * h0.size.max(1.0) * 2.0));
+                                let header = all_bold || shaded;
                                 first_line = false;
                                 flush(&mut para, &mut out);
                                 // 앞 쪽 끝 표와 열 수가 같으면 이어 붙임
                                 let joined = match out.last_mut() {
-                                    Some(Block::Table { rows: prev }) if prev.first().map(Vec::len) == rows.first().map(Vec::len) && i == 0 => {
+                                    Some(Block::Table { rows: prev, .. }) if prev.first().map(Vec::len) == rows.first().map(Vec::len) && i == 0 => {
                                         prev.extend(rows.clone());
                                         true
                                     }
                                     _ => false,
                                 };
                                 if !joined {
-                                    out.push(Block::Table { rows });
+                                    out.push(Block::Table { rows, header });
                                 }
                                 i = j;
                                 continue;
@@ -1225,7 +1231,7 @@ pub fn blocks_with(doc: &DocLayout, page_marks: bool) -> Vec<Block> {
                     }
                     let mut spans = line_spans(l);
                     // 앞줄이 끝까지 찼고 같은 왼쪽에서 시작하는 줄의 "다." "가." 등은 목록 번호가 아니라 이어지는 글
-                    let continues = para.as_ref().is_some_and(|(pl, _, _)| {
+                    let continues = para.as_ref().is_some_and(|(pl, _, _, _)| {
                         pl.col == l.col && (pl.size - l.size).abs() < 0.8 && (l.x0 - pl.x0).abs() < 1.0 * l.size && pl.x1 > rights[l.col as usize] - 1.5 * pl.size && l.top - pl.bot < 1.0 * l.size && l.top > pl.top
                     });
                     let first_word = spans_text(&spans).split_whitespace().next().unwrap_or("").to_string();
@@ -1241,17 +1247,17 @@ pub fn blocks_with(doc: &DocLayout, page_marks: bool) -> Vec<Block> {
                     let cross = std::mem::replace(&mut first_line, false) && carried.is_some();
                     let joins = match &para {
                         // 쪽을 넘어 이어지는 문단: 앞 쪽 아래 끝까지 찬 줄 → 이 쪽 맨 위 줄
-                        Some((pl, _, _)) if cross => {
+                        Some((pl, _, _, _)) if cross => {
                             let (prev_right, prev_h) = carried.unwrap_or((right, p.height));
                             right = prev_right;
                             marker.is_none() && (pl.size - l.size).abs() < 0.8 && pl.bot > prev_h * 0.6 && l.top < p.height * 0.4 && pl.x1 > prev_right - 1.2 * pl.size
                         }
                         // 왼쪽 단 끝까지 찬 줄 → 오른쪽 단 첫 줄
-                        Some((pl, _, _)) if pl.col == 1 && l.col == 2 && l.top < pl.top => {
+                        Some((pl, _, _, _)) if pl.col == 1 && l.col == 2 && l.top < pl.top => {
                             right = rights[1];
                             marker.is_none() && (pl.size - l.size).abs() < 0.8 && pl.x1 > rights[1] - 1.2 * pl.size && i > 0 && matches!(&items[i - 1], Item::Line(x) if x.col == 1)
                         }
-                        Some((pl, _, _)) => {
+                        Some((pl, _, _, _)) => {
                             marker.is_none()
                                 && pl.col == l.col
                                 && (pl.size - l.size).abs() < 0.8
@@ -1265,7 +1271,7 @@ pub fn blocks_with(doc: &DocLayout, page_marks: bool) -> Vec<Block> {
                         None => false,
                     };
                     if joins {
-                        let (pl, dst, _) = para.as_mut().expect("para");
+                        let (pl, dst, _, _) = para.as_mut().expect("para");
                         let last = spans_text(dst).trim_end().chars().last();
                         let first = spans_text(&spans).trim_start().chars().next();
                         // 한글끼리 끊긴 줄: 줄 끝 빈칸을 남기는 PDF면 빈칸이 없을 때, 아니면 앞줄이 끝까지 찼을 때 붙인다
@@ -1276,14 +1282,14 @@ pub fn blocks_with(doc: &DocLayout, page_marks: bool) -> Vec<Block> {
                         *pl = l.clone();
                     } else {
                         flush(&mut para, &mut out);
-                        para = Some((l.clone(), spans, marker));
+                        para = Some((l.clone(), spans, marker, l.x0));
                     }
                     i += 1;
                 }
             }
         }
         // 마지막 줄이 쪽 끝까지 찬 문단은 다음 쪽으로 넘겨 이어 볼 수 있게 둔다
-        let last_right = para.as_ref().map(|(pl, _, _)| rights[pl.col as usize]);
+        let last_right = para.as_ref().map(|(pl, _, _, _)| rights[pl.col as usize]);
         if page_marks || last_right.is_none() {
             flush(&mut para, &mut out);
         } else {
@@ -1291,6 +1297,22 @@ pub fn blocks_with(doc: &DocLayout, page_marks: bool) -> Vec<Block> {
         }
     }
     flush(&mut para, &mut out);
+    // 목록 단계: 이어진 목록 항목의 왼쪽 위치가 더 들어가면 한 단계 아래(최대 3단계)
+    let mut stack: Vec<f32> = Vec::new();
+    for b in out.iter_mut() {
+        match b {
+            Block::Para { list: Some(_), x0, level, .. } => {
+                while stack.last().is_some_and(|t| *x0 < t - 3.0) {
+                    stack.pop();
+                }
+                if stack.last().is_none_or(|t| *x0 > t + 3.0) {
+                    stack.push(*x0);
+                }
+                *level = (stack.len().saturating_sub(1)).min(2) as u32;
+            }
+            _ => stack.clear(),
+        }
+    }
     out
 }
 
@@ -1311,7 +1333,7 @@ pub fn plain_text(doc: &DocLayout) -> String {
                 s.push_str(spans_text(&spans).trim());
                 s.push('\n');
             }
-            Block::Para { spans, list } => {
+            Block::Para { spans, list, .. } => {
                 match list {
                     Some(true) => {
                         num += 1;
@@ -1327,7 +1349,7 @@ pub fn plain_text(doc: &DocLayout) -> String {
                 s.push('\n');
                 continue;
             }
-            Block::Table { rows } => {
+            Block::Table { rows, .. } => {
                 for r in rows {
                     s.push_str(&r.iter().map(|c| spans_text(c).trim().replace(['\t', '\n'], " ")).collect::<Vec<_>>().join("\t"));
                     s.push('\n');

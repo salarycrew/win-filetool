@@ -59,13 +59,13 @@ pub fn build_doc(layout: &DocLayout, title: &str) -> Doc {
     for b in pdflayout::blocks(layout) {
         match b {
             Block::Heading { level, spans } => doc.blocks.push(DBlock::Heading { level, runs: runs_of(&spans) }),
-            Block::Para { spans, list: None } => doc.blocks.push(DBlock::Para(runs_of(&spans))),
-            Block::Para { spans, list: Some(ordered) } => doc.blocks.push(DBlock::ListItem { runs: runs_of(&spans), level: 0, ordered }),
-            Block::Table { rows } => {
-                // 첫 줄이 모두 굵으면 머리글 줄
-                let header = rows.first().is_some_and(|r| r.iter().flatten().filter(|s| !s.text.trim().is_empty()).all(|s| s.bold) && r.iter().flatten().any(|s| !s.text.trim().is_empty()));
-                doc.blocks.push(DBlock::Table { rows: rows.iter().map(|r| r.iter().map(|c| runs_of(c)).collect()).collect(), header });
+            Block::Para { spans, list: None, .. } => {
+                // 그림·표 바로 뒤 "그림 1. …" "표 2 …" → 캡션
+                let caption = matches!(doc.blocks.last(), Some(DBlock::Image { .. }) | Some(DBlock::Table { .. })) && crate::docx2pptx::looks_like_caption(&pdflayout::spans_text(&spans));
+                doc.blocks.push(if caption { DBlock::Caption(runs_of(&spans)) } else { DBlock::Para(runs_of(&spans)) });
             }
+            Block::Para { spans, list: Some(ordered), level, .. } => doc.blocks.push(DBlock::ListItem { runs: runs_of(&spans), level, ordered }),
+            Block::Table { rows, header } => doc.blocks.push(DBlock::Table { rows: rows.iter().map(|r| r.iter().map(|c| runs_of(c)).collect()).collect(), header }),
             Block::Image { bytes, ext, w, h } => doc.blocks.push(DBlock::Image { bytes, name: format!("image.{ext}"), w: (w * EMU_PER_PT) as i64, h: (h * EMU_PER_PT) as i64 }),
             Block::PageImage { jpeg, w, h } => doc.blocks.push(DBlock::Image { bytes: jpeg, name: "page.jpg".into(), w: (w * EMU_PER_PT) as i64, h: (h * EMU_PER_PT) as i64 }),
             Block::PageBreak { .. } => doc.blocks.push(DBlock::PageBreak),

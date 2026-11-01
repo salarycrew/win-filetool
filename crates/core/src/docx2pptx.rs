@@ -221,7 +221,7 @@ fn style_num(styles: &HashMap<String, Style>, id: &str) -> Option<(String, u32)>
 }
 
 /// "그림 1", "표 2.", "Figure 3", "Table 1:" 로 시작하는 짧은 줄
-fn looks_like_caption(t: &str) -> bool {
+pub(crate) fn looks_like_caption(t: &str) -> bool {
     let t = t.trim();
     if t.chars().count() > 120 {
         return false;
@@ -342,6 +342,17 @@ pub fn read_docx(path: &Path) -> Result<(Vec<DocBlock>, Vec<String>)> {
                     ext_cy = attr(&e, "cy").and_then(|v| v.parse().ok()).unwrap_or(0);
                 }
                 "v:shape" | "v:rect" => vml_wh = attr(&e, "style").map(|s| vml_size(&s)).unwrap_or((0, 0)),
+                // LibreOffice가 만든 docx는 <a:blip ...>…</a:blip>(빈 요소가 아님)
+                "a:blip" => {
+                    if let (Some(id), Some(p)) = (attr(&e, "r:embed"), stack.last_mut()) {
+                        p.pics.push((id, ext_cx, ext_cy));
+                    }
+                }
+                "v:imagedata" => {
+                    if let (Some(id), Some(p)) = (attr(&e, "r:id"), stack.last_mut()) {
+                        p.pics.push((id, vml_wh.0, vml_wh.1));
+                    }
+                }
                 _ => {}
             },
             Event::Empty(e) => match e.name().as_ref() {
