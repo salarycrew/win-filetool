@@ -79,6 +79,17 @@ pub fn spots() -> Vec<MenuSpot> {
     v
 }
 
+/// 하위 메뉴 키 이름(순서를 지키려고 앞에 번호): `0merge`, `1compress`
+pub fn sub_key(i: usize, job: &str) -> String {
+    format!("{i}{job}")
+}
+
+/// 상태를 볼 때 읽는 값: 첫 자리(.pdf)의 첫 하위 명령 `…\.pdf\shell\WinFileTool\shell\0merge\command`
+pub fn probe_key() -> String {
+    let spot = &spots()[0];
+    format!(r"{}\shell\{}\command", spot.key, sub_key(0, spot.items[0].0))
+}
+
 /// 하위 명령 줄: `"C:\…\win-filetool.exe" --ctx=merge -- "%1"`
 pub fn command_line(exe: &Path, job: &str) -> String {
     format!("\"{}\" {CTX_ARG}{job} -- \"%1\"", exe.display())
@@ -136,9 +147,7 @@ mod imp {
     }
 
     pub fn read_command() -> Option<String> {
-        let spot = &spots()[0];
-        let k = format!(r"{}\shell\{}\command", spot.key, spot.items[0].0);
-        RegKey::predef(HKEY_CURRENT_USER).open_subkey_with_flags(k, KEY_READ).ok()?.get_value::<String, _>("").ok()
+        RegKey::predef(HKEY_CURRENT_USER).open_subkey_with_flags(probe_key(), KEY_READ).ok()?.get_value::<String, _>("").ok()
     }
 
     pub fn install(exe: &Path) -> Result<()> {
@@ -152,7 +161,7 @@ mod imp {
             k.set_value("SubCommands", &"").map_err(reg_err)?;
             k.set_value("Icon", &icon).map_err(reg_err)?;
             for (i, (job, label)) in spot.items.iter().enumerate() {
-                let (s, _) = k.create_subkey(format!(r"shell\{i}{job}")).map_err(reg_err)?;
+                let (s, _) = k.create_subkey(format!(r"shell\{}", sub_key(i, job))).map_err(reg_err)?;
                 s.set_value("MUIVerb", label).map_err(reg_err)?;
                 s.set_value("MultiSelectModel", &"Player").map_err(reg_err)?;
                 let (c, _) = s.create_subkey("command").map_err(reg_err)?;
@@ -295,6 +304,8 @@ mod tests {
         let dir = s.iter().find(|x| x.key.contains(r"Directory\shell")).unwrap();
         assert_eq!(dir.items[0].0, "macname");
         assert!(s.iter().all(|x| x.key.starts_with(r"Software\Classes\") && x.key.ends_with(r"\shell\WinFileTool")));
+        // 상태를 읽는 키 = 등록하는 키(0.3.2 시험에서 어긋났던 것)
+        assert_eq!(probe_key(), r"Software\Classes\SystemFileAssociations\.pdf\shell\WinFileTool\shell\0merge\command");
         // 모든 할 일이 어딘가에 있음
         for (j, _) in JOBS {
             assert!(s.iter().any(|x| x.items.iter().any(|i| i.0 == j)), "{j}");
