@@ -12,6 +12,7 @@
 //! 2c: 빠른 검색 서비스(`filetool-svc`, 선택 설치)가 답하면 그 서비스가 색인한 드라이브는 서비스에 묻고(상태 줄 "빠른 색인(서비스)"),
 //!     나머지 루트만 앱이 색인한다. 서비스가 없거나 멈추면 조용히 앱 색인으로. [설정] > 검색에서 설치/제거(UAC 1번).
 
+mod cmd_pdfedit;
 mod icons;
 mod remote;
 
@@ -1161,7 +1162,30 @@ fn main() {
             file_icons,
             ui_get,
             ui_set,
-            startup_query
+            startup_query,
+            // 0.3.0 PDF 편집
+            cmd_pdfedit::pdf_pages,
+            cmd_pdfedit::pdf_thumbs,
+            cmd_pdfedit::pdf_apply_plan,
+            cmd_pdfedit::pdf_extract,
+            cmd_pdfedit::pdf_insert_blank,
+            cmd_pdfedit::pdf_insert_pdf,
+            cmd_pdfedit::pdf_page_numbers,
+            cmd_pdfedit::pdf_watermark,
+            cmd_pdfedit::pdf_place_image,
+            cmd_pdfedit::pdf_text_boxes,
+            cmd_pdfedit::pdf_crop,
+            cmd_pdfedit::pdf_fit_a4,
+            cmd_pdfedit::pdf_nup,
+            cmd_pdfedit::pdf_protect,
+            cmd_pdfedit::pdf_unprotect,
+            cmd_pdfedit::pdf_protection,
+            cmd_pdfedit::pdf_info_get,
+            cmd_pdfedit::pdf_info_set,
+            cmd_pdfedit::pdf_info_clear,
+            cmd_pdfedit::pdf_form_list,
+            cmd_pdfedit::pdf_form_fill,
+            cmd_pdfedit::pdf_flatten
         ])
         .build(tauri::generate_context!())
         .expect("파일 도구를 시작하지 못했습니다")

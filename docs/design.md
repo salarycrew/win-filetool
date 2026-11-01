@@ -553,3 +553,108 @@ filetool-cli search --via service / svc-status / svc-watch    (같은 클라이�
 
 - 낱말 나누기에서 `<`(낱말 처음, `!` 뒤 포함)는 `Open{not}`, 묶음 안의 `>`는 `Close`. `size:>1mb`·`dm:<2024`처럼 낱말 가운데 또는 `:` 바로 뒤의
   `<` `>`는 비교 기호로 낱말에 남는다. 해석은 재귀(`parse_seq`): 묶음 하나가 낱말 하나처럼 AND/OR에 들어간다. 닫지 않은 묶음은 끝에서 닫고, 묶음 밖의 `>`는 글자.
+
+## 0.3.0 PDF 편집 (W3 코어 — 화면은 W5)
+
+코어 `crates/core/src/pdfedit/`, Tauri 명령 `src-tauri/src/cmd_pdfedit.rs`, CLI `filetool-cli help-pdfedit`(점검: `filetool-cli pdfedit-selftest <빈 폴더>`).
+원래 PDF의 글자를 고치는 것은 범위 밖이고, 위에 새 내용을 얹는 것(쪽 번호·워터마크·서명·글상자)은 범위 안이다.
+
+### 공통 규칙
+
+- JS에서 부를 때 인자 이름은 camelCase(`outDir`, `otherPassword`), 반환 JSON 필드는 아래 표의 이름 그대로(snake_case).
+- **좌표**: 보이는 쪽 기준 pt(1/72 in), **원점 왼쪽 위**, `/Rotate`를 반영한 모양(= `pdf_thumbs` 그림과 같은 방향). 썸네일 px → pt는 `pt = px × visual_width / 썸네일 너비`.
+- **결과**: 원본 옆(또는 `outDir`)에 새 파일 `이름_접미사.pdf`, 같은 이름이 있으면 ` (1)`. 원본은 그대로. 대부분 `EditOut { output, pages, note }`(`note`는 사용자에게 그대로 보여 줄 짧은 한국어).
+- **오류**: `{ code, message }`. `code` = `password_required`(암호 PDF — 암호 칸을 띄우고 같은 명령을 `password`를 넣어 다시) · `wrong_password`(암호가 틀림) · `cancelled` · `error`(그 밖, `message`를 그대로 보여 줌). 암호로 연 PDF의 결과는 암호 없이 저장된다(다시 걸려면 `pdf_protect`).
+- **진행·취소**: `job: u64`를 받는 명령은 `"job-progress"` 이벤트 `{ job, fraction }`(0~1)을 보내고, 기존 `cancel_jobs`로 멈춘다(만들던 파일은 남지 않음).
+- **쪽 선택 문자열**: `"1-3,5"`, `"7-"`, 빈 값/`"all"` = 전체.
+- **한글 글꼴**: 앱에 넣지 않는다. 실행 중에 `C:\Windows\Fonts\malgun.ttf`(맑은 고딕)을 찾아 **쓴 글자만** 부분 글꼴로 PDF에 넣는다(넣기 금지 글꼴은 건너뜀, 맑은 고딕은 넣기 허용). 순서: 환경 변수 `WIN_FILETOOL_FONT` → 맑은 고딕 → 나눔고딕 → 굴림. 못 찾으면 `error`("한글 글꼴을 찾지 못했습니다 …").
+
+### 명령
+
+| 명령 | 인자 | 반환 | 접미사 |
+|---|---|---|---|
+| `pdf_pages` | `path, password?` | `{ pages: [{ page, width, height, rotate, visual_width, visual_height }], encrypted }` (pt, 1부터) | — |
+| `pdf_thumbs` | `path, password?, pages: number[], width` (px, 16~2000) | `[{ page, width, height, data_url, ms }]` (`data:image/png;base64,…`) | — |
+| `pdf_apply_plan` | `job, plan: EditPlan, outDir?` | `EditOut` | `_쪽편집`(첫 원본 이름) |
+| `pdf_extract` | `job, path, password?, pages: "1-3,5", outDir?` | `EditOut` | `_쪽뽑기` |
+| `pdf_insert_blank` | `job, path, password?, after (0=맨 앞), count, size: BlankSize, outDir?` | `EditOut` | `_빈쪽추가` |
+| `pdf_insert_pdf` | `job, path, password?, after, other, otherPassword?, otherPages?, outDir?` | `EditOut` | `_끼워넣기` |
+| `pdf_page_numbers` | `job, path, password?, opts: PageNumberOpts, outDir?` | `EditOut` | `_쪽번호` |
+| `pdf_watermark` | `job, path, password?, opts: WatermarkOpts, outDir?` | `EditOut` | `_워터마크` |
+| `pdf_place_image` | `job, path, password?, opts: SignatureOpts, outDir?` | `EditOut` | `_서명` |
+| `pdf_text_boxes` | `job, path, password?, boxes: TextBox[], outDir?` | `EditOut` | `_글상자` |
+| `pdf_crop` | `job, path, password?, opts: CropOpts, outDir?` | `EditOut` | `_여백자름` |
+| `pdf_fit_a4` | `job, path, password?, opts: FitOpts, outDir?` | `EditOut` | `_A4` |
+| `pdf_nup` | `job, path, password?, opts: NupOpts, outDir?` | `EditOut` | `_모아찍기` |
+| `pdf_protect` | `path, password?, opts: ProtectOpts, outDir?` | `EditOut` | `_암호` |
+| `pdf_unprotect` | `path, password, outDir?` | `EditOut` | `_암호풀림` |
+| `pdf_protection` | `path, password?` | `{ needs_password, encrypted, allow_print?, allow_copy?, allow_edit?, method? }` | — |
+| `pdf_info_get` | `path, password?` | `{ title?, author?, subject?, keywords?, creator?, producer?, created?, modified?, xmp_bytes?, pages }` | — |
+| `pdf_info_set` | `path, password?, info: DocInfo, outDir?` | `EditOut` | `_정보수정` |
+| `pdf_info_clear` | `path, password?, outDir?` | `EditOut` | `_정보삭제` |
+| `pdf_form_list` | `path, password?` | `[{ name, kind, value, options, read_only, page? }]` | — |
+| `pdf_form_fill` | `job, path, password?, values: {이름: 값}, flatten: bool, outDir?` | `EditOut` | `_양식채움` |
+| `pdf_flatten` | `job, path, password?, outDir?` | `EditOut` | `_평평하게` |
+
+### 옵션 JSON (생략한 항목은 기본값)
+
+```jsonc
+// EditPlan — 쪽 편집 격자의 결과. 목록 순서 = 새 PDF 쪽 순서. 빼면 지워지고, 같은 쪽을 두 번 넣으면 복제.
+{ "sources": [{ "path": "a.pdf", "password": null }, { "path": "b.pdf" }],
+  "pages": [ { "kind": "page", "src": 0, "index": 2, "rotate": 90 },   // index 0부터, rotate = 지금 회전에 더할 90의 배수
+             { "kind": "blank", "size": "a4" },                        // BlankSize: "same"(앞쪽 크기, 기본)|"a4"|"a4-landscape"|"letter"|"letter-landscape"|{ "w": pt, "h": pt }
+             { "kind": "page", "src": 1, "index": 0 } ] }
+// 원본이 하나면 양식(AcroForm)·언어·보기 설정을 유지, 책갈피는 지움. 문서 정보는 첫 원본 것.
+
+// PageNumberOpts
+{ "position": "bottom-center",   // top-left|top-center|top-right|bottom-left|bottom-center|bottom-right
+  "start": 1, "format": "plain",  // plain "1" | of-total "1 / N" | dash "- 1 -"  (N = 마지막 번호)
+  "font_size": 10, "margin_x": 28.35, "margin_y": 28.35,  // pt (10 mm)
+  "skip_first": false,            // true면 첫 쪽은 비우고 둘째 쪽이 start
+  "color": "#000000", "pages": null }
+
+// WatermarkOpts — kind별 필드가 같은 객체에 들어감
+{ "kind": "text", "text": "대외비", "font_size": 48, "color": "#808080",
+  "opacity": 0.3, "angle": 45,    // 각도: 시계 반대 방향(도)
+  "tiling": "center",             // center | tile(바둑판)
+  "layer": "over",                // over(내용 위) | under(내용 아래 — 흰 바탕 그림이 있는 쪽에서는 가려질 수 있음)
+  "pages": null }
+{ "kind": "image", "path": "logo.png", "scale": 0.5 /* 쪽 너비 비율 */, "opacity": 0.3, "angle": 0, "tiling": "center", "layer": "over" }
+
+// SignatureOpts — 서명·도장 그림(PNG/JPG). 한 번에 여러 곳
+{ "image": "sign.png", "remove_white": true /* 흰 배경을 투명하게 */, "opacity": 1,
+  "placements": [{ "page": 1, "x": 400, "y": 700, "w": 120, "h": 0 /* 0 = 그림 비율 */ }] }
+
+// TextBox[] — 새 글자 얹기(한글 가능)
+[{ "page": 1, "x": 80, "y": 160, "text": "확인했습니다\n2026-11-01", "font_size": 12, "color": "#000000",
+   "background": "#FFFFFF" /* 없으면 null */, "width": 0 /* >0이면 그 너비에서 줄바꿈 */ }]
+
+// CropOpts
+{ "mode": "margins", "top": 20, "right": 20, "bottom": 20, "left": 20, "pages": null }   // 보이는 쪽 기준 pt
+{ "mode": "auto", "padding": 8 }                                                         // 그려 보고 내용 상자 + 여유
+
+// FitOpts — 쪽마다 A4 한 장에 가운데 맞춤(회전된 쪽은 보이는 모양 그대로, /Rotate 0으로)
+{ "orientation": "auto" /* auto: 가로로 보이는 쪽은 가로 A4 | portrait | landscape */, "margin": 0, "enlarge": true }
+
+// NupOpts
+{ "per_sheet": 2 /* 2|4 */, "orientation": "auto" /* 2쪽=가로, 4쪽=세로 */, "order": "across" /* across | down */, "gap": 8, "margin": 14 }
+
+// ProtectOpts
+{ "open_password": "",            // 비우면 누구나 열고 아래 제한만
+  "owner_password": "",           // 비우면 무작위(제한을 풀 수 없게)
+  "allow_print": true, "allow_copy": true, "allow_edit": true,
+  "cipher": "aes256" }            // aes256(기본, 한글 암호 가능) | aes128(영문·숫자 암호만)
+
+// DocInfo — pdf_info_set: 넣은 항목만 바꿈, "" = 그 항목 지움, 없음/null = 그대로. XMP도 같은 값으로 새로 씀
+{ "title": "분기 보고서", "author": "홍길동", "subject": null, "keywords": null, "creator": null, "producer": "" }
+```
+
+양식 `kind`: `text` | `checkbox` | `radio` | `combo` | `list` | `button` | `signature`. 채우기 값: 글자/선택 칸은 글자, 체크 상자는 `true`/`false`(또는 켜짐 상태 이름), 라디오는 `options` 중 하나(`Off` = 모두 끔). 글자·선택 칸은 채울 때 모양을 직접 만들어(한글 부분 글꼴) 보는 프로그램이 다시 그리지 않게 한다(`NeedAppearances false`). 평평하게는 양식 칸과 모양이 있는 주석을 쪽 내용으로 그려 넣고 `AcroForm`을 지운다(링크는 남김, 숨김 주석·팝업은 버림).
+
+### 구현 메모
+
+- 쪽 편집·뽑기·끼워 넣기·합치기는 `plan::apply` 한 경로(lopdf로 원본별로 열어 페이지 트리를 평평하게 → 객체 번호를 겹치지 않게 → 새 `/Pages`).
+- 얹는 내용은 원래 내용을 `q … Q`로 감싼 뒤 위(또는 아래)에 새 내용 스트림을 붙이고, 보이는 쪽 → 사용자 공간 행렬(`PageGeom::visual_to_user`, /Rotate 0·90·180·270과 CropBox 원점 반영)로 그린다.
+- A4 맞춤·모아 찍기는 쪽을 Form XObject(BBox = 보이는 상자)로 바꿔 새 종이에 놓는다. 쪽 모양이 바뀌므로 주석·양식은 뺀다(보이는 모양은 남음). A4 맞춤은 같은 쪽 객체를 고쳐 책갈피가 계속 그 쪽을 가리킨다.
+- 암호: lopdf 0.46의 표준 보안 처리기(AES-128 = V4/R4 AESV2, AES-256 = V5/R6 AESV3), 파일 키는 `getrandom`. 제한만 걸린 PDF의 보호 풀기는 소유자 암호를 확인한다.
+- 미리보기: PDFium `set_target_width` + PNG(빠른 압축). 측정은 보고서(W3) 참고.

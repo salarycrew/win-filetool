@@ -227,21 +227,24 @@ fn translate(x: f32, y: f32) -> Matrix {
     [1.0, 0.0, 0.0, 1.0, x, y]
 }
 
-/// 가운데 하나 또는 바둑판 자리(보이는 쪽 좌표의 중심점들)
-fn tile_centers(vw: f32, vh: f32, item_w: f32, item_h: f32, tiling: Tiling) -> Vec<(f32, f32)> {
+/// 가운데 하나 또는 바둑판 자리: 각 항목을 놓을 행렬(항목 가운데가 원점인 좌표 → 보이는 쪽).
+/// 바둑판은 돌린 좌표계에서 줄을 맞춰 깔아(줄 사이 간격 유지) 쪽 전체를 덮는다.
+fn placements(vw: f32, vh: f32, item_w: f32, item_h: f32, angle: f32, tiling: Tiling) -> Vec<Matrix> {
+    let base = mat_mul(rot(angle), translate(vw / 2.0, vh / 2.0));
     match tiling {
-        Tiling::Center => vec![(vw / 2.0, vh / 2.0)],
+        Tiling::Center => vec![base],
         Tiling::Tile => {
-            let sx = (item_w * 1.4).max(80.0);
-            let sy = (item_h * 3.0).max(80.0);
+            let sx = item_w + item_h.max(20.0) * 2.0;
+            let sy = item_h * 3.5 + 20.0;
+            let reach = (vw * vw + vh * vh).sqrt() / 2.0 + sx.max(sy);
             let mut v = Vec::new();
             let mut row = 0;
-            let mut y = sy / 2.0;
-            while y < vh + sy {
+            let mut y = -reach;
+            while y <= reach {
                 let off = if row % 2 == 1 { sx / 2.0 } else { 0.0 };
-                let mut x = sx / 2.0 - off;
-                while x < vw + sx {
-                    v.push((x, y));
+                let mut x = -reach - off;
+                while x <= reach {
+                    v.push(mat_mul(translate(x, y), base));
                     x += sx;
                 }
                 y += sy;
@@ -300,8 +303,7 @@ pub fn watermark(input: &Path, password: Option<&str>, opts: &WatermarkOpts, out
                 let tw = lines.iter().map(|l| fnt.width(l, size)).fold(0.0, f32::max);
                 let th = lh * lines.len() as f32;
                 ops.push_str(&rg(parse_color(color)?));
-                for (cx, cy) in tile_centers(vw, vh, tw, th, opts.tiling) {
-                    let m = mat_mul(rot(opts.angle), translate(cx, cy));
+                for m in placements(vw, vh, tw, th, opts.angle, opts.tiling) {
                     ops.push_str("q\n");
                     ops.push_str(&cm(m));
                     for (li, l) in lines.iter().enumerate() {
@@ -318,8 +320,8 @@ pub fn watermark(input: &Path, password: Option<&str>, opts: &WatermarkOpts, out
                 let name = add_resource(&mut doc, pid, b"XObject", "IWm", Object::Reference(img_id))?;
                 let w = vw * scale;
                 let h = w * ih as f32 / iw.max(1) as f32;
-                for (cx, cy) in tile_centers(vw, vh, w, h, opts.tiling) {
-                    let m = mat_mul([w, 0.0, 0.0, h, -w / 2.0, -h / 2.0], mat_mul(rot(opts.angle), translate(cx, cy)));
+                for pm in placements(vw, vh, w, h, opts.angle, opts.tiling) {
+                    let m = mat_mul([w, 0.0, 0.0, h, -w / 2.0, -h / 2.0], pm);
                     ops.push_str(&format!("q\n{}/{name} Do\nQ\n", cm(m)));
                 }
             }

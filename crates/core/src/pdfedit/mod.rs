@@ -26,7 +26,8 @@ pub mod thumbs;
 use std::path::{Path, PathBuf};
 
 use lopdf::{dictionary, Dictionary, Document, Object, ObjectId, Stream};
-use serde::{Deserialize, Serialize};
+pub use serde::Serialize;
+use serde::Deserialize;
 
 use crate::error::{io_err, Error, Result};
 use crate::process::Cancel;
@@ -532,6 +533,16 @@ pub(crate) fn page_to_form(doc: &mut Document, page: ObjectId) -> Result<(Object
     );
     let _ = s.compress();
     Ok((doc.add_object(s), g))
+}
+
+/// JSON 문자열(CLI·점검용; CLI는 serde에 직접 의존하지 않음)
+pub fn to_json<T: Serialize>(v: &T) -> String {
+    serde_json::to_string_pretty(v).unwrap_or_default()
+}
+
+/// JSON → 값(쪽 편집 계획 등)
+pub fn from_json<T: serde::de::DeserializeOwned>(s: &str) -> Result<T> {
+    serde_json::from_str(s).map_err(|e| Error::Invalid(format!("JSON을 읽지 못했습니다: {e}")))
 }
 
 /// 내용이 자주 쓰는 값(쪽 크기 등)

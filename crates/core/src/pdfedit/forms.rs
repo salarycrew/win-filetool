@@ -237,7 +237,27 @@ fn text_appearance(doc: &mut Document, font: &mut PdfFont, field: &Field, widget
     let q = super::inherited(doc, field.id, b"Q").and_then(|o| resolve(doc, &o).as_i64().ok()).unwrap_or(q_default);
     let pad = 2.0;
     let lines: Vec<String> = if multiline { font.wrap(value, size, bw - 2.0 * pad) } else { vec![value.replace(['\r', '\n'], " ")] };
-    let mut ops = format!("/Tx BMC\nq\n{} {} {} {} re W n\n", f(1.0), f(1.0), f(bw - 2.0), f(bh - 2.0));
+    // 위젯 MK의 바탕색(BG)·테두리색(BC)을 그대로 그린다
+    let mk = w.get(b"MK").ok().and_then(|o| resolve(doc, o).as_dict().ok()).cloned();
+    let mk_color = |key: &[u8]| -> Option<String> {
+        let arr = mk.as_ref()?.get(key).ok().and_then(|o| resolve(doc, o).as_array().ok())?.clone();
+        let v: Vec<f32> = arr.iter().filter_map(|o| super::num(doc, o)).collect();
+        match v.len() {
+            1 => Some(format!("{} g", f(v[0]))),
+            3 => Some(format!("{} {} {} rg", f(v[0]), f(v[1]), f(v[2]))),
+            4 => Some(format!("{} {} {} {} k", f(v[0]), f(v[1]), f(v[2]), f(v[3]))),
+            _ => None,
+        }
+    };
+    let mut ops = String::new();
+    if let Some(bg) = mk_color(b"BG") {
+        ops.push_str(&format!("q {bg} 0 0 {} {} re f Q\n", f(bw), f(bh)));
+    }
+    if let Some(bc) = mk_color(b"BC") {
+        let stroke = bc.replace(" rg", " RG").replace(" g", " G").replace(" k", " K");
+        ops.push_str(&format!("q {stroke} 1 w 0.5 0.5 {} {} re S Q\n", f(bw - 1.0), f(bh - 1.0)));
+    }
+    ops.push_str(&format!("/Tx BMC\nq\n{} {} {} {} re W n\n", f(1.0), f(1.0), f(bw - 2.0), f(bh - 2.0)));
     ops.push_str(&super::rg(color));
     let asc = font.data().ascent() * size;
     let desc = font.data().descent() * size;
@@ -372,10 +392,11 @@ pub fn fill(input: &Path, password: Option<&str>, values: &BTreeMap<String, Stri
     let flat = if flatten_after { flatten_doc(&mut doc, job)? } else { 0 };
     super::save(doc, output)?;
     job.tick(total, total)?;
-    let mut note = format!("양식 칸 {}개를 채웠습니다", total);
-    if flatten_after {
-        note.push_str(&format!(" 그리고 {flat}개를 평평하게 만들었습니다"));
-    }
+    let note = if flatten_after {
+        format!("양식 칸 {total}개를 채우고 {flat}개를 평평하게 만들었습니다")
+    } else {
+        format!("양식 칸 {total}개를 채웠습니다")
+    };
     Ok(EditOut { output: output.to_path_buf(), pages: n, note })
 }
 

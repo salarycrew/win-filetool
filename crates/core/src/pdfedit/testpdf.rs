@@ -96,6 +96,7 @@ pub fn make_form(path: &Path) -> Result<()> {
         "Type" => "Annot", "Subtype" => "Widget", "FT" => "Tx", "T" => Object::string_literal("name"),
         "Rect" => vec![100.into(), 700.into(), 300.into(), 724.into()], "P" => page_id, "F" => 4,
         "DA" => Object::string_literal("/Helv 12 Tf 0 g"), "AP" => dictionary! { "N" => name_ap },
+        "MK" => dictionary! { "BC" => vec![Object::Integer(0)] },
     });
     annots.push(Object::Reference(name));
     fields.push(Object::Reference(name));
@@ -142,6 +143,7 @@ pub fn make_form(path: &Path) -> Result<()> {
         "Opt" => vec![Object::string_literal("Seoul"), Object::string_literal("Busan"), lopdf::text_string("서울")],
         "Rect" => vec![100.into(), 550.into(), 250.into(), 572.into()], "P" => page_id, "F" => 4,
         "DA" => Object::string_literal("/Helv 11 Tf 0 g"), "AP" => dictionary! { "N" => city_ap },
+        "MK" => dictionary! { "BC" => vec![Object::Integer(0)] },
     });
     annots.push(Object::Reference(city));
     fields.push(Object::Reference(city));
@@ -153,6 +155,7 @@ pub fn make_form(path: &Path) -> Result<()> {
         "Opt" => vec![Object::string_literal("Red"), Object::string_literal("Blue")],
         "Rect" => vec![100.into(), 490.into(), 250.into(), 530.into()], "P" => page_id, "F" => 4,
         "DA" => Object::string_literal("/Helv 10 Tf 0 g"), "AP" => dictionary! { "N" => color_ap },
+        "MK" => dictionary! { "BC" => vec![Object::Integer(0)], "BG" => vec![Object::Real(0.9), Object::Real(0.95), Object::Real(1.0)] },
     });
     annots.push(Object::Reference(color));
     fields.push(Object::Reference(color));
