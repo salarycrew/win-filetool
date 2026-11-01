@@ -50,7 +50,7 @@ button, input, textarea, select { font: inherit; color: inherit; }
 
 /* ---------- 뼈대 ---------- */
 .app { display: flex; height: 100vh; }
-.nav { width: 220px; flex: none; display: flex; flex-direction: column; gap: 3px; padding: 8px 6px 10px; overflow-y: auto; }
+.nav { width: 220px; flex: none; display: flex; flex-direction: column; gap: 3px; padding: 10px 6px 10px; overflow-y: auto; }
 .nav .sp { flex: 1; }
 .nav-app { display: flex; align-items: center; gap: 10px; height: 32px; padding: 0 10px; font-size: 12px; color: var(--text-2); margin-bottom: 6px; }
 .app-ic { width: 16px; height: 16px; }

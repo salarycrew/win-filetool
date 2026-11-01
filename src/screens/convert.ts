@@ -701,10 +701,10 @@ function render() {
         if (it.hwp?.message) h += `<div class="note warn">${I("info")}<span><b>${esc(fileName(it.path))}</b> — ${esc(it.hwp.message)}</span></div>`;
       }
       if (g.cls === "pdf" && lockedN) h += `<div class="note warn">${I("lock")}<span>암호가 걸린 PDF가 ${lockedN}개 있어요. 할 일을 고르면 암호를 물어보거나, [암호 걸기·풀기]로 먼저 풀 수 있어요.</span></div>`;
-      h += `<div class="cards" role="list">${g.actions.map((a) => {
+      h += `<div class="cards">${g.actions.map((a) => {
         const on = pick?.cls === g.cls && pick.id === a.id;
-        return `<button type="button" role="listitem" class="card ${on ? "on" : ""}" data-cls="${g.cls}" data-pick="${a.id}" aria-pressed="${on}">
-          <span class="tile tone-${a.tone}">${I(a.ic)}</span><span class="card-t"><b>${esc(a.t)}</b><span class="d">${esc(a.d)}</span></span>${a.jump ? `<span class="go">${I("right")}</span>` : `<span class="tick">${I("check")}</span>`}</button>`;
+        return `<button type="button" class="card ${on ? "on" : ""}" data-cls="${g.cls}" data-pick="${a.id}" aria-pressed="${on}">
+          <span class="tile tone-${a.tone}">${I(a.ic)}</span><span class="card-t"><b>${esc(a.t)}</b> <span class="d">${esc(a.d)}</span></span>${a.jump ? `<span class="go">${I("right")}</span>` : `<span class="tick">${I("check")}</span>`}</button>`;
       }).join("")}</div>`;
       if (pick?.cls === g.cls) h += `<div class="optslot"></div>`;
     }

@@ -26,7 +26,7 @@ const inited = new Set<ScreenId>();
 function navBtn(s: Screen) {
   return `<button type="button" class="nav-i" data-id="${s.id}" title="${esc(s.title)}">${I(s.icon)}<span>${esc(s.title)}</span></button>`;
 }
-nav.innerHTML = `<div class="nav-app">${appIcon()}<span>파일 도구</span></div>${MAIN.map(navBtn).join("")}<div class="sp"></div>${BOTTOM.map(navBtn).join("")}`;
+nav.innerHTML = `${MAIN.map(navBtn).join("")}<div class="sp"></div>${BOTTOM.map(navBtn).join("")}`;
 nav.addEventListener("click", (e) => {
   const b = (e.target as HTMLElement).closest<HTMLButtonElement>(".nav-i");
   if (b) go(b.dataset.id as ScreenId);
@@ -41,9 +41,6 @@ nav.addEventListener("keydown", (e) => {
   e.preventDefault();
 });
 
-function appIcon() {
-  return `<svg class="app-ic" viewBox="0 0 16 16" aria-hidden="true"><rect width="16" height="16" rx="3.5" fill="#0F6CBD"/><path d="M5 3.5h4l2.5 2.5v6a.5.5 0 0 1-.5.5H5a.5.5 0 0 1-.5-.5V4a.5.5 0 0 1 .5-.5z" fill="#fff"/><path d="M6.3 9.2h3.4M8.4 7.8l1.3 1.4-1.3 1.4" stroke="#0F6CBD" stroke-width="1" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
-}
 
 function go(id: ScreenId, arg?: unknown, remember = true) {
   const s = ALL.find((x) => x.id === id) ?? convertScreen;
