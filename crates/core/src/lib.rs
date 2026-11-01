@@ -14,6 +14,7 @@
 //!   [`pdflayout`]: PDF 글자 배치 분석, [`pdf2docx`]: PDF → Word·TXT, [`pdf2pptx`]: PDF → PPT(쪽 그림/글상자),
 //!   [`officeimages`]: 문서·PDF 이미지만 뽑기
 //! - 2a: [`search`]: 전체 파일 즉시 검색(색인·스캔·실시간 갱신·질의 언어)
+//! - 0.3.0 W6 한글: [`hwp`]: 형식 알아보기·설치된 한글로 PDF/DOCX·그림 뽑기
 //! - 0.3.0 W1: [`bundle`]: 앱에 든 도구 묶음 풀기, [`portable`]: 휴대용 설정 위치, [`runtime`]: WebView2 확인, [`notices`]: 오픈소스 고지
 //!
 //! 원본은 절대 덮어쓰지 않는다. 출력 경로가 이미 있으면 [`paths::unique_path`]로
@@ -27,6 +28,7 @@ pub mod docx2pptx;
 pub mod error;
 pub mod exif;
 pub mod heif;
+pub mod hwp;
 pub mod imageconv;
 pub mod img2pdf;
 pub mod media;

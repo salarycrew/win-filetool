@@ -721,8 +721,8 @@ Word→PPT, PDF→Word, PDF→PPT, PDF→TXT, 이미지만 뽑기. 모두 순수
 - `note`는 사용자에게 그대로 보여 줄 한 줄 요약(예: "3쪽 → 제목 9, 문단 13, 목록 13, 표 1, 그림 2").
 - `mode` 기본 `"image"`(그대로 보이게), `"editable"`(글자 고칠 수 있게). `dpi` 기본 150(36~600).
 - `extract_images`는 빠르므로 진행 이벤트를 시작(0)·끝(1)만 보낸다. 그림이 없으면 `folder: null`, 폴더를 만들지 않음.
-- 받는 파일: `doc_to_pptx` — docx/docm/dotx + LibreOffice로 여는 글 문서(doc, hwp(옛 한글 97), odt, pages, rtf 등). LibreOffice가 없으면
-  "LibreOffice을(를) 찾지 못했습니다…" 오류. `extract_images` — docx/pptx/xlsx(매크로·서식 포함), pdf.
+- 받는 파일: `doc_to_pptx` — docx/docm/dotx + LibreOffice로 여는 글 문서(doc, odt, pages, rtf 등). 한글(hwp/hwpx)은 아래 "0.3.0 한글(W6)"의 길을 따른다. LibreOffice가 없으면
+  "LibreOffice을(를) 찾지 못했습니다…" 오류. `extract_images` — docx/pptx/xlsx(매크로·서식 포함), pdf, hwp/hwpx(W6).
 - 오류 문구 예: 암호 PDF "암호가 걸린 PDF는 열 수 없습니다. PDF 프로그램에서 암호를 풀어 저장한 뒤 다시 시도하세요",
   손상 "PDF 파일이 손상되었거나 PDF 형식이 아닙니다" / "Word 파일을 읽지 못했습니다(…). 파일이 손상되었거나…", 취소 "취소했습니다".
 
@@ -781,3 +781,96 @@ CLI(같은 코어): `filetool-cli doc-to-pptx | pdf-to-docx | pdf-to-pptx [--mod
 `make_corpus.py`(python-docx·python-pptx·openpyxl·pypdf·Pillow + LibreOffice로 PDF 만들기)로 만든 한국어 샘플. 글·그림은 스크립트가 지어낸 것,
 PDF에 들어간 글꼴은 나눔고딕·Noto(SIL OFL) 일부. `엣지인쇄.pdf`만 Windows Edge `--headless --print-to-pdf`로 `엣지인쇄.html`을 인쇄해 만든다(Noto Sans KR).
 `tests/office_030.rs`가 구조 숫자(제목·문단·목록·표·그림·글상자·슬라이드 수, 한글 낱말 사이 빈칸)를 확인한다(픽셀 비교 아님).
+
+## 0.3.0 한글(W6)
+
+스파이크 결론: LibreOffice(전체·축소 모두)는 **한글 97 이전만** 읽는다. 한글 2002 이후(HWP 5.x) 4/4, HWPX 2/2는 "source file could not be loaded".
+그래서 형식을 내용으로 구분해 **되는 것만 보여 주고**, 한글 프로그램이 설치된 PC에서는 한글 자체로 바꾼다.
+
+모듈: `core/hwp/{mod,detect,hancom,images}.rs`(+ `hancom.ps1`), 화면 명령 `src-tauri/src/cmd_hwp.rs`, CLI `crates/cli/src/hwp030.rs`.
+
+### 형식 알아보기(`hwp::detect`)
+
+| 형식 | 판단 | 표시 |
+|---|---|---|
+| `hwp97` | 앞 `HWP Document File V…`(V3.00 등) | 버전 `3.00` |
+| `hwp5` | CFB 서명 + `/FileHeader` 서명 `HWP Document File` | 버전 `5.1.0.1`, 속성 비트 0 압축 · 1 암호 · 2 배포용 · 4 DRM · 8 인증서 암호화 · 10 인증서 DRM |
+| `hwpx` | zip + `mimetype` = `application/hwp+zip`(또는 `Contents/content.hpf`) | `version.xml`, `META-INF/manifest.xml`에 `encryption-data`면 암호 |
+| `damaged` | 그 밖(빈 파일, CFB인데 FileHeader 없음, 깨진 zip, 일반 zip 등) | |
+
+확장자 `.hwp`/`.hwpx`는 모두 문서(`docs::family` = Text)로 받고, 실제로 바꿀 수 있는지는 형식으로 정한다(`docs::allowed_targets` → `hwp::doc_targets`).
+
+### 할 수 있는 것과 길
+
+| 형식 | 한글 설치됨 | 한글 없음 |
+|---|---|---|
+| 한글 97 | PDF·DOCX(→PPT): `hancom` | PDF·DOCX(→PPT): `libreoffice`(앱에 든 LO). 그림 뽑기 안 됨 |
+| 한글 5·HWPX | PDF·DOCX(→PPT): `hancom`, 그림 뽑기 | PDF·PPT 안 됨 → 안내, 그림 뽑기만 |
+| 암호·DRM·배포용·손상 | 모두 안 됨(이유 안내) | 모두 안 됨(이유 안내) |
+
+기존 변환 명령은 이름·인자가 그대로이고 코어에서 길을 고른다: 문서 → PDF/DOCX(`convert_files`의 `doc` 작업, 감시 폴더 포함)는 `docs::convert` → `hwp::convert`,
+Word → PPT(`doc_to_pptx`)는 한글이면 `hwp::convert(… Docx)`로 docx를 먼저 만든 뒤 같은 규칙, 이미지만 뽑기(`extract_images`)는 `hwp::images`.
+안 되는 조합은 아래 안내 문장 그대로 오류(reject)한다.
+
+### 화면 명령 계약
+
+| 명령 | 인자 | 돌려주는 JSON |
+|---|---|---|
+| `hwp_capabilities` | `{ path }` | `{ format: "hwp97"\|"hwp5"\|"hwpx"\|"damaged", version?, encrypted, distribution, can_pdf, can_pptx, can_images, route: "hancom"\|"libreoffice"\|"none", message? }` |
+
+- 빠르다(파일 앞부분·zip 목록·레지스트리만 읽음, 진행 이벤트 없음). 한글 파일이 아니면 "한글 문서(.hwp, .hwpx)가 아닙니다" 오류.
+- 화면은 `can_pdf`/`can_pptx`/`can_images`가 false인 기능을 숨기거나 끄고, `message`를 그대로 보여 준다.
+- `extract_images` 결과 JSON에 `skipped_items: string[]`(건너뛴 항목과 이유, 예 `"BIN0003.OLE: OLE 개체(그림이 아님)"`)가 더해졌다(다른 형식은 빈 배열).
+
+안내 문장(`message`·오류):
+
+| 경우 | 문장 |
+|---|---|
+| 한글 5·HWPX, 한글 없음 | 이 한글 문서(2002년 이후 형식)는 한글 프로그램이 설치된 PC에서만 PDF·PPT로 바꿀 수 있어요. 그림 뽑기는 쓸 수 있어요. |
+| 한글 97(그림 뽑기) | 한글 97 문서는 그림 뽑기를 할 수 없어요. PDF로 바꾼 뒤 PDF에서 그림을 뽑아 주세요. |
+| 암호·DRM | 암호가 걸렸거나 보호된 한글 문서라 열 수 없어요. 한글에서 암호를 풀어 저장한 뒤 다시 해 주세요. |
+| 배포용 | 배포용 한글 문서라 바꾸거나 그림을 꺼낼 수 없어요. |
+| 손상 | 한글 파일이 손상되어 읽을 수 없어요. |
+| 한글이 멈춤 | 한글 실행 실패: 한글이 응답하지 않아 멈췄어요(시간 초과). 한글 창이나 알림이 떠 있으면 닫고 다시 해 주세요. |
+
+### 설치된 한글로 바꾸기(`hwp::hancom`, Windows)
+
+- 찾기: `HKCR\HWPFrame.HwpObject\CLSID` → `HKLM\SOFTWARE\Classes\CLSID\{…}\LocalServer32`(64비트 보기, 없으면 WOW6432Node)의 Hwp.exe가 있으면 설치됨.
+  시험용 `WIN_FILETOOL_HIDE_HANCOM=1`이면 없는 것처럼.
+- 실행: 앱이 작업 임시 폴더에 원본을 `in.hwp(x)`로 복사하고 `hancom.ps1`(앱 안에 든 스크립트, UTF-8 BOM)을 한글과 같은 비트의
+  `powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File`로 실행(콘솔 창 없음). 스크립트가 `HWPFrame.HwpObject`를 만들어
+  `RegisterModule` → 창 숨김 → `SetMessageBoxMode(0x211411)` → `Open(in, "", "forceopen:true;suspendpassword:true;versionwarning:false;lock:false")`
+  → `SaveAs(out, "PDF" | "OOXML")` → `Clear(1)` → `Quit()`. 상태 줄(`PID n`, `REG`, `OPEN`, `PAGES n`, `SAVE`, `ERROR …`, `DONE`)을 앱이 읽는다.
+  결과는 원본 옆 `이름.pdf`/`이름.docx`(겹치면 ` (1)`), 원본 수정 시각을 따른다.
+- 파일 경로 보안 창 없애기: 한글은 자동화로 파일을 열거나 저장할 때 "접근 허용" 창을 띄운다(실측: 창이 떠서 멈춤). 한컴이 안내하는 방법은
+  보안 모듈 DLL을 `HKCU\Software\HNC\HwpAutomation\Modules`에 등록하고 `RegisterModule("FilePathCheckDLL", 값 이름)`을 부르는 것.
+  한컴 예제 DLL(FilePathCheckerModuleExample)은 재배포하지 않는다. 예제와 같은 내보내기(`IsAccessiblePath`, stdcall 인자 16바이트, 항상 1)를 가진
+  1 KB짜리 32비트 DLL을 `hancom::path_check_dll()`이 코드로 만들어 `%LOCALAPPDATA%\kr.salarycrew.winfiletool\hwp\WinFileToolHwpPath-<해시>.dll`에 쓰고
+  값 `WinFileToolPathCheck`로 등록한다(가져오는 함수·재배치 없음, DllMain은 TRUE만). 같은 사용자 권한의 프로그램은 이 레지스트리를 원래 쓸 수 있어 새 권한은 생기지 않는다.
+- 한 번에 하나: `…\hwp\hancom.lock` 파일 잠금(앱 창·감시 폴더·CLI 함께). 시간 제한 180초, 취소 가능.
+- 끝내기: 스크립트가 알려 준 새 Hwp.exe 번호만(없으면 시작 뒤 새로 생긴 것) 5초 기다렸다가 남아 있으면 `taskkill /F`. 새 프로세스가 생기지 않으면
+  (사용자가 쓰는 한글에 붙었을 수 있음) 아무것도 하지 않고 "열려 있는 한글 창을 모두 닫고 다시 해 주세요".
+- 메시지 상자 자동 응답(작업 대상은 임시 복사본뿐): 확인 / 확인·취소 → 확인 / 중단·재시도·무시 → 무시 / 예·아니오·취소 → 예 / 예·아니오 → 예 / 재시도·취소 → 취소.
+  DOCX 저장은 "서식이 바뀔 수 있음" 확인 창이 나오므로 '확인'이어야 저장된다(실측: 취소로 두면 `SaveAs` false).
+
+### 그림 뽑기(`hwp::images`)
+
+- 한글 5: `DocInfo`(문서 압축이면 raw DEFLATE) 레코드 중 BIN_DATA(태그 0x12) 순서대로. 종류 묻음 → `BinData/BIN%04X.확장자`,
+  **항목별 압축 설정**(문서 따름/압축/압축 안 함)을 따라 풂. 링크(문서 밖 파일)·OLE 저장소는 건너뛰고 이유를 남김. DocInfo에 목록이 없으면 BinData 이름순.
+- HWPX: `Contents/content.hpf`의 `opf:item` 중 `BinData/` 순서 → manifest에 없는 `BinData/` 이름순.
+- 그림 판단은 앞부분 서명(PNG·JPEG·GIF·BMP·TIFF·WebP·WMF(placeable/표준)·EMF). WMF/EMF는 원본 파일 그대로. 그 밖은 "그림 형식이 아님"으로 건너뜀.
+- 이름 `NN_BIN0001.jpg`(한글 5) / `NN_image1.png`(HWPX, 이름은 마지막 부분만·예약 문자 제거), 폴더 `이름_이미지\`, 같은 바이트는 한 번만(W2와 같음).
+- 한도: 항목 256 MB, 합계 2 GB(압축 푼 뒤), 항목 2만 개, DocInfo 64 MB. 넘으면 그 항목만 건너뜀(압축 폭탄 시험 있음). `..`·`\`·`:`·빈 경로 조각이 든 zip 이름은 건너뜀.
+- 암호·DRM·배포용·손상·한글 97은 위 안내 문장 오류. 그림 없는 정상 문서는 오류 아님(폴더 만들지 않음).
+
+### 의존성
+
+`cfb` 0.14(MIT, 이미 Cargo.lock에 있던 판 — tauri의 `infer`가 씀; 하위 `fnv` MIT/Apache, `uuid` MIT/Apache, `web-time` MIT/Apache),
+`flate2` 1.1(MIT/Apache, 이미 zip이 씀 — miniz_oxide 백엔드). 새 GPL 없음. 한컴오피스는 사용자 PC에 설치된 것을 COM으로 부를 뿐 앱에 넣지 않는다.
+
+### 시험
+
+코어 단위 시험이 작은 파일을 그 자리에서 만든다(한글 5 CFB + DocInfo + BinData, HWPX zip + manifest): 형식·플래그, 할 수 있는 것 표,
+그림 뽑기(항목별 압축, OLE·링크·그림 아님·없는 데이터, 같은 그림, WMF), 크기·개수·합계 한도와 압축 폭탄, 경로 빠져나가기, 보안 모듈 DLL 구조.
+`tests/hwp_030.rs`는 LibreOffice 시험 자료의 한글 97 파일(MPL-2.0, `tests/data/030/hwp/README.md`)로 LO 길을 확인한다(LO가 있을 때 변환까지).
+정부 배포 실제 문서(HWP 4 + HWPX 2)는 저장소 밖 증거 폴더에 두고 desktop에서 CLI(`hwp-info`, `hwp-convert`, `doc-to-pptx`, `hwp-images`)로 점검했다.

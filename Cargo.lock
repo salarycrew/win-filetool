@@ -1199,8 +1199,10 @@ dependencies = [
 name = "filetool-core"
 version = "0.3.0-dev"
 dependencies = [
+ "cfb",
  "chrono",
  "encoding_rs",
+ "flate2",
  "getrandom 0.4.3",
  "image",
  "libc",

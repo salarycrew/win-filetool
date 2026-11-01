@@ -15,6 +15,7 @@
 mod cmd_runtime;
 mod cmd_pdfedit;
 mod cmd_office;
+mod cmd_hwp;
 mod icons;
 mod remote;
 
@@ -1157,6 +1158,7 @@ fn main() {
             cmd_office::pdf_to_pptx,
             cmd_office::pdf_to_txt,
             cmd_office::extract_images,
+            cmd_hwp::hwp_capabilities,
             autostart_get,
             autostart_set,
             launched_by_autostart,
