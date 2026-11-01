@@ -7,4 +7,4 @@
   MPL-2.0 원문: <https://www.mozilla.org/MPL/2.0/>
 
 한글 5(HWP)·HWPX 시험 파일은 저장소에 넣지 않고 시험 코드가 그때그때 만든다(`crates/core/src/hwp/detect.rs`의 `testfiles`).
-정부 배포 실제 문서는 저장소 밖(Mission Control 증거 폴더)에서 desktop 점검에만 썼다.
+정부 배포 실제 문서는 저장소에 넣지 않고 Windows 시험 PC 점검에만 썼다.

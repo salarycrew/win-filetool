@@ -116,7 +116,7 @@ fn sample() -> Index {
     ix
 }
 
-fn user() -> Identity {
+fn me() -> Identity {
     Identity { user: r"PC\user".into(), sid: "S-1-5-21-1-2-3-1001".into(), admin: false, profile: Some(r"C:\Users\user".into()) }
 }
 
@@ -141,7 +141,7 @@ fn names(paths: &[String]) -> Vec<String> {
 #[test]
 fn visibility_hides_other_profiles_admin_sees_all() {
     let ix = sample();
-    let vis = Visibility::for_identity(&user(), r"C:\Users", &profile_list());
+    let vis = Visibility::for_identity(&me(), r"C:\Users", &profile_list());
     assert!(!vis.all);
     let got = names(&visible_paths(&ix, "secret", &vis, &[]).unwrap());
     assert_eq!(
@@ -157,18 +157,18 @@ fn visibility_hides_other_profiles_admin_sees_all() {
     assert!(visible_paths(&ix, r"users\other\", &vis, &[]).unwrap().is_empty());
 
     // 관리자(권한 상승된 토큰)는 모두
-    let admin = Identity { admin: true, ..user() };
+    let admin = Identity { admin: true, ..me() };
     let va = Visibility::for_identity(&admin, r"C:\Users", &profile_list());
     assert!(va.all);
     assert_eq!(visible_paths(&ix, "secret", &va, &[]).unwrap().len(), 8);
 
     // 대소문자·구분자가 달라도 같은 규칙(프로필 경로가 소문자로 등록돼 있어도)
-    let lower = Identity { profile: Some("c:/users/USER/".into()), ..user() };
+    let lower = Identity { profile: Some("c:/users/USER/".into()), ..me() };
     let vl = Visibility::for_identity(&lower, r"C:\Users\", &profile_list());
     assert_eq!(names(&visible_paths(&ix, "secret", &vl, &[]).unwrap()), vec!["secret-dep.js", "secret-user.txt", "secret-public.txt", "secret-shared.txt"]);
 
     // 프로필을 모르는 사용자(프로필 목록에 없음)는 C:\Users 아래에서 Public만
-    let nobody = Identity { profile: None, ..user() };
+    let nobody = Identity { profile: None, ..me() };
     let vn = Visibility::for_identity(&nobody, r"C:\Users", &profile_list());
     assert_eq!(names(&visible_paths(&ix, "secret", &vn, &[]).unwrap()), vec!["secret-public.txt", "secret-shared.txt"]);
 }
@@ -176,7 +176,7 @@ fn visibility_hides_other_profiles_admin_sees_all() {
 #[test]
 fn visibility_follows_renames_and_client_excludes() {
     let mut ix = sample();
-    let vis = Visibility::for_identity(&user(), r"C:\Users", &profile_list());
+    let vis = Visibility::for_identity(&me(), r"C:\Users", &profile_list());
     // 사용자 제외 패턴(서비스 기본 목록에 없는 것만): node_modules 아래 빠짐. 기본 목록은 그대로 둬도 결과 같음
     let mut ex = scan::default_excludes();
     ex.push("node_modules".into());
@@ -221,7 +221,7 @@ fn session(id: Identity) -> Session {
 #[test]
 fn handler_hello_first_query_rows_and_limits() {
     let h = handler(sample());
-    let mut s = session(user());
+    let mut s = session(me());
     let code = |r: Response| match r {
         Response::Error { code, .. } => code,
         o => panic!("{o:?}"),
@@ -269,7 +269,7 @@ fn handler_hello_first_query_rows_and_limits() {
         big.push_child(r0, &format!("f{i:05}.txt"), false, 1, T);
     }
     let hb = handler(big);
-    let mut sb = session(user());
+    let mut sb = session(me());
     hb.handle(&mut sb, Request::Hello { client: "t".into() });
     match hb.handle(&mut sb, Request::Query { q: "*.txt".into(), sort: SortKey::Name, desc: false, limit: usize::MAX, excludes: vec![] }) {
         Response::Query(r) => {
@@ -294,7 +294,7 @@ fn handler_hello_first_query_rows_and_limits() {
         o => panic!("{o:?}"),
     }
     // 관리자 세션은 모두
-    let mut sa = session(Identity { admin: true, ..user() });
+    let mut sa = session(Identity { admin: true, ..me() });
     h.handle(&mut sa, Request::Hello { client: "t".into() });
     match h.handle(&mut sa, Request::Query { q: "secret".into(), sort: SortKey::Name, desc: false, limit: 0, excludes: vec![] }) {
         Response::Query(r) => assert_eq!(r.total, 8),
@@ -343,7 +343,7 @@ fn serve_handles_stream_and_cuts_oversized() {
     input.extend_from_slice(&vec![b' '; 64]);
     write_frame(&mut input, &encode_request(&Request::Status)).unwrap();
     let mut d = Duplex { input: Cursor::new(input), output: Vec::new() };
-    let mut s = session(user());
+    let mut s = session(me());
     serve(&mut d, &h, &mut s).unwrap();
     let out = frames(&d.output);
     assert_eq!(out.len(), 5, "{out:?}");
@@ -368,7 +368,7 @@ fn client_over_socket() {
     let h = Arc::new(handler(sample()));
     let h2 = h.clone();
     let t = std::thread::spawn(move || {
-        let mut s = session(user());
+        let mut s = session(me());
         serve(&mut b, &h2, &mut s).unwrap();
         s.requests
     });

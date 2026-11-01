@@ -1,5 +1,5 @@
 //! 0.3.0 W6 한글: 형식 구분 → 할 수 있는 것 → 변환/그림 뽑기 길. 한글 97 샘플은 LibreOffice 시험 자료(MPL-2.0, tests/data/030/hwp/README.md).
-//! 한글 프로그램(Windows COM)이 필요한 변환은 desktop에서 CLI로 점검한다(보고서). 여기서는 한글이 없는 경우를 본다.
+//! 한글 프로그램(Windows COM)이 필요한 변환은 Windows 시험 PC에서 CLI로 점검한다. 여기서는 한글이 없는 경우를 본다.
 
 use std::path::{Path, PathBuf};
 

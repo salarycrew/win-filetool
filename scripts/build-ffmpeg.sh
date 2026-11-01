@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 앱에 넣는 ffmpeg/ffprobe(Windows x64)를 K12(Linux)에서 llvm-mingw로 교차 빌드한다. LGPL 최소 빌드.
+# 앱에 넣는 ffmpeg/ffprobe(Windows x64)를 Linux 빌드 PC에서 llvm-mingw로 교차 빌드한다. LGPL 최소 빌드.
 #
 # - 라이선스: LGPL-2.1-or-later. --enable-gpl / --enable-nonfree / --enable-version3 는 쓰지 않는다.
 #   H.264 인코딩은 Windows Media Foundation(h264_mf)에 맡긴다(libx264 같은 GPL 부품 없음).

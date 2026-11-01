@@ -1,13 +1,15 @@
 {
   "name": "win-filetool",
   "private": true,
-  "version": "0.3.0-dev",
+  "version": "0.3.0",
+  "license": "MIT",
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
     "tauri": "tauri",
-    "build:win": "bash scripts/build-windows.sh"
+    "build:win": "bash scripts/build-windows.sh",
+    "test": "node scripts/test-frontend.mjs"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.12.4",

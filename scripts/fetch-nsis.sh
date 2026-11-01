@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 설치 파일(NSIS)을 만들 makensis를 sudo 없이 준비한다(K12, Ubuntu).
+# 설치 파일(NSIS)을 만들 makensis를 sudo 없이 준비한다(Linux 빌드 PC, Ubuntu).
 # apt-get download로 nsis/nsis-common 패키지를 받아 ~/.local/opt/nsis-3.10에 풀고,
 # NSISDIR을 맞춰 주는 makensis 감싸개를 만든다. Tauri bundler는 PATH의 makensis를 쓴다.
 set -euo pipefail

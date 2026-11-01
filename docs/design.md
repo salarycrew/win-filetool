@@ -104,7 +104,7 @@ ICC 색 프로필·XMP는 옮기지 않는다.
 4. 앱 옆 `tools\<이름>\(bin|program)` (휴대용 배치)
 
 ffprobe는 찾은 ffmpeg와 같은 폴더를 먼저 본다. 관리자 권한 없이 LibreOffice를 쓰려면 설치 파일을 폴더에 풀면 된다
-(desktop에서 확인: `msiexec /a LibreOffice_26.2.6_Win_x86-64.msi /qn TARGETDIR=<폴더>` → `<폴더>\program\soffice.exe`, 권한 상승 없이 성공).
+(Windows 시험 PC에서 확인: `msiexec /a LibreOffice_26.2.6_Win_x86-64.msi /qn TARGETDIR=<폴더>` → `<폴더>\program\soffice.exe`, 권한 상승 없이 성공).
 
 외부 도구는 셸을 거치지 않고 argv로만 실행한다. 시간 제한: HEIC 2~5분, 문서 5분, 영상 4시간. 취소하면 자식 프로세스 트리를 끝낸다.
 LibreOffice는 작업마다 `%TEMP%\win-filetool\lo-…\profile`을 개인 프로필로 써서 사용자의 LibreOffice 설정을 건드리지 않고, 동시에 돌려도 충돌하지 않는다.
@@ -121,12 +121,12 @@ LibreOffice는 작업마다 `%TEMP%\win-filetool\lo-…\profile`을 개인 프�
 - 결과는 [감시 폴더] 화면 기록에 실시간으로 표시(최근 200건)
 - 창을 여러 개 열어도 감시는 한 프로세스만: 설정 폴더의 `watch.lock`을 잡은 창만 규칙을 돌린다(그 창이 닫히면 다른 창이 이어받음)
 
-## 빌드 경로: K12 크로스 컴파일 → desktop 실행
+## 빌드 경로: Linux 빌드 PC에서 크로스 컴파일 → Windows 시험 PC에서 실행
 
-desktop(Windows)에는 Rust·MSVC Build Tools가 없고 원격 세션은 관리자 권한이 아니다.
-그래서 **K12(Linux)에서 `cargo-xwin`으로 `x86_64-pc-windows-msvc` exe를 만들고**, desktop에는 복사만 한다.
+Windows 시험 PC에는 Rust·MSVC Build Tools가 없고 원격 세션은 관리자 권한이 아니다.
+그래서 **Linux 빌드 PC에서 `cargo-xwin`으로 `x86_64-pc-windows-msvc` exe를 만들고**, Windows 시험 PC에는 복사만 한다.
 
-K12 준비(한 번, 모두 사용자 영역, sudo 없음):
+Linux 빌드 PC 준비(한 번, 모두 사용자 영역, sudo 없음):
 
 ```sh
 curl -sSf https://sh.rustup.rs | sh -s -- -y --no-modify-path --profile minimal
@@ -150,11 +150,11 @@ cargo test -p filetool-core          # 코어 테스트(Linux)
 
 1c부터 설치 파일(NSIS)도 만든다(아래 "1c > 설치 파일"). 휴대용 묶음은 exe + pdfium.dll로 실행된다(WebView2 런타임 필요 — Windows 11에는 기본으로 있음).
 
-desktop 배치·점검:
+Windows 시험 PC 배치·점검:
 
 ```sh
-scp -r dist-win/* desktop:C:/Users/user/dev/win-filetool-builds/1c/        # 설치 파일 + 휴대용 묶음(portable\)
-ssh desktop "C:\Users\user\dev\win-filetool-builds\1c\portable\filetool-cli.exe selftest C:\Users\user\dev\win-filetool-builds\1c\selftest --soffice C:\Users\user\dev\win-filetool-builds\tools\lo\program --apple C:\Users\user\dev\win-filetool-builds\1b\apple"
+scp -r dist-win/* <windows-pc>:C:/Users/user/dev/win-filetool-builds/1c/        # 설치 파일 + 휴대용 묶음(portable\)
+ssh <windows-pc> "C:\Users\user\dev\win-filetool-builds\1c\portable\filetool-cli.exe selftest C:\Users\user\dev\win-filetool-builds\1c\selftest --soffice C:\Users\user\dev\win-filetool-builds\tools\lo\program --apple C:\Users\user\dev\win-filetool-builds\1b\apple"
 ```
 
 GUI는 ssh 세션(세션 0)이 아니라 로그인한 사용자 세션에서 떠야 보인다. 원격 실행은 `schtasks /create … /it` +
@@ -206,7 +206,7 @@ qpdf·Ghostscript를 쓰지 않은 이유: 동봉하면 크기·라이선스(Gho
 - **사용자별 NSIS 설치 파일**(Tauri bundler, `installMode: currentUser`, 한국어, 언어 선택 없음): 관리자 권한·UAC 없이
   `%LOCALAPPDATA%\파일 도구\`에 설치, 시작 메뉴 바로가기 "파일 도구", [설정 > 앱]에 제거 항목(HKCU), 제거 프로그램 `uninstall.exe`.
   제거할 때 훅(`src-tauri/windows/installer-hooks.nsh`)이 HKCU Run 값도 지운다. 조용히: `파일도구_0.2.1_x64-setup.exe /S`, 제거 `uninstall.exe /S`.
-- `makensis`는 K12에 sudo 없이: `scripts/fetch-nsis.sh`가 Ubuntu `nsis`/`nsis-common` 패키지를 `apt-get download`로 받아 `~/.local/opt/nsis-3.10`에 풀고
+- `makensis`는 Linux 빌드 PC에 sudo 없이: `scripts/fetch-nsis.sh`가 Ubuntu `nsis`/`nsis-common` 패키지를 `apt-get download`로 받아 `~/.local/opt/nsis-3.10`에 풀고
   `NSISDIR`을 맞춰 주는 감싸개를 만든다. Tauri의 Linux→Windows NSIS 묶기가 cargo-xwin과 함께 그대로 동작했다.
 - 휴대용 묶음도 계속 만든다: `win-filetool-<버전>-portable\`(+ zip) = `win-filetool.exe`, `filetool-cli.exe`, `pdfium.dll`, `licenses\`.
 - **서명하지 않음**: 처음 실행할 때 Windows SmartScreen이 "Windows의 PC 보호" 창을 띄울 수 있다 → [추가 정보] → [실행]. 내려받은 zip은
@@ -244,7 +244,7 @@ qpdf·Ghostscript를 쓰지 않은 이유: 동봉하면 크기·라이선스(Gho
 ### 왜 관리자 권한 없는 길을 먼저
 
 Everything처럼 NTFS MFT를 통째로 읽는 길(`FSCTL_ENUM_USN_DATA`, USN 저널)은 볼륨 핸들(`\\.\C:`)이 필요하고, 그 핸들은 관리자 권한이 있어야 열린다.
-desktop은 원격에서 권한 상승(UAC)을 할 수 없고, 많은 사용자도 관리자로 실행하지 않는다. 그래서 2a는 **검색 기능 전체**(색인·저장·실시간 갱신·질의·UI)를
+Windows 시험 PC은 원격에서 권한 상승(UAC)을 할 수 없고, 많은 사용자도 관리자로 실행하지 않는다. 그래서 2a는 **검색 기능 전체**(색인·저장·실시간 갱신·질의·UI)를
 관리자 권한 없이 만들고, MFT/USN은 같은 자리(`IndexSource`)에 꽂을 수 있는 빠른 길로 2b에 남긴다.
 
 ### 색인 (`search/index.rs`)
@@ -308,9 +308,9 @@ desktop은 원격에서 권한 상승(UAC)을 할 수 없고, 많은 사용자�
 
 ### 잰 값 (2026-10-31)
 
-- K12 합성 100만 항목(평균 깊이 8.7): 만들기 312 ms, 색인 배열 110 MB(RSS 증가 73 MB), 파일 40.7 MB, 저장 85 ms, 읽기 235 ms, 이름 순위 540 ms,
+- Linux 빌드 PC 합성 100만 항목(평균 깊이 8.7): 만들기 312 ms, 색인 배열 110 MB(RSS 증가 73 MB), 파일 40.7 MB, 저장 85 ms, 읽기 235 ms, 이름 순위 540 ms,
   질의 12종 찾기 p95 3.6~28.3 ms, 이름 정렬 포함 p95 6.8~64.3 ms(77만 개 결과). `crates/core/tests/search_bench.rs`
-- desktop `C:\`(관리자 아님, Medium): 1,728,731 항목, 스캔 3.66 초(바로 앞 관리자 ssh 스캔 7.07 초 뒤라 캐시가 따뜻함), 건너뜀 1,169(권한 없음 1,095 + 연결 지점 74),
+- Windows 시험 PC `C:\`(관리자 아님, Medium): 1,728,731 항목, 스캔 3.66 초(바로 앞 관리자 ssh 스캔 7.07 초 뒤라 캐시가 따뜻함), 건너뜀 1,169(권한 없음 1,095 + 연결 지점 74),
   색인 88.5 MB, 저장 198 ms, CLI 읽기 198~215 ms, 앱 불러오기(이름 순위 포함) 676~706 ms, 질의 2.7~37.5 ms. 실시간 반영 0.25~0.48 초(CLI), 1~2 초(화면, 상태 1초 주기)
 
 
@@ -348,7 +348,7 @@ CLI `--source auto|mft|walk`: `mft`인데 안 되면 한국어 이유를 찍고 
    (2a는 디렉터리 항목에 복사된 값이라 링크마다 다를 수 있음 — 아래 "2a와 다른 점").
 6. 항목마다 **FRN**(레코드 번호 48비트 + 순번 16비트)을 색인의 새 열에 둔다(저널 변경을 항목에 잇는 데 씀).
 
-`ntfs.rs`는 플랫폼 무관(`VolRead` 트레잇): Windows는 볼륨 핸들, K12 시험은 `mkntfs`로 만든 이미지 파일을 같은 코드로 읽는다.
+`ntfs.rs`는 플랫폼 무관(`VolRead` 트레잇): Windows는 볼륨 핸들, Linux 빌드 PC 시험은 `mkntfs`로 만든 이미지 파일을 같은 코드로 읽는다.
 MFT 읽기가 중간에 실패하면 그 루트는 폴더 훑기로 한다.
 
 ### USN 저널
@@ -371,7 +371,7 @@ MFT 읽기가 중간에 실패하면 그 루트는 폴더 훑기로 한다.
 
 ### 2a와 다른 점(같은 볼륨을 두 길로 읽을 때)
 
-- 관리자 아닌 폴더 훑기는 권한 없는 폴더(desktop 1,095개)를 건너뛰지만 MFT는 다 본다. 관리자 토큰이면 둘 다 거의 같다.
+- 관리자 아닌 폴더 훑기는 권한 없는 폴더(Windows 시험 PC 1,095개)를 건너뛰지만 MFT는 다 본다. 관리자 토큰이면 둘 다 거의 같다.
 - 크기·시각: 2a(FindFirstFile)는 **디렉터리 항목에 복사해 둔 값**(NTFS가 늦게 고침, 하드 링크는 마지막으로 연 링크만 최신)을, MFT는 파일 레코드의 값(정본)을 쓴다. 그래서 열려 있는 로그·DB 파일, 하드 링크(WinSxS↔System32)는 값이 다를 수 있다.
 - 스캔 도중 생기고 없어진 파일, 볼륨 마운트 지점 아래(다른 볼륨)는 양쪽 모두 넣지 않는다.
 
@@ -388,19 +388,19 @@ MFT 읽기가 중간에 실패하면 그 루트는 폴더 훑기로 한다.
 
 ### 잰 값 (2b, 2026-10-31)
 
-- K12 `cargo test -p filetool-core`: 67 통과 / 0 실패 / 1 무시(벤치). 새 `search_2b` 10개: 손으로 만든 FILE 레코드(fixup 엄격·너그러움, 상주·비상주 `$DATA`,
+- Linux 빌드 PC `cargo test -p filetool-core`: 67 통과 / 0 실패 / 1 무시(벤치). 새 `search_2b` 10개: 손으로 만든 FILE 레코드(fixup 엄격·너그러움, 상주·비상주 `$DATA`,
   대체 스트림 제외, 속성 목록 + 확장 레코드, 네임스페이스·하드 링크, 지운 레코드·고아·메타데이터·정션), 제외 규칙, USN V2/V3(V4 건너뜀), 색인 v1→v2,
   따라잡기 반영(이동·이름 바꾸기·폴더째 이동·삭제·새 폴더와 그 안·휴지통에서 되살림·하드 링크·레코드 재사용·같은 변경 두 번), 저널 재생성·한 바퀴·다른 볼륨 감지,
-  **진짜 NTFS 이미지**(K12에서 sudo 없이 `mkntfs` + `ntfs-3g` FUSE로 64 MB 이미지를 만들어 432개 항목(한글·NFD 이름, 300개 폴더, 3 MB 파일, 하드 링크 121개 → 확장 레코드 25개)을 채우고,
+  **진짜 NTFS 이미지**(Linux 빌드 PC에서 sudo 없이 `mkntfs` + `ntfs-3g` FUSE로 64 MB 이미지를 만들어 432개 항목(한글·NFD 이름, 300개 폴더, 3 MB 파일, 하드 링크 121개 → 확장 레코드 25개)을 채우고,
   이미지의 `$MFT` 직접 읽기 결과와 마운트 폴더 훑기 결과를 비교: 경로·종류·크기·수정 시각 모두 같음).
-- desktop `C:\`(ssh = 관리자 토큰, 디스크 캐시 따뜻함): MFT 레코드 2,057,472개(쓰는 것 1,962,7xx, 확장 29,463, 깨짐 0), `$MFT` 2,009 MB 읽기 3.1~3.3 초 + 트리 0.7 초 = **스캔 3.8~4.0 초**,
+- Windows 시험 PC `C:\`(ssh = 관리자 토큰, 디스크 캐시 따뜻함): MFT 레코드 2,057,472개(쓰는 것 1,962,7xx, 확장 29,463, 깨짐 0), `$MFT` 2,009 MB 읽기 3.1~3.3 초 + 트리 0.7 초 = **스캔 3.8~4.0 초**,
   같은 볼륨 폴더 훑기(관리자) 3.7~3.9 초. 즉 **이 PC(캐시가 따뜻할 때)에서는 MFT가 빠르지 않다** — `$MFT` 2 GB를 읽는 시간이 훑기와 비슷. MFT 길의 이점은
   권한 없는 폴더까지 다 보는 것과 **USN 따라잡기**(다음 시작 때 전체 스캔 없음)·저널 실시간이다. 차가운 캐시(재부팅 직후)는 재지 않음.
 - 항목 수: MFT 1,814,365 = 훑기 1,814,365(같은 순간 비교, 경로 차이는 서로의 색인 폴더 2개씩뿐). 크기 다름 108~112개·시각 다름 104~111개 — 모두 열려 있는 로그·DB(-wal, .log, journal)처럼
   디렉터리 항목의 값이 늦게 고쳐지는 파일(MFT 쪽이 정본). 무작위 20개 `Get-Item` 대조: **20/20 같음**(크기·수정 시각).
 - 색인 파일 106.3 MB(FRN 열 +13.9 MB; 훑기 92.4 MB), 저장 0.2~1.8 초, CLI 읽기 0.22~0.25 초, 앱·`search-live` 불러오기 0.78 초.
 - **따라잡기**: `usn-catchup` 233건 기록 / 바뀐 파일 48개 → 37 ms(+ 저장 0.6 초). 서비스 시작 때 따라잡기 0.04~0.05 초(기록 16~1,189건).
-  시험 폴더의 새 파일·이름 바꾸기·삭제·크기 변경·폴더째 이동·새 폴더와 그 안이 모두 반영됨(`desktop-result-usn.txt`).
+  시험 폴더의 새 파일·이름 바꾸기·삭제·크기 변경·폴더째 이동·새 폴더와 그 안이 모두 반영됨(`result-usn.txt`).
 - **저널 실시간**(앱이 켜진 동안, `ReadDirectoryChangesW` 없이): 만들기 0.65 초, 이름 바꾸기 0.76 초, 새 폴더 0.77 초, 폴더째 이동 0.68 초, 삭제 0.77 초.
 - 관리자 아님(예약 작업, Medium): `--source auto` → 일반 색인(1,728,862 항목, 건너뜀 1,169 — 2a와 같음), `--source mft`·`usn-catchup` → 한국어 안내 + 종료 코드 2.
 - 화면: 관리자 권한 예약 작업(`/rl highest`, 로그인 세션)으로 앱을 띄우면 상태 줄에 "C:\ 빠른 색인(MFT)", 관리자 아니면 "C:\ 일반 색인".
@@ -429,7 +429,7 @@ filetool-cli search --via service / svc-status / svc-watch    (같은 클라이�
 
 - 앱은 시작할 때 최대 1.5초 서비스를 기다려 본 뒤 앱 색인을 시작한다(서비스가 맡을 루트는 처음부터 빼서 다시 훑지 않게). 그 뒤 감시 스레드가
   서비스가 생기거나(설치·시작) 사라지면(멈춤·제거·파이프 오류) 앱 색인 루트를 바꾼다(`SearchService::reconfigure`). 서비스가 사라지면 그 드라이브를
-  앱이 다시 훑는다(desktop C:\ 관리자 아님 3.9초). 질의·줄 요청이 실패해도 앱 색인만으로 답하고 다음 상태 확인 때 루트가 돌아온다.
+  앱이 다시 훑는다(Windows 시험 PC C:\ 관리자 아님 3.9초). 질의·줄 요청이 실패해도 앱 색인만으로 답하고 다음 상태 확인 때 루트가 돌아온다.
 - 서비스가 아직 처음 색인 중(`ready`가 아니거나 루트가 스캔 중)이면 맡긴 것으로 보지 않는다(앱 색인이 그대로 답함).
 - 결과 순서: **서비스 결과 전체(정렬됨) 뒤에 앱 색인 결과(정렬됨)**. 두 원본을 섞어 한 번에 정렬하지 않는다(보통은 서비스가 모든 루트를 맡아 한쪽만 있음).
 - 상태 줄: 서비스가 맡은 루트는 "C:\ 빠른 색인(서비스)"(마우스를 올리면 "빠른 검색 서비스(pid …)가 색인… · 다른 사용자의 프로필 폴더 제외"), 항목 수·실시간 반영 수는 둘을 더함.
@@ -450,7 +450,7 @@ filetool-cli search --via service / svc-status / svc-watch    (같은 클라이�
 - DACL(SDDL) `D:P(A;;GA;;;SY)(A;;GA;;;BA)(A;;0x12019b;;;IU)`: SYSTEM·관리자 전체, **대화형 사용자(IU)는 읽기·쓰기만**(`0x12019b` = FILE_GENERIC_READ|WRITE에서
   `FILE_CREATE_PIPE_INSTANCE`(=APPEND_DATA) 뺌 → 일반 사용자는 같은 이름의 서버 인스턴스를 더 만들 수 없다). 상속 없음(`P`). 그 밖(네트워크·일괄 로그온의 일반 사용자, 익명)은 항목이 없어 거부.
 - `PIPE_REJECT_REMOTE_CLIENTS`: 다른 PC(SMB)에서 오는 연결은 받지 않는다. 처음 만든 인스턴스는 `FILE_FLAG_FIRST_PIPE_INSTANCE`(이름을 먼저 차지한 프로세스가 있으면 실패 → 5초마다 다시, 기록에 남김).
-- **네트워크 로그온 SID(NU) 거부는 두지 않았다**: 처음엔 `(D;;GA;;;NU)`를 넣었는데 desktop의 ssh 세션(관리자)도 네트워크 로그온이라 막혔다(오류 5). 관리자는 어차피 볼륨을 직접 읽을 수 있고,
+- **네트워크 로그온 SID(NU) 거부는 두지 않았다**: 처음엔 `(D;;GA;;;NU)`를 넣었는데 Windows 시험 PC의 ssh 세션(관리자)도 네트워크 로그온이라 막혔다(오류 5). 관리자는 어차피 볼륨을 직접 읽을 수 있고,
   일반 사용자의 ssh 세션 토큰에는 IU가 없어 그대로 막히므로 뺐다.
 - 호출자: 서비스는 첫 요청을 읽은 뒤 `ImpersonateNamedPipeClient` → `OpenThreadToken` → `RevertToSelf`로 사용자 SID·그룹을 읽는다(안 되면 `GetNamedPipeClientProcessId` → 프로세스 토큰).
   클라이언트는 `SECURITY_SQOS_PRESENT | SECURITY_IDENTIFICATION`으로 열어 서비스가 **확인만** 하고 그 사용자로 행동할 수 없게 한다.
@@ -474,7 +474,7 @@ filetool-cli search --via service / svc-status / svc-watch    (같은 클라이�
 - **LocalSystem**으로 등록하되 서비스 SID(UNRESTRICTED)를 켜고 **필요한 권한만**(`SeChangeNotifyPrivilege`, `SeBackupPrivilege`, `SeManageVolumePrivilege`) 남긴다(`sc qprivs`로 확인).
   실패 시 10초·60초 뒤 다시 시작, 지연된 자동 시작.
 - **가상 계정(`NT SERVICE\FileToolSvc`)은 시도했지만 안 된다**(`install --account virtual`로 남겨 둠, 시험용): LSA로 `SeBackupPrivilege`·`SeManageVolumePrivilege`를 주고 시작할 때 켜도(`AdjustTokenPrivileges` 확인),
-  `\\.\C:`를 `GENERIC_READ`로 여는 것이 **접근 거부(오류 5)** — 백업 의미(`FILE_FLAG_BACKUP_SEMANTICS`)로 다시 열어도 같음(desktop). 볼륨 장치의 보안 설명자가 이 계정을 허용하지 않는 것으로 보인다(볼륨 DACL 자체는 읽어 보지 않음).
+  `\\.\C:`를 `GENERIC_READ`로 여는 것이 **접근 거부(오류 5)** — 백업 의미(`FILE_FLAG_BACKUP_SEMANTICS`)로 다시 열어도 같음(Windows 시험 PC). 볼륨 장치의 보안 설명자가 이 계정을 허용하지 않는 것으로 보인다(볼륨 DACL 자체는 읽어 보지 않음).
   볼륨 DACL을 바꾸는 것은 시스템 변경이라 하지 않았다. 그래서 기본은 LocalSystem.
 - 처음 전체 읽기(저장한 색인이 없을 때)만 프로세스 배경 모드(`PROCESS_MODE_BACKGROUND_BEGIN`: 아주 낮은 I/O·CPU 우선순위)로 돌리고 준비되면 끈다.
   저장한 색인을 불러오는 다시 시작은 보통 우선순위(배경 모드로 불러오면 111 MB에 13.2초 → 끄니 0.8초).
@@ -487,7 +487,7 @@ filetool-cli search --via service / svc-status / svc-watch    (같은 클라이�
   (일반 사용자가 먼저 만들어 둔 폴더 — 소유자는 DACL을 다시 바꿀 수 있으므로) 지우고 새로 만든다 ⑤ 시작 → 실행 중 확인 → 파이프로 상태를 받아 출력.
   다시 설치(갱신)는 색인을 지우지 않는다. `--report <파일>`이면 출력을 파일에도 쓴다(앱이 창 없이 UAC로 띄운 실행의 결과를 읽으려고).
 - **왜 Program Files로 복사하나**: 앱 폴더(`%LOCALAPPDATA%\파일 도구\`)는 사용자가 쓸 수 있다. 거기 있는 exe를 서비스(LocalSystem)로 등록하면 사용자가 exe를 바꿔치기해
-  SYSTEM 권한을 얻는다(권한 상승). 그래서 관리자만 쓸 수 있는 곳에 복사해 그 경로를 등록한다. desktop에서 일반 사용자가 그 폴더에 쓰기·exe 바꿔치기 → 거부 확인.
+  SYSTEM 권한을 얻는다(권한 상승). 그래서 관리자만 쓸 수 있는 곳에 복사해 그 경로를 등록한다. Windows 시험 PC에서 일반 사용자가 그 폴더에 쓰기·exe 바꿔치기 → 거부 확인.
 - **제거(관리자)**: 멈춤(최대 60초) → `DeleteService` → (가상 계정이면 LSA 권한 거둠) → 등록이 사라질 때까지 기다림 → ProgramData 폴더 → Program Files 폴더 지움.
   Program Files 안의 자신으로 제거하면 실행 중인 exe는 지울 수 없어 다시 시작할 때 지우도록 예약(`MoveFileEx` DELAY_UNTIL_REBOOT)한다. 앱의 단추·설치 파일은 앱 폴더의 사본으로 지우므로 바로 다 지워진다.
 - `status`(관리자 아니어도 됨): SCM 상태·시작 유형·계정·실행 파일, 서비스 폴더·자료 폴더·파이프의 SDDL, 파이프로 받은 색인 상태.
@@ -495,7 +495,7 @@ filetool-cli search --via service / svc-status / svc-watch    (같은 클라이�
   실행하고(UAC 창 1번, 창은 숨김) 끝날 때까지 기다린 뒤 보고서 글을 결과 칸에 보여 준다. UAC에서 [아니요]면 "관리자 권한 확인(UAC)을 취소했습니다". 실행할 명령 줄은 단추 아래에 그대로 보인다.
 - **앱 제거(NSIS)**: 제거 프로그램이 `HKLM\SYSTEM\CurrentControlSet\Services\FileToolSvc`를 보고 서비스가 있으면 "함께 제거할까요?(관리자 권한 확인 창)"를 묻는다.
   [예] → 앱 폴더의 `filetool-svc.exe uninstall`을 runas로. [아니요]·조용히 제거(`/S`)는 서비스를 남긴다(서비스 exe는 Program Files에 따로 있어 계속 돈다 —
-  나중에 관리자 명령 프롬프트에서 `"C:\Program Files\파일 도구 서비스\filetool-svc.exe" uninstall`). desktop에서는 `/S` 경로만 확인(서비스가 남음), 묻는 창은 누를 수 없어 확인 못 함.
+  나중에 관리자 명령 프롬프트에서 `"C:\Program Files\파일 도구 서비스\filetool-svc.exe" uninstall`). Windows 시험 PC에서는 `/S` 경로만 확인(서비스가 남음), 묻는 창은 누를 수 없어 확인 못 함.
 
 ### 위협 메모
 
@@ -510,7 +510,7 @@ filetool-cli search --via service / svc-status / svc-watch    (같은 클라이�
 | 요청으로 서비스 마비(DoS) | 요청 64 KiB·질의 4 KB·줄 1,000·연결 16, 쓰기 요청 없음 | 대화형 사용자가 연결 16개를 붙잡거나 무거운 질의를 반복하면 다른 사용자의 질의가 늦어질 수 있다(같은 PC 사용자 사이) |
 | 백신 오탐 | — | 서명하지 않은 서비스 exe(코드 서명은 범위 밖) |
 
-### 잰 값 (2c, 2026-10-31, desktop C:\ 181만 항목, 캐시 따뜻함)
+### 잰 값 (2c, 2026-10-31, Windows 시험 PC C:\ 181만 항목, 캐시 따뜻함)
 
 - 설치 1.78 초(파이프 응답까지). **처음 색인(배경 모드)**: MFT 스캔 9.3~15.6 초, 이름 순위·저장(111 MB)까지 **준비 28.4~33.7 초**(같은 때 관리자 CLI `--source mft` 보통 우선순위 3.7~5.6 초).
   항목 1,814,549(서비스) vs 1,814,553(CLI MFT, 같은 순간이 아님 — 차이는 서로의 색인 폴더 2개와 그 사이 바뀐 로그 파일).
@@ -526,7 +526,7 @@ filetool-cli search --via service / svc-status / svc-watch    (같은 클라이�
 - 원인: Linux에서 std `File::try_lock`은 `flock`이고, `flock` 잠금은 **열린 파일 설명**에 붙는다. 같은 시험 바이너리의 다른 시험 스레드가
   자식 프로세스를 띄우면(fork ~ exec 사이) 자식이 fd 표를 복사해 가므로, 부모가 잠금 파일을 닫아도 자식이 exec할 때까지 잠금이 남는다.
   그 틈에 "놓은 뒤 다시 잡기"가 실패했다. 재현: 스레드 4개가 `true`를 계속 띄우는 동안 잡기→놓기→다시 잡기 2000번 → 고치기 전 실패.
-  K12에서 고치기 전 `convert_1b` 30번 중 2번 실패(같은 메시지 "풀린 뒤 다시 잡음").
+  Linux 빌드 PC에서 고치기 전 `convert_1b` 30번 중 2번 실패(같은 메시지 "풀린 뒤 다시 잡음").
 - 고침(잠금 자체): Unix는 프로세스 단위 `fcntl(F_SETLK)` 잠금(fork로 물려지지 않음) + 같은 프로세스 안의 두 번째 요청을 막는 "잡은 경로" 목록
   (POSIX 잠금은 같은 프로세스끼리 충돌하지 않고, 같은 파일의 다른 fd를 닫으면 풀리므로 목록을 잡은 채로 열고/닫는다).
   Windows는 그대로 `LockFileEx`(핸들이 상속되지 않아 이 문제가 없음). 시험: `tests/lock_race_ux3.rs`(동시 spawn 중 2000번, 다른 프로세스 배제).
@@ -953,6 +953,8 @@ Word → PPT(`doc_to_pptx`)는 한글이면 `hwp::convert(… Docx)`로 docx를 
   한컴 예제 DLL(FilePathCheckerModuleExample)은 재배포하지 않는다. 예제와 같은 내보내기(`IsAccessiblePath`, stdcall 인자 16바이트, 항상 1)를 가진
   1 KB짜리 32비트 DLL을 `hancom::path_check_dll()`이 코드로 만들어 `%LOCALAPPDATA%\kr.salarycrew.winfiletool\hwp\WinFileToolHwpPath-<해시>.dll`에 쓰고
   값 `WinFileToolPathCheck`로 등록한다(가져오는 함수·재배치 없음, DllMain은 TRUE만). 같은 사용자 권한의 프로그램은 이 레지스트리를 원래 쓸 수 있어 새 권한은 생기지 않는다.
+  0.3.0 출시: 등록값은 **변환하는 동안만** 둔다(변환 잠금을 잡은 뒤 등록 → 끝나면 성공·실패·취소 모두 값 삭제, 키는 남김).
+  설치본을 지우면 훅이 `…\hwp` 폴더와 남은 값(변환 중 강제 종료 대비)을 지운다.
 - 한 번에 하나: `…\hwp\hancom.lock` 파일 잠금(앱 창·감시 폴더·CLI 함께). 시간 제한 180초, 취소 가능.
 - 끝내기: 스크립트가 알려 준 새 Hwp.exe 번호만(없으면 시작 뒤 새로 생긴 것) 5초 기다렸다가 남아 있으면 `taskkill /F`. 새 프로세스가 생기지 않으면
   (사용자가 쓰는 한글에 붙었을 수 있음) 아무것도 하지 않고 "열려 있는 한글 창을 모두 닫고 다시 해 주세요".
@@ -979,4 +981,4 @@ Word → PPT(`doc_to_pptx`)는 한글이면 `hwp::convert(… Docx)`로 docx를 
 코어 단위 시험이 작은 파일을 그 자리에서 만든다(한글 5 CFB + DocInfo + BinData, HWPX zip + manifest): 형식·플래그, 할 수 있는 것 표,
 그림 뽑기(항목별 압축, OLE·링크·그림 아님·없는 데이터, 같은 그림, WMF), 크기·개수·합계 한도와 압축 폭탄, 경로 빠져나가기, 보안 모듈 DLL 구조.
 `tests/hwp_030.rs`는 LibreOffice 시험 자료의 한글 97 파일(MPL-2.0, `tests/data/030/hwp/README.md`)로 LO 길을 확인한다(LO가 있을 때 변환까지).
-정부 배포 실제 문서(HWP 4 + HWPX 2)는 저장소 밖 증거 폴더에 두고 desktop에서 CLI(`hwp-info`, `hwp-convert`, `doc-to-pptx`, `hwp-images`)로 점검했다.
+정부 배포 실제 문서(HWP 4 + HWPX 2)는 저장소에 넣지 않고 Windows 시험 PC에서 CLI(`hwp-info`, `hwp-convert`, `doc-to-pptx`, `hwp-images`)로 점검했다.

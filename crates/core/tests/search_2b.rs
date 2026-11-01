@@ -1,5 +1,5 @@
 //! 2b: NTFS FILE 레코드 해석(손으로 만든 레코드), USN 레코드, 색인 v1→v2, 저널 따라잡기 반영,
-//! 그리고 (K12에 mkntfs·ntfs-3g가 있으면) 진짜 NTFS 이미지의 $MFT를 읽어 폴더 훑기 결과와 비교.
+//! 그리고 (Linux 빌드 PC에 mkntfs·ntfs-3g가 있으면) 진짜 NTFS 이미지의 $MFT를 읽어 폴더 훑기 결과와 비교.
 
 use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};

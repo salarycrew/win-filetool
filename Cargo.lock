@@ -1186,7 +1186,7 @@ dependencies = [
 
 [[package]]
 name = "filetool-cli"
-version = "0.3.0-dev"
+version = "0.3.0"
 dependencies = [
  "chrono",
  "filetool-core",
@@ -1200,7 +1200,7 @@ dependencies = [
 
 [[package]]
 name = "filetool-core"
-version = "0.3.0-dev"
+version = "0.3.0"
 dependencies = [
  "cfb",
  "chrono",
@@ -1235,7 +1235,7 @@ dependencies = [
 
 [[package]]
 name = "filetool-svc"
-version = "0.3.0-dev"
+version = "0.3.0"
 dependencies = [
  "chrono",
  "filetool-core",
@@ -5081,7 +5081,7 @@ checksum = "d4ca08e5ef825b65b056d9efbd95c8750683f0a6d0466d02e96dc2e4e360f3d2"
 
 [[package]]
 name = "win-filetool"
-version = "0.3.0-dev"
+version = "0.3.0"
 dependencies = [
  "filetool-core",
  "image",

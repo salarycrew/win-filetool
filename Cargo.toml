@@ -3,9 +3,9 @@ resolver = "2"
 members = ["crates/core", "crates/cli", "crates/svc", "src-tauri"]
 
 [workspace.package]
-version = "0.3.0-dev"
+version = "0.3.0"
 edition = "2021"
-license = "UNLICENSED"
+license = "MIT"
 
 [profile.release]
 opt-level = "s"
