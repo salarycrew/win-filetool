@@ -651,7 +651,8 @@ async fn svc_view(state: State<'_, AppState>) -> CmdResult<SvcPanel> {
         let fmt = |c: Option<(PathBuf, String)>| c.map(|(e, a)| format!("\"{}\" {a}", e.display()));
         let exe = svc_exe();
         let view = remote.view(exe.as_ref().map(|p| p.display().to_string()));
-        let installed_version = remote.status().and_then(|(st, _)| filetool_core::search::svcpipe::server_version(&st.server));
+        // 방금 갱신했으면 예전 연결은 끊겼다: 한 번 더 붙어서 지금 서비스의 버전을 읽는다
+        let installed_version = remote.poll().or_else(|| remote.poll()).and_then(|st| filetool_core::search::svcpipe::server_version(&st.server));
         let bundled_version = env!("CARGO_PKG_VERSION");
         let update_available = filetool_core::search::svcpipe::needs_update(&view.info, installed_version.as_deref(), exe.as_deref(), bundled_version);
         SvcPanel { view, install_cmd: fmt(svc_command(true)), uninstall_cmd: fmt(svc_command(false)), bundled_version, installed_version, update_available }

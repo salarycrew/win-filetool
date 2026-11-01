@@ -67,18 +67,16 @@ pub fn same_file(a: &std::path::Path, b: &std::path::Path) -> Option<bool> {
 }
 
 /// 설치된 서비스를 앱에 든 것으로 갱신해야 하는지(0.3.0 QA-04: [다시 설치(갱신)]을 보일지).
-/// 버전이 다르거나(서비스가 답할 때), 설치된 실행 파일이 앱에 든 것과 다르면 true. 설치 안 됐거나 앱에 서비스가 없으면 false.
+/// 설치된 실행 파일을 읽을 수 있으면 앱에 든 것과 내용이 다를 때 true(버전 표시보다 우선 — 막 갱신한 뒤 예전 상태가 남아 있어도 틀리지 않게).
+/// 읽을 수 없으면 서비스가 답한 버전이 다를 때 true. 설치 안 됐거나 앱에 서비스가 없으면 false.
 pub fn needs_update(info: &ServiceInfo, installed_version: Option<&str>, bundled_exe: Option<&std::path::Path>, bundled_version: &str) -> bool {
     let Some(bundled) = bundled_exe else { return false };
     if !info.installed {
         return false;
     }
-    if installed_version.is_some_and(|v| v != bundled_version) {
-        return true;
-    }
-    match binary_from_command_line(&info.binary_path) {
-        Some(installed) => same_file(&installed, bundled) == Some(false),
-        None => false,
+    match binary_from_command_line(&info.binary_path).and_then(|installed| same_file(&installed, bundled)) {
+        Some(same) => !same,
+        None => installed_version.is_some_and(|v| v != bundled_version),
     }
 }
 
@@ -112,12 +110,15 @@ mod update_tests {
         assert!(!needs_update(&info(&same), Some("0.3.0"), Some(&bundled), "0.3.0"));
         // 서비스가 답하지 않아도 파일이 다르면 갱신
         assert!(needs_update(&info(&old), None, Some(&bundled), "0.3.0"));
-        // 버전이 다르면 갱신(0.2.1 → 0.3.0)
-        assert!(needs_update(&info(&same), Some("0.2.1"), Some(&bundled), "0.3.0"));
+        // 파일이 같으면 서비스가 예전 버전을 말해도(막 갱신한 뒤 남은 상태) 갱신 필요 없음
+        assert!(!needs_update(&info(&same), Some("0.2.1"), Some(&bundled), "0.3.0"));
+        // 설치 파일을 못 읽으면 버전으로 판단(0.2.1 → 0.3.0)
+        assert!(needs_update(&info(&t.path().join("none.exe")), Some("0.2.1"), Some(&bundled), "0.3.0"));
         // 설치 안 됨 / 앱에 서비스 없음 / 설치 파일을 못 읽음 → 보이지 않음
         assert!(!needs_update(&ServiceInfo::default(), Some("0.2.1"), Some(&bundled), "0.3.0"));
         assert!(!needs_update(&info(&old), Some("0.2.1"), None, "0.3.0"));
         assert!(!needs_update(&info(&t.path().join("none.exe")), None, Some(&bundled), "0.3.0"));
+        assert!(!needs_update(&info(&t.path().join("none.exe")), Some("0.3.0"), Some(&bundled), "0.3.0"));
     }
 }
 
