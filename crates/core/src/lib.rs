@@ -10,6 +10,9 @@
 //! - 1c: [`pdfcompress`]: PDF 압축, [`img2pdf`]: 이미지 → PDF, [`pdfrender`]: PDF → 이미지(PDFium)·이미지 꺼내기,
 //!   [`autostart`]: 윈도 시작 시 실행(HKCU Run)
 //! - 0.3.0: [`pdfedit`]: PDF 편집(쪽 편집기·쪽 번호·워터마크·암호·서명·글상자·여백·A4·문서 정보·양식·모아 찍기)
+//! - 0.3.0 W2 문서 변환: [`ooxml`]: 공용 DOCX/PPTX 쓰기, [`docx2pptx`]: Word → PPT(제목마다 한 장),
+//!   [`pdflayout`]: PDF 글자 배치 분석, [`pdf2docx`]: PDF → Word·TXT, [`pdf2pptx`]: PDF → PPT(쪽 그림/글상자),
+//!   [`officeimages`]: 문서·PDF 이미지만 뽑기
 //! - 2a: [`search`]: 전체 파일 즉시 검색(색인·스캔·실시간 갱신·질의 언어)
 //! - 0.3.0 W1: [`bundle`]: 앱에 든 도구 묶음 풀기, [`portable`]: 휴대용 설정 위치, [`runtime`]: WebView2 확인, [`notices`]: 오픈소스 고지
 //!
@@ -20,6 +23,7 @@ pub mod autostart;
 pub mod bundle;
 pub mod convert;
 pub mod docs;
+pub mod docx2pptx;
 pub mod error;
 pub mod exif;
 pub mod heif;
@@ -28,11 +32,16 @@ pub mod img2pdf;
 pub mod media;
 pub mod nfc;
 pub mod notices;
+pub mod officeimages;
+pub mod ooxml;
 pub mod pages;
 pub mod paths;
 pub mod pdf;
+pub mod pdf2docx;
+pub mod pdf2pptx;
 pub mod pdfcompress;
 pub mod pdfedit;
+pub mod pdflayout;
 pub mod pdfrender;
 pub mod portable;
 pub mod process;

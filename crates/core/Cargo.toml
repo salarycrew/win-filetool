@@ -19,6 +19,8 @@ subsetter = { version = "0.2.6", default-features = false }
 ttf-parser = "0.25.1"
 memchr = "2.8.3"
 # PDF → 이미지: PDFium을 실행 중에 불러온다(pdfium.dll은 exe 옆, scripts/fetch-pdfium.sh)
+# 0.3.0 W2: Word 읽기·이미지 순서(docx/pptx/xlsx XML)
+quick-xml = "0.42.0"
 pdfium-render = { version = "0.9.4", default-features = false, features = ["pdfium_latest", "image_latest", "thread_safe"] }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"

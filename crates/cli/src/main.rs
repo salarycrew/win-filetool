@@ -9,6 +9,7 @@ use filetool_core::samples::{self, nfd};
 use filetool_core::{nfc, paths, zipnfc, Result};
 
 mod conv;
+mod office030;
 mod pdf1c;
 mod runtime030;
 mod pdfedit030;
@@ -38,6 +39,11 @@ const USAGE: &str = "사용법:
   filetool-cli img2pdf [--page image|a4|a4-landscape] [--margin mm] [--output 파일.pdf] <이미지...>
   filetool-cli pdf2img <png|jpg> [--dpi 150] [--pages 1-3] [--quality N] [--out 폴더] <pdf...>
   filetool-cli pdf-images [--out 폴더] <pdf...>                          들어 있는 이미지 꺼내기
+  filetool-cli doc-to-pptx [--out 폴더] <docx|doc|hwp|odt|pages...>      Word → PPT(제목마다 한 장, docx가 아니면 LibreOffice로 먼저 바꿈)
+  filetool-cli pdf-to-docx [--out 폴더] <pdf...>                         PDF → Word(문단·제목·표·그림, 스캔본은 쪽 그림)
+  filetool-cli pdf-to-pptx [--mode image|editable] [--dpi 150] [--out 폴더] <pdf...>   PDF → PPT(쪽 그림 / 글자 고칠 수 있게)
+  filetool-cli pdf-to-txt [--out 폴더] <pdf...>                          PDF → 글자만(TXT, UTF-8 BOM)
+  filetool-cli extract-images [--out 폴더] <docx|pptx|xlsx|pdf...>      이미지만 뽑기(원본 그대로)
   filetool-cli autostart <on|off|status> [--exe win-filetool.exe]       윈도 시작 시 실행(HKCU Run)
   filetool-cli index [루트...] [--source auto|mft|walk] [--index-dir 폴더] [--exclude 패턴]... [--no-default-excludes]   검색 색인 만들기(루트 없으면 모든 고정 드라이브) + 저장.
                --source: auto(기본, 관리자 권한 + NTFS 드라이브 전체면 MFT) / mft(MFT만, 안 되면 오류) / walk(폴더 훑기만)
@@ -82,6 +88,9 @@ fn run(args: &[String]) -> Result<ExitCode> {
         return Ok(code);
     }
     if let Some(code) = conv::run(cmd, args)? {
+        return Ok(code);
+    }
+    if let Some(code) = office030::run(cmd, args)? {
         return Ok(code);
     }
     if let Some(code) = pdf1c::run(cmd, args)? {

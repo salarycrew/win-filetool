@@ -119,6 +119,17 @@ pub fn pdfium_status() -> std::result::Result<PathBuf, String> {
     pdfium().map(|_| lib).map_err(|e| e.to_string())
 }
 
+/// 0.3.0 W2: PDF 열기 실패(암호·손상)를 쉬운 말로
+pub(crate) fn open_err(path: &Path, e: PdfiumError) -> Error {
+    match &e {
+        PdfiumError::PdfiumLibraryInternalError(PdfiumInternalError::PasswordError) => render_err(path, e),
+        PdfiumError::PdfiumLibraryInternalError(PdfiumInternalError::FormatError) | PdfiumError::PdfiumLibraryInternalError(PdfiumInternalError::FileError) => {
+            Error::Pdf { path: path.into(), message: "PDF 파일이 손상되었거나 PDF 형식이 아닙니다".into() }
+        }
+        _ => Error::Pdf { path: path.into(), message: format!("PDF를 열지 못했습니다: {e}") },
+    }
+}
+
 pub(crate) fn render_err(path: &Path, e: PdfiumError) -> Error {
     let msg = match &e {
         PdfiumError::PdfiumLibraryInternalError(PdfiumInternalError::PasswordError) => {
@@ -212,6 +223,11 @@ pub struct ExtractOut {
 /// PDF에 들어 있는 이미지를 그대로 꺼낸다(JPEG는 바이트 그대로 .jpg, 8비트 Flate RGB/흑백은 .png).
 /// 마스크·CMYK·JPX 등은 건너뛰고 개수만 알린다.
 pub fn extract_images(input: &Path, out_dir: Option<&Path>) -> Result<ExtractOut> {
+    extract_images_named(input, out_dir, "_추출이미지")
+}
+
+/// [`extract_images`]와 같고 결과 폴더 접미사만 다르다(0.3.0 "이미지만 뽑기"는 `_이미지`).
+pub fn extract_images_named(input: &Path, out_dir: Option<&Path>, folder_suffix: &str) -> Result<ExtractOut> {
     let doc = crate::pdfcompress::load_unencrypted(input)?;
     let mut masks = HashSet::new();
     for o in doc.objects.values() {
@@ -301,7 +317,7 @@ pub fn extract_images(input: &Path, out_dir: Option<&Path>) -> Result<ExtractOut
         let dir = match &folder {
             Some(d) => d.clone(),
             None => {
-                let d = output_folder(input, out_dir, "_추출이미지");
+                let d = output_folder(input, out_dir, folder_suffix);
                 std::fs::create_dir_all(&d).map_err(io_err(&d))?;
                 folder = Some(d.clone());
                 d

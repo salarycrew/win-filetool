@@ -14,6 +14,7 @@
 
 mod cmd_runtime;
 mod cmd_pdfedit;
+mod cmd_office;
 mod icons;
 mod remote;
 
@@ -1151,6 +1152,11 @@ fn main() {
             pdf_to_images,
             pdf_extract_images,
             pdfium_status,
+            cmd_office::doc_to_pptx,
+            cmd_office::pdf_to_docx,
+            cmd_office::pdf_to_pptx,
+            cmd_office::pdf_to_txt,
+            cmd_office::extract_images,
             autostart_get,
             autostart_set,
             launched_by_autostart,
