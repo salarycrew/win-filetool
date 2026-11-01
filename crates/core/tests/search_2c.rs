@@ -88,14 +88,14 @@ fn frame_limits() {
 
 const T: i64 = 1_760_000_000;
 
-/// C:\Users\{user, other, Public, Default}, 서비스 계정 프로필, 휴지통 밖 일반 폴더
+/// C:\Users\{user1, other, Public, Default}, 서비스 계정 프로필, 휴지통 밖 일반 폴더
 fn sample() -> Index {
     let mut ix = Index::new();
     let c = ix.add_root(Path::new(r"C:\"));
     let users = ix.push_child(c, "Users", true, 0, T);
-    let user = ix.push_child(users, "user", true, 0, T);
+    let user = ix.push_child(users, "user1", true, 0, T);
     let docs = ix.push_child(user, "Documents", true, 0, T);
-    ix.push_child(docs, "secret-user.txt", false, 10, T);
+    ix.push_child(docs, "secret-mine.txt", false, 10, T);
     let nm = ix.push_child(docs, "node_modules", true, 0, T);
     ix.push_child(nm, "secret-dep.js", false, 1, T);
     let other = ix.push_child(users, "Other", true, 0, T);
@@ -117,7 +117,7 @@ fn sample() -> Index {
 }
 
 fn me() -> Identity {
-    Identity { user: r"PC\user".into(), sid: "S-1-5-21-1-2-3-1001".into(), admin: false, profile: Some(r"C:\Users\user".into()) }
+    Identity { user: r"PC\user1".into(), sid: "S-1-5-21-1-2-3-1001".into(), admin: false, profile: Some(r"C:\Users\user1".into()) }
 }
 
 fn profile_list() -> Vec<String> {
@@ -125,7 +125,7 @@ fn profile_list() -> Vec<String> {
         r"C:\Windows\system32\config\systemprofile".into(),
         r"C:\Windows\ServiceProfiles\LocalService".into(),
         r"C:\Windows\ServiceProfiles\NetworkService".into(),
-        r"C:\Users\user".into(),
+        r"C:\Users\user1".into(),
         r"C:\Users\Other".into(),
     ]
 }
@@ -146,13 +146,13 @@ fn visibility_hides_other_profiles_admin_sees_all() {
     let got = names(&visible_paths(&ix, "secret", &vis, &[]).unwrap());
     assert_eq!(
         got,
-        vec!["secret-dep.js", "secret-user.txt", "secret-public.txt", "secret-shared.txt"],
+        vec!["secret-dep.js", "secret-mine.txt", "secret-public.txt", "secret-shared.txt"],
         "자기 프로필·Public·프로필 밖만 — 다른 사용자(Other), 프로필 목록에 없는 C:\\Users 아래 폴더(wft2c-other, Default), 서비스 계정 프로필은 숨김"
     );
     // 숨긴 폴더 이름 자체도 안 보임
     assert!(visible_paths(&ix, "wft2c-other", &vis, &[]).unwrap().is_empty());
     assert!(visible_paths(&ix, "folder:other", &vis, &[]).unwrap().is_empty());
-    assert_eq!(names(&visible_paths(&ix, "folder:user", &vis, &[]).unwrap()), vec!["user"]);
+    assert_eq!(names(&visible_paths(&ix, "folder:user1", &vis, &[]).unwrap()), vec!["user1"]);
     // 경로 낱말로 찔러 봐도 마찬가지
     assert!(visible_paths(&ix, r"users\other\", &vis, &[]).unwrap().is_empty());
 
@@ -163,9 +163,9 @@ fn visibility_hides_other_profiles_admin_sees_all() {
     assert_eq!(visible_paths(&ix, "secret", &va, &[]).unwrap().len(), 8);
 
     // 대소문자·구분자가 달라도 같은 규칙(프로필 경로가 소문자로 등록돼 있어도)
-    let lower = Identity { profile: Some("c:/users/USER/".into()), ..me() };
+    let lower = Identity { profile: Some("c:/users/USER1/".into()), ..me() };
     let vl = Visibility::for_identity(&lower, r"C:\Users\", &profile_list());
-    assert_eq!(names(&visible_paths(&ix, "secret", &vl, &[]).unwrap()), vec!["secret-dep.js", "secret-user.txt", "secret-public.txt", "secret-shared.txt"]);
+    assert_eq!(names(&visible_paths(&ix, "secret", &vl, &[]).unwrap()), vec!["secret-dep.js", "secret-mine.txt", "secret-public.txt", "secret-shared.txt"]);
 
     // 프로필을 모르는 사용자(프로필 목록에 없음)는 C:\Users 아래에서 Public만
     let nobody = Identity { profile: None, ..me() };
@@ -180,13 +180,13 @@ fn visibility_follows_renames_and_client_excludes() {
     // 사용자 제외 패턴(서비스 기본 목록에 없는 것만): node_modules 아래 빠짐. 기본 목록은 그대로 둬도 결과 같음
     let mut ex = scan::default_excludes();
     ex.push("node_modules".into());
-    assert_eq!(names(&visible_paths(&ix, "secret", &vis, &ex).unwrap()), vec!["secret-user.txt", "secret-public.txt", "secret-shared.txt"]);
-    assert_eq!(names(&visible_paths(&ix, "secret", &vis, &["*\\Data".into()]).unwrap()), vec!["secret-dep.js", "secret-user.txt", "secret-public.txt"]);
+    assert_eq!(names(&visible_paths(&ix, "secret", &vis, &ex).unwrap()), vec!["secret-mine.txt", "secret-public.txt", "secret-shared.txt"]);
+    assert_eq!(names(&visible_paths(&ix, "secret", &vis, &["*\\Data".into()]).unwrap()), vec!["secret-dep.js", "secret-mine.txt", "secret-public.txt"]);
     // 숨긴 폴더 안으로 옮긴 파일은 숨고, 그 폴더 이름을 바꿔도(질의 때마다 다시 구함) 규칙을 따른다
     let users = ix.lookup_test(r"C:\Users");
     let pubf = ix.find_child(users, "Public").unwrap();
     ix.update_entry(pubf, "Public2", 0, T);
-    assert_eq!(names(&visible_paths(&ix, "secret", &vis, &[]).unwrap()), vec!["secret-dep.js", "secret-user.txt", "secret-shared.txt"], "Public2는 공유 폴더가 아님");
+    assert_eq!(names(&visible_paths(&ix, "secret", &vis, &[]).unwrap()), vec!["secret-dep.js", "secret-mine.txt", "secret-shared.txt"], "Public2는 공유 폴더가 아님");
 }
 
 /// Linux에서 `C:\` 루트를 경로로 찾기 위한 도우미
@@ -241,7 +241,7 @@ fn handler_hello_first_query_rows_and_limits() {
         o => panic!("{o:?}"),
     };
     assert_eq!(r.total, 4);
-    assert_eq!(r.rows.iter().map(|x| x.name.as_str()).collect::<Vec<_>>(), vec!["secret-dep.js", "secret-user.txt"]);
+    assert_eq!(r.rows.iter().map(|x| x.name.as_str()).collect::<Vec<_>>(), vec!["secret-dep.js", "secret-mine.txt"]);
     // 다음 줄들
     match h.handle(&mut s, Request::Rows { offset: 2, limit: 10 }) {
         Response::Rows { rows, stale } => {

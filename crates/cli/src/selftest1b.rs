@@ -185,8 +185,9 @@ pub fn run(dir: &Path, args: &[String]) -> Result<ExitCode> {
                 (i.contains("codec_name=gif") && i.contains("width=200"), format!("{} [{i}]", fname(&o.output)))
             });
             // 취소: 긴 영상 변환을 1.5초 뒤 취소 → 출력 파일 없음
-            let long = vdir.join("긴영상.mkv");
-            samples::make_test_video(ff, &long, 40, 1280, 720)?;
+            // 3초 클립을 이어 붙인 2분짜리(앱에 든 ffmpeg로도 만들 수 있게)
+            let long = vdir.join("긴영상.mov");
+            samples::make_test_video(ff, &long, 120, 640, 360)?;
             let cancel = Cancel::new();
             let c2 = cancel.clone();
             std::thread::spawn(move || {

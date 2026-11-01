@@ -314,8 +314,41 @@ fn encode_tiles(ffmpeg: &Path, tile: u32) -> Result<Vec<Vec<u8>>> {
     Ok(tiles)
 }
 
-/// 소리가 있는 짧은 시험 영상(testsrc2 + 440Hz). 확장자에 맞는 형식으로 저장(.mov 등).
+/// 미리 만든 시험 영상(testsrc2 + 440Hz, `samples_video/README.md`): (확장자, 초, 가로, 세로) → 바이트
+pub fn premade_video(ext: &str, secs: u32, w: u32, h: u32) -> Option<&'static [u8]> {
+    match (ext.to_ascii_lowercase().as_str(), secs, w, h) {
+        ("mov", 3, 640, 360) => Some(include_bytes!("samples_video/clip-640x360-3s.mov")),
+        ("mkv", 2, 320, 240) => Some(include_bytes!("samples_video/clip-320x240-2s.mkv")),
+        ("avi", 2, 320, 240) => Some(include_bytes!("samples_video/clip-320x240-2s.avi")),
+        ("webm", 2, 320, 240) => Some(include_bytes!("samples_video/clip-320x240-2s.webm")),
+        _ => None,
+    }
+}
+
+/// 소리가 있는 시험 영상. 미리 만든 것이 있으면 그대로 쓰고(0.3.0: 앱에 든 LGPL ffmpeg에는 lavfi·mkv/avi/webm 쓰기가 없음),
+/// 640×360 .mov로 더 길게 달라면 3초 클립을 이어 붙여(stream copy) 만든다. 그 밖에는 ffmpeg lavfi로 만든다.
 pub fn make_test_video(ffmpeg: &Path, path: &Path, secs: u32, w: u32, h: u32) -> Result<()> {
+    let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("").to_ascii_lowercase();
+    if let Some(b) = premade_video(&ext, secs, w, h) {
+        return std::fs::write(path, b).map_err(io_err(path));
+    }
+    if ext == "mov" && (w, h) == (640, 360) && secs > 3 && secs % 3 == 0 {
+        let tmp = crate::tempdir::JobDir::new("vidgen")?;
+        let clip = tmp.path().join("clip.mov");
+        std::fs::write(&clip, premade_video("mov", 3, 640, 360).unwrap()).map_err(io_err(&clip))?;
+        let loops = (secs / 3 - 1).to_string();
+        return run_ffmpeg(
+            ffmpeg,
+            &[
+                "-hide_banner".as_ref(), "-nostdin".as_ref(), "-loglevel".as_ref(), "error".as_ref(), "-y".as_ref(),
+                "-stream_loop".as_ref(), loops.as_ref(), "-i".as_ref(), clip.as_os_str(), "-c".as_ref(), "copy".as_ref(), path.as_os_str(),
+            ],
+        );
+    }
+    make_test_video_lavfi(ffmpeg, path, secs, w, h)
+}
+
+fn make_test_video_lavfi(ffmpeg: &Path, path: &Path, secs: u32, w: u32, h: u32) -> Result<()> {
     let v = format!("testsrc2=s={w}x{h}:r=30:d={secs}");
     let a = format!("sine=f=440:d={secs}");
     let t = secs.to_string();
