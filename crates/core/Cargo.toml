@@ -35,6 +35,9 @@ zip = { version = "9.1.3", default-features = false, features = ["deflate"] }
 # 0.3.0 W1: 앱에 든 도구 묶음(tar + zstd) 풀기
 tar = { version = "0.4", default-features = false }
 zstd = { version = "0.13", default-features = false }
+# 0.3.0 W6 한글: HWP 5 복합 파일(CFB, MIT) 읽기 + raw DEFLATE 풀기(flate2, MIT/Apache)
+cfb = "0.14"
+flate2 = "1.1"
 
 [target.'cfg(windows)'.dependencies]
 # 2a 검색: FindFirstFileExW, ReadDirectoryChangesW, 드라이브 종류

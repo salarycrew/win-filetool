@@ -54,10 +54,11 @@ pub enum DocFamily {
     Slides,
 }
 
-/// 확장자 → 문서 종류. `hwp`는 LibreOffice의 한글 97 가져오기 필터(오래된 HWP)만 해당한다.
+/// 확장자 → 문서 종류. 한글(`hwp`, `hwpx`)은 내용에 따라 바꿀 수 있는지가 달라 [`crate::hwp`]가 정한다
+/// (LibreOffice는 한글 97 이전만 읽고, 2002 이후 형식·HWPX는 설치된 한글로만 바꾼다).
 pub fn family(ext: &str) -> Option<DocFamily> {
     Some(match ext.to_ascii_lowercase().as_str() {
-        "docx" | "doc" | "odt" | "rtf" | "txt" | "pages" | "hwp" | "docm" | "dotx" | "fodt" | "wpd" => DocFamily::Text,
+        "docx" | "doc" | "odt" | "rtf" | "txt" | "pages" | "hwp" | "hwpx" | "docm" | "dotx" | "fodt" | "wpd" => DocFamily::Text,
         "xlsx" | "xls" | "ods" | "csv" | "numbers" | "xlsm" | "fods" => DocFamily::Sheet,
         "pptx" | "ppt" | "odp" | "key" | "pps" | "ppsx" | "fodp" => DocFamily::Slides,
         _ => return None,
@@ -69,7 +70,11 @@ pub fn family_of(p: &Path) -> Option<DocFamily> {
 }
 
 /// 이 파일에서 바꿀 수 있는 형식: 언제나 PDF, 그리고 같은 종류의 MS Office 형식(원본과 같은 확장자 제외).
+/// 한글은 내용(형식)과 한글 설치 여부에 따라 [`crate::hwp::doc_targets`]가 정한다(안 되면 빈 목록).
 pub fn allowed_targets(p: &Path) -> Vec<DocTarget> {
+    if crate::hwp::is_hwp_path(p) {
+        return crate::hwp::doc_targets(p);
+    }
     let Some(f) = family_of(p) else { return vec![] };
     let ext = p.extension().and_then(|e| e.to_str()).unwrap_or("").to_ascii_lowercase();
     let office = match f {
@@ -118,7 +123,7 @@ pub fn build_args(profile_dir: &Path, out_dir: &Path, input: &Path, target: DocT
     ]
 }
 
-fn move_into(from: &Path, to: &Path) -> Result<()> {
+pub(crate) fn move_into(from: &Path, to: &Path) -> Result<()> {
     if let Some(p) = to.parent() {
         std::fs::create_dir_all(p).map_err(io_err(p))?;
     }
@@ -192,12 +197,21 @@ pub fn acquire_profile(base: &Path, pool: usize, cancel: Option<&Cancel>, timeou
     }
 }
 
-/// 문서 한 개 변환.
+/// 문서 한 개 변환. 한글(`.hwp`, `.hwpx`)은 [`crate::hwp::convert`]로 보낸다(설치된 한글 또는 한글 97이면 LibreOffice).
 pub fn convert(soffice: &Path, input: &Path, out_dir: Option<&Path>, target: DocTarget, cancel: Option<&Cancel>, timeout: Duration) -> Result<PathBuf> {
+    if crate::hwp::is_hwp_path(input) {
+        return crate::hwp::convert(Some(soffice), input, out_dir, target, cancel, timeout);
+    }
+    convert_lo(soffice, input, out_dir, target, cancel, timeout)
+}
+
+/// LibreOffice로 한 개 변환(한글은 [`crate::hwp`]가 형식을 확인한 뒤에만 부른다).
+pub fn convert_lo(soffice: &Path, input: &Path, out_dir: Option<&Path>, target: DocTarget, cancel: Option<&Cancel>, timeout: Duration) -> Result<PathBuf> {
     if !input.is_file() {
         return Err(Error::Invalid(format!("파일이 없습니다: {}", input.display())));
     }
-    if !allowed_targets(input).contains(&target) {
+    let lo_ok = if crate::hwp::is_hwp_path(input) { matches!(target, DocTarget::Pdf | DocTarget::Docx) } else { allowed_targets(input).contains(&target) };
+    if !lo_ok {
         return Err(Error::Unsupported(format!("{} → {}", input.display(), target.ext())));
     }
     let job = JobDir::new("lo")?;

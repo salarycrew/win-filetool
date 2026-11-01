@@ -834,6 +834,13 @@ pub fn doc_to_pptx(input: &Path, out_dir: Option<&Path>, soffice: Option<&Path>,
     let job;
     let (docx, via) = if is_docx(input) {
         (input.to_path_buf(), false)
+    } else if crate::hwp::is_hwp_path(input) {
+        // 한글: 설치된 한글(또는 한글 97이면 LibreOffice)로 docx를 먼저 만든다. 안 되는 형식은 안내 오류(W6)
+        job = JobDir::new("w2p")?;
+        let made = crate::hwp::convert(soffice, input, Some(job.path()), DocTarget::Docx, cancel, docs::DOC_TIMEOUT.min(Duration::from_secs(300)))?;
+        // 설치된 한글로 만들었으면 LibreOffice를 거치지 않았다
+        let via_lo = crate::hwp::capabilities(input, soffice.is_some()).is_ok_and(|c| c.route == crate::hwp::Route::Libreoffice);
+        (made, via_lo)
     } else {
         let so = soffice.ok_or_else(|| Error::ToolMissing { tool: "LibreOffice".into(), hint: "Word(.docx)가 아닌 문서는 먼저 Word 형식으로 바꾼 뒤 슬라이드를 만듭니다".into() })?;
         job = JobDir::new("w2p")?;

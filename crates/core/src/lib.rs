@@ -16,6 +16,7 @@
 //! - 2a: [`search`]: 전체 파일 즉시 검색(색인·스캔·실시간 갱신·질의 언어)
 //! - 0.3.0 W4: [`imgedit`]: 사진 고치기(크기·자르기·돌리기·정보 지우기·용량 맞추기), [`mediaedit`]: 영상 자르기·소리 빼기·돌리기·화면 뽑기,
 //!   [`ziptool`]: zip 풀기(CP949 이름)·만들기, [`rename`]: 이름 한꺼번에 바꾸기, [`dupes`]: 같은 파일 찾기(휴지통으로만)
+//! - 0.3.0 W6 한글: [`hwp`]: 형식 알아보기·설치된 한글로 PDF/DOCX·그림 뽑기
 //! - 0.3.0 W1: [`bundle`]: 앱에 든 도구 묶음 풀기, [`portable`]: 휴대용 설정 위치, [`runtime`]: WebView2 확인, [`notices`]: 오픈소스 고지
 //!
 //! 원본은 절대 덮어쓰지 않는다. 출력 경로가 이미 있으면 [`paths::unique_path`]로
@@ -30,6 +31,7 @@ pub mod dupes;
 pub mod error;
 pub mod exif;
 pub mod heif;
+pub mod hwp;
 pub mod imageconv;
 pub mod imgedit;
 pub mod img2pdf;

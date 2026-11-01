@@ -698,7 +698,7 @@ function render() {
       }
       if (gs.length > 1) h += `<p class="grp-h">${esc(CLS_LABEL[g.cls](g.items.length))}</p>`;
       if (g.cls === "word") for (const it of g.items as HItem[]) {
-        if (it.hwp?.message && (!it.hwp.can_pdf || !it.hwp.can_pptx)) h += `<div class="note warn">${I("info")}<span><b>${esc(fileName(it.path))}</b> — ${esc(it.hwp.message)}</span></div>`;
+        if (it.hwp?.message) h += `<div class="note warn">${I("info")}<span><b>${esc(fileName(it.path))}</b> — ${esc(it.hwp.message)}</span></div>`;
       }
       if (g.cls === "pdf" && lockedN) h += `<div class="note warn">${I("lock")}<span>암호가 걸린 PDF가 ${lockedN}개 있어요. 할 일을 고르면 암호를 물어보거나, [암호 걸기·풀기]로 먼저 풀 수 있어요.</span></div>`;
       h += `<div class="cards" role="list">${g.actions.map((a) => {
