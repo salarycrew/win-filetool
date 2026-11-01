@@ -198,6 +198,7 @@ fn finish(src: &Path, out_dir: Option<&Path>, img: DynamicImage, exif: Option<Ve
 
 /// 일반 이미지 변환(HEIC 제외).
 pub fn convert_raster(src: &Path, out_dir: Option<&Path>, opts: &ImageOpts) -> Result<ImageOut> {
+    crate::error::ensure_nonempty(src)?;
     let bytes = std::fs::read(src).map_err(io_err(src))?;
     let (img, exif) = decode(&bytes, src)?;
     finish(src, out_dir, img, exif, opts)

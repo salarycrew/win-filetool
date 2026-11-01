@@ -4,8 +4,12 @@
 ;     지우려면 UAC 창이 한 번 뜬다([예] → 앱 폴더의 filetool-svc.exe uninstall을 관리자 권한으로).
 ;     [아니요]·조용히 제거(/S)일 때는 서비스가 남는다(서비스 실행 파일은 Program Files에 따로 있어 계속 동작) —
 ;     나중에 관리자 명령 프롬프트에서 "C:\Program Files\파일 도구 서비스\filetool-svc.exe" uninstall 로 지운다.
+; 0.3.0: 한글 변환용 보안 모듈 — 앱이 만든 DLL 폴더(%LOCALAPPDATA%\kr.salarycrew.winfiletool\hwp)와
+;        남아 있을 수 있는 HKCU 등록값(변환 중에만 두지만, 변환 중 강제 종료됐을 때 대비)을 지운다.
 !macro NSIS_HOOK_PREUNINSTALL
   DeleteRegValue HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "win-filetool"
+  DeleteRegValue HKCU "Software\HNC\HwpAutomation\Modules" "WinFileToolPathCheck"
+  RMDir /r "$LOCALAPPDATA\kr.salarycrew.winfiletool\hwp"
   ReadRegStr $0 HKLM "SYSTEM\CurrentControlSet\Services\FileToolSvc" "ImagePath"
   StrCmp $0 "" wft_svc_done
   IfSilent wft_svc_done

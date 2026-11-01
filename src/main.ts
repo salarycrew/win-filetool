@@ -2,7 +2,7 @@
 // 화면 모듈은 src/screens/*. 처음 쓰는 사람도 설명 없이 쓸 수 있게 짧은 존댓말로.
 import { invoke, listen } from "./api";
 import { I } from "./icons";
-import { $, $$, el, esc } from "./ui";
+import { $, $$, el, esc, installTips } from "./ui";
 import { Screen, ScreenId, setGo } from "./router";
 import { applyTheme, initTheme } from "./theme";
 import { convertScreen } from "./screens/convert";
@@ -24,7 +24,7 @@ let current: Screen | null = null;
 const inited = new Set<ScreenId>();
 
 function navBtn(s: Screen) {
-  return `<button type="button" class="nav-i" data-id="${s.id}" title="${esc(s.title)}">${I(s.icon)}<span>${esc(s.title)}</span></button>`;
+  return `<button type="button" class="nav-i" data-id="${s.id}" aria-label="${esc(s.title)}" title="${esc(s.title)}">${I(s.icon)}<span>${esc(s.title)}</span></button>`;
 }
 nav.innerHTML = `${MAIN.map(navBtn).join("")}<div class="sp"></div>${BOTTOM.map(navBtn).join("")}`;
 nav.addEventListener("click", (e) => {
@@ -65,6 +65,7 @@ function go(id: ScreenId, arg?: unknown, remember = true) {
   if (remember) invoke("ui_set", { patch: { tab: s.id } }).catch(() => {});
 }
 setGo((id, arg) => go(id, arg));
+installTips();
 
 // ---------- 끌어다 놓기: 보이는 화면으로 ----------
 

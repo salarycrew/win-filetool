@@ -121,6 +121,11 @@ export function friendly(e: unknown): Friendly {
   if (code === "password_required" || /암호가 걸린|암호.*(필요|있어)|encrypted|password/i.test(m))
     return f("locked", "lock", "암호가 걸린 PDF예요", "암호를 알고 있으면 [PDF 편집]에서 열거나 [암호 걸기·풀기]로 먼저 풀어 주세요. 여러 개를 넣었을 때는 이 파일만 건너뛰어요.");
   if (code === "wrong_password") return f("locked", "lock", "암호가 맞지 않아요", "대문자·소문자와 한/영 상태를 확인하고 다시 넣어 주세요.");
+  // 0.3.0 QA-05: 빈 파일 · 저장할 권한 없는 폴더는 "잠시 뒤 다시"가 아니라 할 일을 알려 준다
+  if (code === "empty_file" || /빈 파일입니다|0바이트|file is empty|empty file/i.test(m))
+    return f("damaged", "warn", "빈 파일이에요", "이 파일은 크기가 0바이트라 안에 내용이 없어요. 받기·복사가 덜 끝났을 수 있어요. 원래 파일을 다시 받거나 다시 복사해서 넣어 주세요.");
+  if (code === "permission_denied" || /액세스가 거부|access is denied|permission denied|os error 5\b|권한이 없/i.test(m))
+    return f("other", "shield", "이 폴더에 저장할 수 없어요", "이 폴더에는 새 파일을 만들 권한이 없어요(읽기 전용·회사 PC 보호 폴더 등). 저장 위치를 바탕 화면이나 문서 폴더처럼 다른 곳으로 바꿔(할 일 설정 아래 저장 위치 줄의 [바꾸기]) 다시 해 주세요.");
   if (/찾지 못했습니다|없습니다.*(ffmpeg|LibreOffice|soffice)|not found.*(ffmpeg|soffice)/i.test(m) && /(ffmpeg|LibreOffice|soffice|PDFium|도구)/i.test(m))
     return f("missing-tool", "tool", "변환 도구를 쓸 수 없어요", "앱에 든 도구를 준비하지 못했어요. 앱을 다시 켜 보고, 그래도 안 되면 [설정] > 고급 > 변환 도구를 확인해 주세요.");
   if (/도구를 준비하지 못했습니다|디스크 공간/.test(m)) return f("space", "warn", "도구를 준비하지 못했어요", "디스크 공간(약 0.5GB)과 폴더 권한을 확인한 뒤 다시 해 주세요.");

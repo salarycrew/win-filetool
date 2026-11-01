@@ -20,10 +20,16 @@ export function seg(name: string, items: [string, string][], value: string, labe
     .map(([v, t]) => `<button type="button" role="radio" aria-checked="${v === value}" class="${v === value ? "on" : ""}" data-v="${esc(v)}">${esc(t)}</button>`)
     .join("")}</div>`;
 }
+/** 분할 단추 값을 코드로 바꾸기(보이는 선택·aria-checked 함께) */
+export function setSeg(root: ParentNode, name: string, v: string) {
+  $$<HTMLButtonElement>(`[data-seg="${name}"] > button`, root).forEach((x) => { x.classList.toggle("on", x.dataset.v === v); x.setAttribute("aria-checked", String(x.dataset.v === v)); });
+}
 export function segVal(root: ParentNode, name: string): string {
   return $(`[data-seg="${name}"] button.on`, root)?.dataset.v ?? "";
 }
-/** 분할 단추 누름 처리(한 번만 걸면 됨) */
+/** 분할 단추 누름 처리(한 번만 걸면 됨).
+ * 캡처 단계에서 선택을 바꾼다: 안쪽 요소(도구 설정 판 등)에 건 click 처리기가 segVal()을 읽을 때
+ * 이미 새 값이 보이게(0.3.0 QA-02 — 한 번 늦게 적용되던 문제). */
 export function bindSegs(root: HTMLElement, onChange?: (name: string, v: string) => void) {
   root.addEventListener("click", (e) => {
     const b = (e.target as HTMLElement).closest<HTMLButtonElement>("[data-seg] > button");
@@ -31,7 +37,7 @@ export function bindSegs(root: HTMLElement, onChange?: (name: string, v: string)
     const g = b.parentElement!;
     $$("button", g).forEach((x) => { x.classList.toggle("on", x === b); x.setAttribute("aria-checked", String(x === b)); });
     onChange?.(g.dataset.seg!, b.dataset.v!);
-  });
+  }, true);
   root.addEventListener("keydown", (e) => {
     const b = (e.target as HTMLElement).closest<HTMLButtonElement>("[data-seg] > button");
     if (!b || (e.key !== "ArrowLeft" && e.key !== "ArrowRight")) return;
@@ -54,6 +60,74 @@ export function opt(label: string, control: string, help = ""): string {
 }
 export const checked = (root: ParentNode, id: string) => ($<HTMLInputElement>(`#${id}`, root)?.checked ?? false);
 export const value = (root: ParentNode, id: string) => ($<HTMLInputElement>(`#${id}`, root)?.value.trim() ?? "");
+
+// ---------- 말풍선(아이콘만 보이는 단추의 이름) ----------
+
+/** 글자가 숨은 단추(아이콘만 보이는 도구 막대·좁은 창 메뉴·탭)에 마우스를 올리거나 키보드로 오면 이름을 보여 준다.
+ * title은 data-tip으로 옮겨 Windows 기본 말풍선과 겹치지 않게 하고, 화면 읽기용 이름(aria-label)은 남긴다. */
+export function installTips() {
+  const tip = document.createElement("div");
+  tip.className = "tip";
+  tip.id = "ft-tip";
+  tip.setAttribute("role", "tooltip");
+  tip.hidden = true;
+  document.body.appendChild(tip);
+  let cur: HTMLElement | null = null;
+  let timer = 0;
+  const SEL = "button, [role=tab], [role=button], a[href], [data-tip]";
+  const textOf = (t: HTMLElement): string => {
+    if (t.title) {
+      if (!t.dataset.tip) t.dataset.tip = t.title;
+      if (!t.getAttribute("aria-label") && !(t.innerText || "").trim()) t.setAttribute("aria-label", t.title);
+      t.removeAttribute("title");
+    }
+    const label = t.dataset.tip || t.getAttribute("aria-label") || "";
+    const shown = (t.innerText || "").replace(/\s+/g, " ").trim();
+    // 이름이 이미 다 보이면 말풍선 없음
+    return label && label !== shown ? label : "";
+  };
+  const hide = () => { window.clearTimeout(timer); if (cur) cur.removeAttribute("aria-describedby"); cur = null; tip.hidden = true; };
+  const show = (t: HTMLElement) => {
+    const text = textOf(t);
+    if (!text || (t as HTMLButtonElement).disabled && !t.matches(":hover")) { hide(); return; }
+    cur = t;
+    tip.textContent = text;
+    tip.hidden = false;
+    if (t.getAttribute("aria-label") !== text) t.setAttribute("aria-describedby", tip.id);
+    const r = t.getBoundingClientRect(), w = tip.offsetWidth, h = tip.offsetHeight;
+    const nav = !!t.closest(".nav");
+    let x = nav ? r.right + 6 : r.left + r.width / 2 - w / 2;
+    let y = nav ? r.top + r.height / 2 - h / 2 : r.bottom + 6;
+    if (!nav && y + h > window.innerHeight - 4) y = r.top - h - 6;
+    x = Math.max(4, Math.min(x, window.innerWidth - w - 4));
+    y = Math.max(4, y);
+    tip.style.left = `${Math.round(x)}px`;
+    tip.style.top = `${Math.round(y)}px`;
+  };
+  document.addEventListener("pointerover", (e) => {
+    const t = (e.target as HTMLElement).closest<HTMLElement>(SEL);
+    if (t === cur) return;
+    hide();
+    if (!t) return;
+    textOf(t); // title을 먼저 옮겨 기본 말풍선이 뜨지 않게
+    timer = window.setTimeout(() => show(t), 350);
+  });
+  document.addEventListener("pointerout", (e) => {
+    const to = (e as PointerEvent).relatedTarget as HTMLElement | null;
+    if (cur && to && cur.contains(to)) return;
+    if (!to || !to.closest(SEL)) hide();
+  });
+  document.addEventListener("focusin", (e) => {
+    const t = (e.target as HTMLElement).closest<HTMLElement>(SEL);
+    hide();
+    if (t && t.matches(":focus-visible")) show(t);
+  });
+  document.addEventListener("focusout", hide);
+  document.addEventListener("pointerdown", hide, true);
+  document.addEventListener("keydown", (e) => { if (e.key === "Escape") hide(); });
+  window.addEventListener("scroll", hide, true);
+  window.addEventListener("resize", hide);
+}
 
 // ---------- 알림 ----------
 

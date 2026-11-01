@@ -34,6 +34,8 @@ impl From<Error> for CmdError {
             Error::PasswordRequired(_) => "password_required",
             Error::WrongPassword(_) => "wrong_password",
             Error::Cancelled => "cancelled",
+            Error::EmptyFile(_) => "empty_file",
+            Error::Io { source, .. } if source.kind() == std::io::ErrorKind::PermissionDenied => "permission_denied",
             _ => "error",
         };
         CmdError { code, message: e.to_string() }
@@ -272,13 +274,14 @@ pub async fn pdf_form_fill(
     job: u64,
     path: String,
     password: Option<String>,
-    values: BTreeMap<String, String>,
+    values: BTreeMap<String, forms::FormValue>,
     flatten: bool,
     out_dir: Option<String>,
 ) -> R<EditOut> {
     let d = dir(&out_dir);
     job_work(app, &state, job, move |j| {
         let p = PathBuf::from(&path);
+        let values = forms::text_values(values);
         forms::fill(&p, pw(&password), &values, flatten, &default_output(&p, d.as_deref(), "_양식채움"), j)
     })
     .await

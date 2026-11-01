@@ -636,6 +636,12 @@ struct SvcPanel {
     view: ServiceView,
     install_cmd: Option<String>,
     uninstall_cmd: Option<String>,
+    /// 앱에 든 서비스 버전
+    bundled_version: &'static str,
+    /// 설치된 서비스 버전(서비스가 답할 때만)
+    installed_version: Option<String>,
+    /// 설치된 서비스가 앱에 든 것과 다름 → [다시 설치(갱신)]
+    update_available: bool,
 }
 
 #[tauri::command]
@@ -643,7 +649,12 @@ async fn svc_view(state: State<'_, AppState>) -> CmdResult<SvcPanel> {
     let remote = state.remote.clone();
     tauri::async_runtime::spawn_blocking(move || {
         let fmt = |c: Option<(PathBuf, String)>| c.map(|(e, a)| format!("\"{}\" {a}", e.display()));
-        SvcPanel { view: remote.view(svc_exe().map(|p| p.display().to_string())), install_cmd: fmt(svc_command(true)), uninstall_cmd: fmt(svc_command(false)) }
+        let exe = svc_exe();
+        let view = remote.view(exe.as_ref().map(|p| p.display().to_string()));
+        let installed_version = remote.status().and_then(|(st, _)| filetool_core::search::svcpipe::server_version(&st.server));
+        let bundled_version = env!("CARGO_PKG_VERSION");
+        let update_available = filetool_core::search::svcpipe::needs_update(&view.info, installed_version.as_deref(), exe.as_deref(), bundled_version);
+        SvcPanel { view, install_cmd: fmt(svc_command(true)), uninstall_cmd: fmt(svc_command(false)), bundled_version, installed_version, update_available }
     })
     .await
     .map_err(|e| e.to_string())

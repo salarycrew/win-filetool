@@ -96,6 +96,7 @@ pub fn convert_file(
     cancel: Option<&Cancel>,
     progress: &mut dyn FnMut(f64),
 ) -> Result<ConvertOut> {
+    crate::error::ensure_nonempty(input)?;
     if let Some(c) = cancel {
         c.check()?;
     }

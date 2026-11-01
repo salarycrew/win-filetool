@@ -347,6 +347,11 @@ fn prep_err(p: &Path, e: std::io::Error) -> Error {
 
 static CURRENT: OnceLock<Option<Bundle>> = OnceLock::new();
 
+/// 휴대용 exe 이름(소문자): 0.3.0 배포 이름 `win-filetool-<판>-portable.exe`, 개발판 `파일도구_<판>_portable.exe`, `win-filetool.exe`
+pub fn is_portable_name(lower: &str) -> bool {
+    lower.ends_with("-portable.exe") || lower.ends_with("_portable.exe") || lower == "win-filetool.exe"
+}
+
 /// 묶음을 찾을 파일 후보: `WIN_FILETOOL_BUNDLE` → 실행 중인 exe(휴대용 exe) → exe 옆 `tools.pack`(설치본) → exe 옆 휴대용 exe들(CLI용)
 pub fn candidates() -> Vec<PathBuf> {
     let mut v = Vec::new();
@@ -363,7 +368,7 @@ pub fn candidates() -> Vec<PathBuf> {
                         .map(|e| e.path())
                         .filter(|p| {
                             let n = p.file_name().map(|n| n.to_string_lossy().to_lowercase()).unwrap_or_default();
-                            n.ends_with("_portable.exe") || n == "win-filetool.exe"
+                            is_portable_name(&n)
                         })
                         .filter(|p| *p != exe)
                         .collect()
@@ -428,6 +433,16 @@ pub fn status() -> BundleStatus {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn portable_names_for_cli() {
+        // CLI가 옆에 둔 휴대용 exe에서 도구를 찾을 때(0.3.0 배포 이름은 ASCII)
+        assert!(super::is_portable_name("win-filetool-0.3.0-portable.exe"));
+        assert!(super::is_portable_name("파일도구_0.3.0-dev_portable.exe"));
+        assert!(super::is_portable_name("win-filetool.exe"));
+        assert!(!super::is_portable_name("win-filetool-0.3.0-setup.exe"));
+        assert!(!super::is_portable_name("filetool-cli.exe"));
+    }
+
     use super::*;
 
     fn tar_zst(files: &[(&str, &[u8])]) -> Vec<u8> {

@@ -21,6 +21,7 @@ fn pdf_err(path: &Path) -> impl Fn(lopdf::Error) -> Error + '_ {
 }
 
 pub fn load(path: &Path) -> Result<Document> {
+    crate::error::ensure_nonempty(path)?;
     let doc = Document::load(path).map_err(pdf_err(path))?;
     if doc.is_encrypted() {
         return Err(Error::Pdf {

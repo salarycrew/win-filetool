@@ -72,7 +72,7 @@ h2.h2.inline { margin: 0; }
 .row.center { justify-content: center; }
 
 /* 좁은 창: 메뉴를 아이콘만(Win11 접힌 메뉴) */
-@media (max-width: 860px) {
+@media (max-width: 779.98px) {
   .nav { width: 52px; padding: 8px 4px; }
   .nav-app span, .nav-i span { display: none; }
   .nav-app { padding: 0 14px; }
@@ -422,7 +422,9 @@ textarea.ex.big { height: 360px; margin-top: 8px; }
 .pe-main { margin-top: 12px; }
 .pe-bar { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; padding: 6px; background: var(--card); border: 1px solid var(--stroke); border-radius: var(--r-lg); box-shadow: var(--shadow); position: sticky; top: -24px; z-index: 5; }
 .pe-bar .sep { width: 1px; height: 22px; background: var(--stroke); margin: 0 4px; }
-@container (max-width: 700px) { .pe-bar .btn:not(.accent) span { display: none; } .pe-bar .btn { padding: 0 8px; } }
+@container (max-width: 779.98px) { .pe-bar .btn:not(.accent) span { display: none; } .pe-bar .btn { padding: 0 8px; } }
+/* 돌리기·되돌리기 글자는 자리가 넉넉할 때만(아이콘만일 때는 말풍선). 창 약 1260px부터 */
+@container (max-width: 959.98px) { .pe-bar .btn .lw { display: none; } }
 .pe-status { display: flex; justify-content: space-between; gap: 8px; margin: 10px 2px 8px; font-size: 13px; color: var(--text-2); flex-wrap: wrap; }
 .pgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(132px, 1fr)); gap: 12px; padding: 4px; user-select: none; }
 .pcell { position: relative; display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 8px 8px 6px; border-radius: var(--r-lg); border: 1px solid transparent; cursor: pointer; transition: background var(--dur), border-color var(--dur); touch-action: none; }
@@ -498,6 +500,8 @@ textarea.ex.big { height: 360px; margin-top: 8px; }
 .trim-times { display: flex; gap: 12px; align-items: flex-end; flex-wrap: wrap; margin-top: 8px; }
 .zip-peek { margin-top: 4px; }
 
+/* 말풍선: 아이콘만 보이는 단추의 이름 */
+.tip { position: fixed; z-index: 1000; max-width: 280px; padding: 5px 9px; border-radius: var(--r-sm); background: var(--card); color: var(--text); border: 1px solid var(--stroke); box-shadow: var(--shadow); font-size: 12px; line-height: 1.4; pointer-events: none; white-space: normal; }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { transition: none !important; animation: none !important; } }
 @media (forced-colors: active) { .card.on, .pcell.sel { outline: 2px solid Highlight; } }
 

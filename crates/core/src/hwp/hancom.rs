@@ -272,8 +272,36 @@ mod win {
         crate::bundle::local_app_dir().join("hwp")
     }
 
-    /// 보안 모듈 DLL을 쓰고(내용별 이름이라 쓰는 중인 파일을 덮지 않음) HKCU에 등록
-    fn ensure_module() -> Result<PathBuf> {
+    /// 변환하는 동안만 HKCU에 보안 모듈을 등록해 둔다. 끝나면(성공·실패·취소 모두) 값을 지운다(0.3.0 출시 전 수정).
+    /// 값 이름은 이 앱 전용이라 지워도 다른 프로그램에 영향이 없다. 키(`…\Modules`)는 다른 프로그램도 쓰므로 남긴다.
+    struct ModuleReg;
+
+    impl Drop for ModuleReg {
+        fn drop(&mut self) {
+            remove_module_value();
+        }
+    }
+
+    /// 앱이 남긴 등록값 지우기(없으면 아무것도 안 함)
+    pub fn remove_module_value() {
+        use winreg::enums::*;
+        use winreg::RegKey;
+        if let Ok(k) = RegKey::predef(HKEY_CURRENT_USER).open_subkey_with_flags(MODULE_KEY, KEY_READ | KEY_SET_VALUE) {
+            if k.get_raw_value(MODULE_NAME).is_ok() {
+                let _ = k.delete_value(MODULE_NAME);
+            }
+        }
+    }
+
+    /// 등록돼 있는지(시험·점검용)
+    pub fn module_registered() -> bool {
+        use winreg::enums::*;
+        use winreg::RegKey;
+        RegKey::predef(HKEY_CURRENT_USER).open_subkey(MODULE_KEY).and_then(|k| k.get_raw_value(MODULE_NAME)).is_ok()
+    }
+
+    /// 보안 모듈 DLL을 쓰고(내용별 이름이라 쓰는 중인 파일을 덮지 않음) HKCU에 등록. 돌려준 값을 버리면 등록을 지운다.
+    fn ensure_module() -> Result<(PathBuf, ModuleReg)> {
         use winreg::enums::*;
         use winreg::RegKey;
         let bytes = path_check_dll();
@@ -291,7 +319,7 @@ mod win {
         if k.get_value::<String, _>(MODULE_NAME).ok().as_deref() != Some(want.as_str()) {
             k.set_value(MODULE_NAME, &want).map_err(|e| Error::Tool { tool: "한글".into(), message: format!("보안 모듈을 등록하지 못했어요: {e}") })?;
         }
-        Ok(dll)
+        Ok((dll, ModuleReg))
     }
 
     /// 지금 떠 있는 Hwp.exe 프로세스 번호
@@ -339,7 +367,8 @@ mod win {
     pub fn convert(inst: &Install, input: &Path, out_dir: Option<&Path>, target: DocTarget, cancel: Option<&Cancel>, timeout: Duration) -> Result<HancomOut> {
         let t0 = Instant::now();
         let _lock = lock(cancel, timeout)?;
-        ensure_module()?;
+        // 잠금보다 먼저 풀리도록 뒤에 선언(변환이 끝나면 등록값을 지운 다음 잠금을 놓음)
+        let (_dll, _reg) = ensure_module()?;
         let job = JobDir::new("hwp")?;
         let ext = input.extension().and_then(|e| e.to_str()).unwrap_or("hwp").to_ascii_lowercase();
         let tmp_in = job.path().join(format!("in.{ext}"));
@@ -390,7 +419,7 @@ mod win {
 }
 
 #[cfg(windows)]
-pub use win::hwp_pids;
+pub use win::{hwp_pids, module_registered, remove_module_value};
 
 /// 설치된 한글로 PDF(`target` Pdf) 또는 DOCX를 만든다. 결과는 `이름.pdf`/`이름.docx`(겹치면 ` (1)`).
 pub fn convert(input: &Path, out_dir: Option<&Path>, target: DocTarget, cancel: Option<&Cancel>, timeout: Duration) -> Result<HancomOut> {

@@ -6,7 +6,7 @@ use std::collections::{BTreeMap, HashMap};
 use std::path::Path;
 
 use lopdf::{dictionary, Dictionary, Document, Object, ObjectId, Stream};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use super::font::PdfFont;
 use super::{add_content, add_resource, cm, f, mat_bbox, open, page_ids, rect, resolve, EditOut, Job, IDENTITY};
@@ -214,6 +214,32 @@ fn parse_da(da: &str) -> (f32, [f32; 3]) {
         }
     }
     (size, color)
+}
+
+/// 화면(JSON)에서 오는 칸 값. 글자 칸·선택 칸은 문자열, 체크 상자는 `true`/`false`로 와도 받는다(0.3.0 QA-01).
+#[derive(Debug, Clone, Deserialize, PartialEq)]
+#[serde(untagged)]
+pub enum FormValue {
+    Text(String),
+    Flag(bool),
+    Number(f64),
+}
+
+impl FormValue {
+    pub fn into_text(self) -> String {
+        match self {
+            FormValue::Text(s) => s,
+            FormValue::Flag(b) => if b { "true" } else { "false" }.into(),
+            FormValue::Number(n) => {
+                if n.fract() == 0.0 && n.abs() < 1e15 { format!("{}", n as i64) } else { n.to_string() }
+            }
+        }
+    }
+}
+
+/// 화면에서 받은 값 묶음을 [`fill`]이 쓰는 문자열 묶음으로.
+pub fn text_values(values: BTreeMap<String, FormValue>) -> BTreeMap<String, String> {
+    values.into_iter().map(|(k, v)| (k, v.into_text())).collect()
 }
 
 fn truthy(v: &str) -> bool {

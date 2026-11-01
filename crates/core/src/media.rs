@@ -248,6 +248,7 @@ pub fn convert(
     if !input.is_file() {
         return Err(Error::Invalid(format!("파일이 없습니다: {}", input.display())));
     }
+    crate::error::ensure_nonempty(input)?;
     let duration = ffprobe.and_then(|p| probe_duration(p, input));
     let total = match preset {
         MediaPreset::Gif { duration: d, .. } => Some(duration.map(|x| x.min(*d)).unwrap_or(*d)),

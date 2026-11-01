@@ -177,6 +177,24 @@ mod tests {
     fn crc32_known_value() {
         assert_eq!(super::crc32(b"123456789"), 0xCBF4_3926);
     }
+
+    /// 0.3.0: HEIC 샘플은 x265 없는 ffmpeg(또는 ffmpeg 없음)에서도 만들어진다(미리 만든 타일)
+    #[test]
+    fn grid_heic_without_x265() {
+        let t = tempfile::tempdir().unwrap();
+        for tile in [64u32, 256, 512] {
+            let tiles = super::premade_tiles(tile).unwrap();
+            assert_eq!(tiles.len(), 4);
+            assert!(tiles.iter().all(|x| x.starts_with(&[0, 0, 0, 1]) && x.len() < 400));
+            let p = t.path().join(format!("g{tile}.heic"));
+            super::make_grid_heic(std::path::Path::new("ffmpeg-없음.exe"), &p, tile, (tile * 2 - 24) as u16, (tile * 2 - 50) as u16, "2023:08:15 14:03:22").unwrap();
+            let b = std::fs::read(&p).unwrap();
+            assert!(crate::heif::is_heif(&b));
+            assert!(crate::heif::HeifInfo::parse(&b).is_some());
+            assert!(crate::heif::extract_exif(&b).is_some());
+        }
+        assert!(super::premade_tiles(100).is_none());
+    }
 }
 
 // ---------- 1b: 변환 점검용 샘플 ----------
@@ -239,13 +257,44 @@ fn run_ffmpeg(ffmpeg: &Path, args: &[&std::ffi::OsStr]) -> Result<()> {
 
 /// 아이폰식 grid HEIC: 2×2 타일(각 `tile`px, 색: 빨강/초록/파랑/흰색), 출력 크기는 타일 합보다
 /// 작게 잘라(`out_w`×`out_h`) grid 자르기도 확인하고, `irot`=1(반시계 90°)과 EXIF(날짜, 회전 6)를 넣는다.
-/// 타일은 ffmpeg(libx265)로 인코딩한다.
+/// 타일은 미리 만들어 둔 단색 HEVC(64·256·512px, `samples_heic/`)를 쓴다 — 앱에 든 LGPL ffmpeg에는 x265 인코더가 없어서
+/// (0.3.0). 그 밖의 크기만 ffmpeg(libx265)로 인코딩한다.
 pub fn make_grid_heic(ffmpeg: &Path, path: &Path, tile: u32, out_w: u16, out_h: u16, date: &str) -> Result<()> {
     make_grid_heic_exif(ffmpeg, path, tile, out_w, out_h, crate::exif::build_sample(date, 6))
 }
 
 /// 0.3.0 W4: [`make_grid_heic`]과 같되 EXIF 블록을 직접 준다(예: GPS가 든 [`crate::exif::build_sample_gps`]).
 pub fn make_grid_heic_exif(ffmpeg: &Path, path: &Path, tile: u32, out_w: u16, out_h: u16, exif: Vec<u8>) -> Result<()> {
+    let tiles = match premade_tiles(tile) {
+        Some(t) => t,
+        None => encode_tiles(ffmpeg, tile)?,
+    };
+    let bytes = crate::heif::build_grid_heic(&tiles, tile, tile, 2, 2, out_w, out_h, 1, Some(&exif))
+        .ok_or_else(|| Error::Invalid("HEIC 샘플을 만들지 못했습니다(HEVC 타일 해석 실패)".into()))?;
+    std::fs::write(path, bytes).map_err(io_err(path))
+}
+
+/// 미리 만든 단색 HEVC 타일(빨강·초록·파랑·흰색, Annex B, SEI 뺌). 만든 법은 `samples_heic/README.md`.
+pub fn premade_tiles(tile: u32) -> Option<Vec<Vec<u8>>> {
+    macro_rules! t {
+        ($s:literal) => {
+            [
+                include_bytes!(concat!("samples_heic/t", $s, "-0.hevc")).to_vec(),
+                include_bytes!(concat!("samples_heic/t", $s, "-1.hevc")).to_vec(),
+                include_bytes!(concat!("samples_heic/t", $s, "-2.hevc")).to_vec(),
+                include_bytes!(concat!("samples_heic/t", $s, "-3.hevc")).to_vec(),
+            ]
+        };
+    }
+    Some(match tile {
+        64 => t!("64").to_vec(),
+        256 => t!("256").to_vec(),
+        512 => t!("512").to_vec(),
+        _ => return None,
+    })
+}
+
+fn encode_tiles(ffmpeg: &Path, tile: u32) -> Result<Vec<Vec<u8>>> {
     let tmp = crate::tempdir::JobDir::new("heicgen")?;
     let mut tiles = Vec::new();
     for (i, color) in ["red", "lime", "blue", "white"].iter().enumerate() {
@@ -262,9 +311,7 @@ pub fn make_grid_heic_exif(ffmpeg: &Path, path: &Path, tile: u32, out_w: u16, ou
         )?;
         tiles.push(std::fs::read(&f).map_err(io_err(&f))?);
     }
-    let bytes = crate::heif::build_grid_heic(&tiles, tile, tile, 2, 2, out_w, out_h, 1, Some(&exif))
-        .ok_or_else(|| Error::Invalid("HEIC 샘플을 만들지 못했습니다(HEVC 타일 해석 실패)".into()))?;
-    std::fs::write(path, bytes).map_err(io_err(path))
+    Ok(tiles)
 }
 
 /// 소리가 있는 짧은 시험 영상(testsrc2 + 440Hz). 확장자에 맞는 형식으로 저장(.mov 등).

@@ -123,9 +123,9 @@ pub fn run(dir: &Path, args: &[String]) -> Result<ExitCode> {
         Some(ff) => {
             let heic = dir.join("IMG_0001.HEIC");
             match samples::make_grid_heic(ff, &heic, 512, 1000, 700, "2023:08:15 14:03:22") {
-                Err(e) => c.check("HEIC 샘플 만들기(libx265 타일 2×2 grid)", false, e.to_string()),
+                Err(e) => c.check("HEIC 샘플 만들기(미리 만든 HEVC 타일 2×2 grid)", false, e.to_string()),
                 Ok(()) => {
-                    c.check("HEIC 샘플 만들기(libx265 타일 2×2 grid)", true, format!("{} bytes, 타일 512px, grid 1000×700, irot 90°, EXIF 회전 6", std::fs::metadata(&heic).map(|m| m.len()).unwrap_or(0)));
+                    c.check("HEIC 샘플 만들기(미리 만든 HEVC 타일 2×2 grid)", true, format!("{} bytes, 타일 512px, grid 1000×700, irot 90°, EXIF 회전 6", std::fs::metadata(&heic).map(|m| m.len()).unwrap_or(0)));
                     c.result("HEIC → JPG (grid 합치기·회전·EXIF 날짜)", convert::convert_file(&ts, &heic, None, &Op::Image(img(ImgFormat::Jpg)), None, &mut |_| {}), |o| {
                         let im = image::open(&o.output).ok();
                         let dims = im.as_ref().map(|i| (i.width(), i.height()));
@@ -205,7 +205,7 @@ pub fn run(dir: &Path, args: &[String]) -> Result<ExitCode> {
 
     // 4) 문서
     match ts.get(Tool::Soffice).ok() {
-        None => c.skip("문서", "LibreOffice 없음 — 문서 변환 desktop 미확인"),
+        None => c.skip("문서", "LibreOffice 없음 — 문서 변환은 Windows에서 확인"),
         Some(_) => docs_checks(&mut c, &ts, dir, f.get("--apple").map(PathBuf::from))?,
     }
 

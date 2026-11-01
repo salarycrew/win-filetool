@@ -36,6 +36,17 @@ pub enum Error {
     PasswordRequired(PathBuf),
     #[error("암호가 맞지 않습니다. 다시 넣어 주세요 ({})", .0.display())]
     WrongPassword(PathBuf),
+    /// 0.3.0 QA-05: 0바이트 파일(잠시 뒤 다시 해도 소용없으니 따로 안내)
+    #[error("빈 파일입니다(0바이트, 내용 없음): {}", .0.display())]
+    EmptyFile(PathBuf),
+}
+
+/// 입력이 0바이트 파일이면 [`Error::EmptyFile`]. 없거나 폴더면 통과(다른 곳에서 안내).
+pub fn ensure_nonempty(path: &std::path::Path) -> Result<()> {
+    match std::fs::metadata(path) {
+        Ok(m) if m.is_file() && m.len() == 0 => Err(Error::EmptyFile(path.to_path_buf())),
+        _ => Ok(()),
+    }
 }
 
 pub type Result<T> = std::result::Result<T, Error>;

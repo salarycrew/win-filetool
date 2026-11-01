@@ -9,7 +9,7 @@ import { go } from "../router";
 
 interface AutostartStatus { enabled: boolean; value: string | null; matches_exe: boolean; supported: boolean }
 interface ServiceInfo { installed: boolean; state: string; running: boolean; start_type: string; account: string }
-interface SvcPanel { info: ServiceInfo; connected: boolean; entries: number; ready: boolean; roots: string[]; visibility: string; error: string | null; exe: string | null; install_cmd: string | null; uninstall_cmd: string | null }
+interface SvcPanel { info: ServiceInfo; connected: boolean; entries: number; ready: boolean; roots: string[]; visibility: string; error: string | null; exe: string | null; install_cmd: string | null; uninstall_cmd: string | null; bundled_version: string; installed_version: string | null; update_available: boolean }
 interface SearchSettings { roots: string[]; excludes: string[]; hotkey_enabled: boolean; hotkey: string }
 interface RootStatus { path: string; scanning: boolean; source: string; last_scan: number; stats: { dirs: number; files: number } }
 interface SearchView { status: { entries: number; roots: RootStatus[]; index_file: string; index_bytes: number }; settings: SearchSettings; effective_roots: string[] }
@@ -31,7 +31,7 @@ function render() {
       ${seg("theme", [["system", "시스템"], ["light", "밝게"], ["dark", "어둡게"]], themePref(), "테마")}</div>
     <div class="sc"><span class="sc-ic">${I("power")}</span><div class="sc-t"><b>윈도우 시작 시 실행</b><span class="as-state">확인하는 중…</span></div>${toggle("autostart", false, "")}</div>
     <div class="sc svc"><span class="sc-ic">${I("bolt")}</span><div class="sc-t"><b>빠른 검색 서비스</b><span class="svc-state">확인하는 중…</span></div>
-      <span class="state off svc-chip"><i></i>…</span><button type="button" class="btn svc-btn" disabled>…</button></div>
+      <span class="state off svc-chip"><i></i>…</span><button type="button" class="btn accent svc-up" data-svc="update" aria-label="빠른 검색 서비스 다시 설치(갱신)" title="빠른 검색 서비스 다시 설치(갱신)" hidden>${I("refresh")}다시 설치(갱신)</button><button type="button" class="btn svc-btn" disabled>…</button></div>
     <div class="sc"><span class="sc-ic">${I("keyboard")}</span><div class="sc-t"><b>단축키로 검색 열기</b><span>어디서든 눌러 검색 창을 띄워요. 칸을 누르고 쓸 단축키를 누르세요</span></div>
       <input class="txt sm hk" id="hk" placeholder="예: Ctrl+Alt+F" aria-label="단축키" readonly>${toggle("hk-on", false, "")}</div>
     <div class="adv ${advOpen ? "open" : ""}"><button type="button" class="adv-h" aria-expanded="${advOpen}" data-act="adv">${I("tool")}<span class="sc-t"><b>고급</b><span>검색할 곳·제외할 폴더·변환 도구·서비스 명령</span></span>${I("down", "chev")}</button>
@@ -41,7 +41,8 @@ function render() {
         <div class="ar col"><div class="sc-t"><b>제외할 폴더</b><span>한 줄에 하나씩. 이 폴더 안은 찾지 않아요</span></div><textarea class="ex" id="excludes" spellcheck="false"></textarea>
           <div class="row"><button type="button" class="btn" data-act="save-ex">제외 목록 저장</button><span class="hint s-state" aria-live="polite"></span></div></div>
         <div class="ar col"><div class="sc-t"><b>변환 도구</b><span>영상(ffmpeg)·문서(LibreOffice)·PDF(PDFium) 도구는 앱에 들어 있어요</span></div><div class="tools-l hint">확인하는 중…</div></div>
-        <div class="ar col"><div class="sc-t"><b>빠른 검색 서비스 자세히</b><span>문제를 알릴 때 쓰는 정보예요</span></div><pre class="svc-cmd"></pre></div>
+        <div class="ar col"><div class="sc-t"><b>빠른 검색 서비스 자세히</b><span>문제를 알릴 때 쓰는 정보예요</span></div><pre class="svc-cmd"></pre>
+          <div class="row"><button type="button" class="btn svc-re" data-svc="update" hidden>${I("refresh")}빠른 검색 서비스 다시 설치(갱신)</button></div></div>
         <div class="ar"><div class="sc-t"><b>처음 안내 다시 보기</b><span>변환 화면 위에 짧은 안내를 다시 보여 드려요</span></div><button type="button" class="btn" data-act="welcome">다시 보기</button></div>
         <div class="ar"><div class="sc-t"><b>색인 파일</b><span class="idx-file"></span></div></div>
       </div></div>
@@ -116,6 +117,7 @@ async function refreshSvc() {
   else if (p.connected) { text = `${p.roots.join(", ")} · 항목 ${num(p.entries)}개 · ${p.visibility}`; chip = "실행 중"; cls = ""; }
   else if (starting && Date.now() - svcWaitSince < 30_000) { text = "서비스가 시작하는 중이에요. 응답하면 저절로 연결해요"; chip = "시작 중"; cls = "warn"; }
   else { text = `설치돼 있지만 연결되지 않았어요 — 앱이 스스로 찾아요 (${i.state})`; chip = "연결 안 됨"; cls = "err"; }
+  if (p.update_available && !svcBusy) text += ` · 앱에 든 새 서비스(${p.bundled_version})로 갱신할 수 있어요${p.installed_version ? ` (설치된 것 ${p.installed_version})` : ""}`;
   if (!p.exe) text += i.installed ? " · 설치·제거는 설치본으로 깐 파일 도구에서 할 수 있어요" : " · 설치본(setup.exe)으로 깔면 쓸 수 있어요";
   $(".svc-state", root)!.textContent = text;
   const c = $(".svc-chip", root)!;
@@ -125,20 +127,27 @@ async function refreshSvc() {
   btn.textContent = svcBusy ? "기다리는 중…" : i.installed ? "제거" : "설치";
   btn.dataset.install = i.installed ? "0" : "1";
   btn.disabled = svcBusy || !p.exe;
+  const up = $<HTMLButtonElement>(".svc-up", root)!, re = $<HTMLButtonElement>(".svc-re", root);
+  up.hidden = !(i.installed && p.exe && p.update_available);
+  up.disabled = svcBusy;
+  if (re) { re.hidden = !(i.installed && p.exe); re.disabled = svcBusy; }
   $(".svc-cmd", root)!.textContent = [`상태: ${i.installed ? `설치됨 · ${i.state} · 시작 ${i.start_type} · 계정 ${i.account || "?"}` : "설치 안 됨"}`, p.error ? `오류: ${p.error}` : "",
-    p.install_cmd ? `설치 명령: ${p.install_cmd}` : "", p.uninstall_cmd && i.installed ? `제거 명령: ${p.uninstall_cmd}` : ""].filter(Boolean).join("\n");
+    `앱에 든 서비스 ${p.bundled_version}${i.installed ? ` · 설치된 서비스 ${p.installed_version ?? "(응답 없음)"}${p.update_available ? " · 갱신 필요" : ""}` : ""}`,
+    p.install_cmd ? `설치(갱신) 명령: ${p.install_cmd}` : "", p.uninstall_cmd && i.installed ? `제거 명령: ${p.uninstall_cmd}` : ""].filter(Boolean).join("\n");
   window.clearTimeout(svcTimer);
   if (visible && (starting || (p.connected && !p.ready))) svcTimer = window.setTimeout(refreshSvc, 1500);
 }
-async function svcSetup(install: boolean) {
+async function svcSetup(install: boolean, update = false) {
   if (svcBusy) return;
-  if (!(await confirmDlg(install ? "빠른 검색 서비스를 설치할까요?" : "빠른 검색 서비스를 제거할까요?", "관리자 권한 확인 창이 뜨면 [예]를 눌러 주세요.", install ? "설치" : "제거", !install))) return;
+  const q = update ? "빠른 검색 서비스를 다시 설치(갱신)할까요?" : install ? "빠른 검색 서비스를 설치할까요?" : "빠른 검색 서비스를 제거할까요?";
+  const d = update ? "앱에 든 서비스로 바꾸고 다시 시작해요. 만든 색인은 그대로 써요. 관리자 권한 확인 창이 뜨면 [예]를 눌러 주세요." : "관리자 권한 확인 창이 뜨면 [예]를 눌러 주세요.";
+  if (!(await confirmDlg(q, d, update ? "다시 설치(갱신)" : install ? "설치" : "제거", !install))) return;
   svcBusy = true;
   refreshSvc();
   try {
     await invoke<string>("svc_setup", { install });
     if (install) svcWaitSince = Date.now();
-    toast(install ? "설치했어요" : "제거했어요");
+    toast(update ? "서비스를 갱신했어요" : install ? "설치했어요" : "제거했어요");
   } catch (e) {
     toast(friendly(e).title, 4000);
   } finally {
@@ -195,6 +204,7 @@ export const settingsScreen: Screen = {
       const t = e.target as HTMLElement;
       const svc = t.closest<HTMLButtonElement>(".svc-btn");
       if (svc) { svcSetup(svc.dataset.install === "1"); return; }
+      if (t.closest("[data-svc=update]")) { svcSetup(true, true); return; }
       const rm = t.closest<HTMLElement>("[data-rm-root]");
       if (rm && view) { saveSearch({ ...view.settings, roots: view.settings.roots.filter((x) => x !== rm.dataset.rmRoot) }); return; }
       const tool = t.closest<HTMLElement>("[data-tool]");

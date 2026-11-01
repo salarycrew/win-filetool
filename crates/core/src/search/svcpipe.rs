@@ -35,6 +35,92 @@ pub struct ServiceInfo {
     pub binary_path: String,
 }
 
+/// 서비스 등록 명령 줄(`"C:\…\filetool-svc.exe" run …`)에서 실행 파일 경로만
+pub fn binary_from_command_line(cmd: &str) -> Option<std::path::PathBuf> {
+    let c = cmd.trim();
+    if c.is_empty() {
+        return None;
+    }
+    let exe = if let Some(rest) = c.strip_prefix('"') {
+        rest.split('"').next()?
+    } else {
+        match c.to_ascii_lowercase().find(".exe") {
+            Some(i) => &c[..i + 4],
+            None => c.split_whitespace().next()?,
+        }
+    };
+    (!exe.is_empty()).then(|| std::path::PathBuf::from(exe))
+}
+
+/// 서비스 상태의 `server`(`filetool-svc 0.2.1`)에서 버전
+pub fn server_version(server: &str) -> Option<String> {
+    server.strip_prefix("filetool-svc ").map(|v| v.trim().to_string()).filter(|v| !v.is_empty())
+}
+
+/// 두 파일 내용이 같은지(읽지 못하면 None)
+pub fn same_file(a: &std::path::Path, b: &std::path::Path) -> Option<bool> {
+    let (ma, mb) = (std::fs::metadata(a).ok()?, std::fs::metadata(b).ok()?);
+    if ma.len() != mb.len() {
+        return Some(false);
+    }
+    Some(std::fs::read(a).ok()? == std::fs::read(b).ok()?)
+}
+
+/// 설치된 서비스를 앱에 든 것으로 갱신해야 하는지(0.3.0 QA-04: [다시 설치(갱신)]을 보일지).
+/// 버전이 다르거나(서비스가 답할 때), 설치된 실행 파일이 앱에 든 것과 다르면 true. 설치 안 됐거나 앱에 서비스가 없으면 false.
+pub fn needs_update(info: &ServiceInfo, installed_version: Option<&str>, bundled_exe: Option<&std::path::Path>, bundled_version: &str) -> bool {
+    let Some(bundled) = bundled_exe else { return false };
+    if !info.installed {
+        return false;
+    }
+    if installed_version.is_some_and(|v| v != bundled_version) {
+        return true;
+    }
+    match binary_from_command_line(&info.binary_path) {
+        Some(installed) => same_file(&installed, bundled) == Some(false),
+        None => false,
+    }
+}
+
+#[cfg(test)]
+mod update_tests {
+    use super::*;
+
+    #[test]
+    fn command_line_to_exe() {
+        assert_eq!(
+            binary_from_command_line(r#""C:\Program Files\파일 도구 서비스\filetool-svc.exe" run"#).unwrap(),
+            std::path::PathBuf::from(r"C:\Program Files\파일 도구 서비스\filetool-svc.exe")
+        );
+        assert_eq!(binary_from_command_line(r"C:\svc\filetool-svc.exe run").unwrap(), std::path::PathBuf::from(r"C:\svc\filetool-svc.exe"));
+        assert!(binary_from_command_line("  ").is_none());
+        assert_eq!(server_version("filetool-svc 0.2.1").as_deref(), Some("0.2.1"));
+        assert_eq!(server_version("other"), None);
+    }
+
+    #[test]
+    fn update_when_version_or_file_differs() {
+        let t = tempfile::tempdir().unwrap();
+        let bundled = t.path().join("bundled.exe");
+        let same = t.path().join("same.exe");
+        let old = t.path().join("old.exe");
+        std::fs::write(&bundled, b"new service 0.3.0").unwrap();
+        std::fs::write(&same, b"new service 0.3.0").unwrap();
+        std::fs::write(&old, b"old service 0.2.1").unwrap();
+        let info = |p: &std::path::Path| ServiceInfo { installed: true, binary_path: format!("\"{}\" run", p.display()), ..Default::default() };
+        // 같은 파일, 같은 버전 → 갱신 필요 없음
+        assert!(!needs_update(&info(&same), Some("0.3.0"), Some(&bundled), "0.3.0"));
+        // 서비스가 답하지 않아도 파일이 다르면 갱신
+        assert!(needs_update(&info(&old), None, Some(&bundled), "0.3.0"));
+        // 버전이 다르면 갱신(0.2.1 → 0.3.0)
+        assert!(needs_update(&info(&same), Some("0.2.1"), Some(&bundled), "0.3.0"));
+        // 설치 안 됨 / 앱에 서비스 없음 / 설치 파일을 못 읽음 → 보이지 않음
+        assert!(!needs_update(&ServiceInfo::default(), Some("0.2.1"), Some(&bundled), "0.3.0"));
+        assert!(!needs_update(&info(&old), Some("0.2.1"), None, "0.3.0"));
+        assert!(!needs_update(&info(&t.path().join("none.exe")), None, Some(&bundled), "0.3.0"));
+    }
+}
+
 #[cfg(windows)]
 pub use win::*;
 

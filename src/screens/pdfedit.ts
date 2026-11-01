@@ -5,7 +5,7 @@ import { EditOut, asErr, cancelJob, dirOf, fileName, friendly, human, invoke, is
 import { FT, I } from "../icons";
 import { Screen } from "../router";
 import {
-  $, $$, askPassword, bindResultButtons, bindSegs, checked, chk, confirmDlg, dialog, empty, errorPanel, esc, opt, resultRow, seg, segVal, setProgress, toast, value,
+  $, $$, askPassword, bindResultButtons, bindSegs, checked, chk, confirmDlg, dialog, empty, errorPanel, esc, opt, resultRow, seg, segVal, setProgress, setSeg, toast, value,
 } from "../ui";
 
 interface PageInfo { page: number; width: number; height: number; rotate: number; visual_width: number; visual_height: number }
@@ -247,8 +247,8 @@ function renderResult() {
 function renderGridView() {
   const main = $(".pe-main", root)!;
   main.innerHTML = `<div class="pe-bar" role="toolbar" aria-label="쪽 편집">
-      <button type="button" class="btn" data-act="rotl" title="왼쪽으로 돌리기 (Shift+R)" aria-label="왼쪽으로 돌리기">${I("rotl")}</button>
-      <button type="button" class="btn" data-act="rotr" title="오른쪽으로 돌리기 (R)" aria-label="오른쪽으로 돌리기">${I("rotr")}</button>
+      <button type="button" class="btn" data-act="rotl" title="왼쪽으로 돌리기 (Shift+R)" aria-label="왼쪽으로 돌리기">${I("rotl")}<span class="lw">왼쪽</span></button>
+      <button type="button" class="btn" data-act="rotr" title="오른쪽으로 돌리기 (R)" aria-label="오른쪽으로 돌리기">${I("rotr")}<span class="lw">오른쪽</span></button>
       <button type="button" class="btn" data-act="del" title="고른 쪽 지우기 (Delete)" aria-label="지우기">${I("trash")}<span>지우기</span></button>
       <span class="sep"></span>
       <button type="button" class="btn" data-act="extract" title="고른 쪽만 새 PDF로" aria-label="뽑기">${I("extract")}<span>뽑기</span></button>
@@ -256,8 +256,8 @@ function renderGridView() {
       <button type="button" class="btn" data-act="insert" title="고른 쪽 뒤에 다른 PDF 끼워 넣기" aria-label="끼워 넣기">${I("insert")}<span>끼워 넣기</span></button>
       <button type="button" class="btn" data-act="append" title="다른 PDF를 끝에 붙이기(합치기)" aria-label="더하기">${I("merge")}<span>더하기</span></button>
       <span class="sep"></span>
-      <button type="button" class="btn subtle" data-act="undo" title="되돌리기 (Ctrl+Z)" aria-label="되돌리기">${I("undo")}</button>
-      <button type="button" class="btn subtle" data-act="redo" title="다시 하기 (Ctrl+Y)" aria-label="다시 하기">${I("redo")}</button>
+      <button type="button" class="btn subtle" data-act="undo" title="되돌리기 (Ctrl+Z)" aria-label="되돌리기">${I("undo")}<span class="lw">되돌리기</span></button>
+      <button type="button" class="btn subtle" data-act="redo" title="다시 하기 (Ctrl+Y)" aria-label="다시 하기">${I("redo")}<span class="lw">다시 하기</span></button>
       <span class="grow"></span>
       <button type="button" class="btn accent" data-act="save" title="새 파일로 저장 (Ctrl+S)" aria-label="저장">${I("check")}<span>저장</span></button></div>
     <div class="pe-status"><span class="pe-sel"></span><span class="hint">눌러서 고르기 · Ctrl/Shift로 여러 쪽 · 끌어서 순서 바꾸기</span></div>
@@ -784,8 +784,8 @@ const TOOL_UI: Record<string, ToolUI> = {
       ($<HTMLButtonElement>("[data-del]", body)!).disabled = !b;
       if (b) {
         ($<HTMLTextAreaElement>("#tbtext", body)!).value = b.text;
-        $$<HTMLButtonElement>('[data-seg="tbsize"] button', body).forEach((x) => x.classList.toggle("on", x.dataset.v === String(b.size)));
-        $$<HTMLButtonElement>('[data-seg="tbcolor"] button', body).forEach((x) => x.classList.toggle("on", x.dataset.v === b.color));
+        setSeg(body, "tbsize", String(b.size));
+        setSeg(body, "tbcolor", b.color);
         ($<HTMLInputElement>("#tbbg", body)!).checked = b.bg;
       }
       $(".tb-count", body)!.textContent = boxes.length ? `글상자 ${boxes.length}개 (${[...new Set(boxes.map((x) => x.page))].sort((a, b) => a - b).join(", ")}쪽)` : "";
@@ -972,12 +972,13 @@ const TOOL_UI: Record<string, ToolUI> = {
       }).join("")}</div>${opt("", chk("fflat", "채운 뒤 고칠 수 없게 굳히기", false))}`;
     }).catch((e) => { body.innerHTML = errorPanel(friendly(e)); });
     apply.onclick = async () => {
-      const values: Record<string, string | boolean> = {};
+      // 명령은 칸 이름 → 문자열을 받는다(체크 상자는 "true"/"false")
+      const values: Record<string, string> = {};
       fields.forEach((f, i) => {
         if (f.read_only) return;
         const el = $<HTMLInputElement>(`#f${i}`, body);
         if (!el) return;
-        values[f.name] = f.kind === "checkbox" ? el.checked : el.value;
+        values[f.name] = f.kind === "checkbox" ? String(el.checked) : el.value;
       });
       const out = await toolJob("양식 채우는 중", "pdf_form_fill", { values, flatten: checked(body, "fflat") });
       if (out) await finish(out, "양식 채우기");

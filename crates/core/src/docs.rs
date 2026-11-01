@@ -199,6 +199,7 @@ pub fn acquire_profile(base: &Path, pool: usize, cancel: Option<&Cancel>, timeou
 
 /// 문서 한 개 변환. 한글(`.hwp`, `.hwpx`)은 [`crate::hwp::convert`]로 보낸다(설치된 한글 또는 한글 97이면 LibreOffice).
 pub fn convert(soffice: &Path, input: &Path, out_dir: Option<&Path>, target: DocTarget, cancel: Option<&Cancel>, timeout: Duration) -> Result<PathBuf> {
+    crate::error::ensure_nonempty(input)?;
     if crate::hwp::is_hwp_path(input) {
         return crate::hwp::convert(Some(soffice), input, out_dir, target, cancel, timeout);
     }

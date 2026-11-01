@@ -348,6 +348,8 @@ fn korean_text_box_with_background() {
     let boxes = vec![
         TextBox { page: 1, x: 100.0, y: 200.0, text: "확인했습니다\n2026-11-01".into(), font_size: 18.0, color: "#000080".into(), background: Some("#FFFF00".into()), width: 0.0 },
         TextBox { page: 3, x: 50.0, y: 50.0, text: "회전 쪽".into(), font_size: 20.0, color: "#000000".into(), background: None, width: 0.0 },
+        // QA-02: 화면에서 고른 빨강·아주 크게가 결과에 그대로
+        TextBox { page: 2, x: 60.0, y: 100.0, text: "SIZE24TEST".into(), font_size: 24.0, color: "#C42B1C".into(), background: None, width: 0.0 },
     ];
     let r = stamp::text_boxes(&a, None, &boxes, &o, &mut Job::none()).unwrap();
     assert!(!r.note.contains("빈 네모"), "{}", r.note);
@@ -360,6 +362,23 @@ fn korean_text_box_with_background() {
     // 회전 쪽에서도 보이는 왼쪽 위
     assert!(dark_in(&o, None, 3, 50.0, 50.0, 80.0, 25.0, 100) > 30);
     assert!(thumbs::page_text(&o, None, 3).unwrap().contains("회전 쪽"));
+    // 빨간 글자: 2쪽 (60,100) 근처에 빨간 점이 있고, 쪽 내용에 #C42B1C(0.769 0.169 0.11)로 칠함
+    let img = thumbs::render_rgb(&o, None, 2, 1.0).unwrap();
+    let mut red = 0;
+    for y in (95..135).step_by(2) {
+        for x in (60..220).step_by(2) {
+            let p = img.get_pixel(x, y).0;
+            if p[0] > 150 && p[1] < 110 && p[2] < 110 {
+                red += 1;
+            }
+        }
+    }
+    assert!(red > 20, "빨간 점 {red}");
+    let d = load(&o);
+    let pid = *d.get_pages().get(&2).unwrap();
+    let content = String::from_utf8_lossy(&d.get_page_content(pid)).into_owned();
+    assert!(content.contains("0.769 0.169 0.11 rg") || content.contains("0.7686 0.1686 0.1098 rg"), "{content}");
+    assert!(content.contains(" 24 Tf"), "{content}");
 }
 
 // ---------- 암호 ----------
@@ -570,6 +589,26 @@ fn doc_info_set_read_clear() {
     assert!(load(&c).trailer.get(b"Info").is_err());
 }
 
+// ---------- 빈 파일(QA-05) ----------
+
+#[test]
+fn empty_file_is_reported_as_empty() {
+    let t = tempfile::tempdir().unwrap();
+    let e = t.path().join("빈파일.pdf");
+    std::fs::write(&e, b"").unwrap();
+    assert!(matches!(pdfedit::open(&e, None), Err(Error::EmptyFile(_))));
+    assert!(matches!(filetool_core::pdf::load(&e), Err(Error::EmptyFile(_))));
+    let msg = pdfedit::open(&e, None).unwrap_err().to_string();
+    assert!(msg.contains("빈 파일입니다"), "{msg}");
+    let jpg = t.path().join("빈사진.jpg");
+    std::fs::write(&jpg, b"").unwrap();
+    let opts: filetool_core::imageconv::ImageOpts = serde_json::from_str(r#"{"format":"png"}"#).unwrap();
+    assert!(matches!(filetool_core::imageconv::convert_raster(&jpg, None, &opts), Err(Error::EmptyFile(_))));
+    // 내용이 있으면 빈 파일 오류가 아님
+    std::fs::write(&e, b"not a pdf").unwrap();
+    assert!(!matches!(pdfedit::open(&e, None), Err(Error::EmptyFile(_))));
+}
+
 // ---------- 양식 ----------
 
 #[test]
@@ -614,6 +653,24 @@ fn form_list_fill_flatten() {
     let mut bad2 = BTreeMap::new();
     bad2.insert("없는칸".to_string(), "x".to_string());
     assert!(forms::fill(&f, None, &bad2, false, &out(t.path(), "b2.pdf"), &mut Job::none()).is_err());
+
+    // QA-01: 화면이 보내는 JSON(체크 상자 boolean, 글자 칸 문자열) 그대로 받아 채운다
+    let json: BTreeMap<String, forms::FormValue> =
+        serde_json::from_str(r#"{"name":"QA","agree":false,"size":"S","city":"Seoul","color":""}"#).unwrap();
+    let off = out(t.path(), "json_off.pdf");
+    forms::fill(&f, None, &forms::text_values(json), false, &off, &mut Job::none()).unwrap();
+    let vals: Vec<String> = forms::list(&off, None).unwrap().into_iter().map(|x| x.value).collect();
+    assert_eq!(vals, vec!["QA", "Off", "S", "Seoul", ""]);
+    let json: BTreeMap<String, forms::FormValue> = serde_json::from_str(r#"{"name":"QA","agree":true}"#).unwrap();
+    let on = out(t.path(), "json_on.pdf");
+    forms::fill(&o, None, &forms::text_values(json), false, &on, &mut Job::none()).unwrap();
+    let after: Vec<String> = forms::list(&on, None).unwrap().into_iter().map(|x| x.value).collect();
+    assert_eq!(after[..2], ["QA".to_string(), "Yes".to_string()]);
+    // 화면이 문자열로 보내는 체크 상자 값("true"/"false")
+    let json: BTreeMap<String, forms::FormValue> = serde_json::from_str(r#"{"agree":"false"}"#).unwrap();
+    let s_off = out(t.path(), "json_str_off.pdf");
+    forms::fill(&on, None, &forms::text_values(json), false, &s_off, &mut Job::none()).unwrap();
+    assert_eq!(forms::list(&s_off, None).unwrap()[1].value, "Off");
 
     // 평평하게: 양식 없어짐, 링크는 남음
     let fl = out(t.path(), "flat.pdf");

@@ -92,6 +92,7 @@ fn pdf_err(path: &Path) -> impl Fn(lopdf::Error) -> Error + '_ {
 
 /// 암호 검사까지 해서 연다(압축·이미지 추출 공통).
 pub fn load_unencrypted(path: &Path) -> Result<Document> {
+    crate::error::ensure_nonempty(path)?;
     let doc = match Document::load(path) {
         Ok(d) => d,
         Err(e) => {

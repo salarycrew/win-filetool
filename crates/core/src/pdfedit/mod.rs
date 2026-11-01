@@ -75,6 +75,7 @@ pub(crate) fn pdf_err(path: &Path) -> impl Fn(lopdf::Error) -> Error + '_ {
 
 /// PDF 열기. 암호가 걸려 있으면 `password`로 푼다(빈 문자열 = 없음).
 pub fn open(path: &Path, password: Option<&str>) -> Result<Document> {
+    crate::error::ensure_nonempty(path)?;
     let pw = password.filter(|s| !s.is_empty());
     let loaded = match pw {
         Some(p) => Document::load_with_password(path, p),
