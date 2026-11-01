@@ -133,7 +133,12 @@ pub fn convert_file(
             (r.output, note)
         }
         Op::Doc { target } => {
-            let out = docs::convert(tools.get(Tool::Soffice)?, input, out_dir, *target, cancel, docs::DOC_TIMEOUT)?;
+            // 한글은 설치된 한글로 바꿀 수 있어 LibreOffice가 없어도 된다(W6)
+            let out = if crate::hwp::is_hwp_path(input) {
+                crate::hwp::convert(tools.get(Tool::Soffice).ok(), input, out_dir, *target, cancel, docs::DOC_TIMEOUT)?
+            } else {
+                docs::convert(tools.get(Tool::Soffice)?, input, out_dir, *target, cancel, docs::DOC_TIMEOUT)?
+            };
             let n = std::fs::metadata(&out).map(|m| m.len()).unwrap_or(0);
             (out, human_bytes(n))
         }

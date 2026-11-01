@@ -32,6 +32,9 @@ pub struct ImagesOut {
     pub skipped: usize,
     pub millis: u64,
     pub note: String,
+    /// 건너뛴 항목과 이유(한글: "BIN0003.OLE: OLE 개체(그림이 아님)" 등)
+    #[serde(default)]
+    pub skipped_items: Vec<String>,
 }
 
 pub fn kind(p: &Path) -> Option<&'static str> {
@@ -40,6 +43,8 @@ pub fn kind(p: &Path) -> Option<&'static str> {
         Some("pptx" | "pptm" | "potx" | "potm" | "ppsx" | "ppsm") => Some("ppt"),
         Some("xlsx" | "xlsm" | "xltx" | "xltm") => Some("xl"),
         Some("pdf") => Some("pdf"),
+        // 0.3.0 W6: 한글 5·HWPX(한글 97은 안내 오류)
+        Some("hwp" | "hwpx") => Some("hwp"),
         _ => None,
     }
 }
@@ -214,7 +219,7 @@ fn extract_office(input: &Path, kind: &str, out_dir: Option<&Path>) -> Result<Im
     } else {
         format!("그림 {}개를 원본 그대로 꺼냈습니다{}", files.len(), if dups > 0 { format!(" (같은 그림 {dups}개는 한 번만)") } else { String::new() })
     };
-    Ok(ImagesOut { input: input.into(), folder, files, duplicates: dups, skipped: 0, millis: t0.elapsed().as_millis() as u64, note })
+    Ok(ImagesOut { input: input.into(), folder, files, duplicates: dups, skipped: 0, millis: t0.elapsed().as_millis() as u64, note, skipped_items: vec![] })
 }
 
 /// 문서·PDF 안 그림을 원본 그대로 `이름_이미지\`에 꺼낸다.
@@ -230,10 +235,11 @@ pub fn extract_images(input: &Path, out_dir: Option<&Path>) -> Result<ImagesOut>
                 Error::Pdf { path, message } if message.contains("암호") => Error::Pdf { path, message: "암호가 걸린 PDF에서는 그림을 꺼낼 수 없습니다. PDF 프로그램에서 암호를 풀어 저장한 뒤 다시 시도하세요".into() },
                 e => e,
             })?;
-            Ok(ImagesOut { input: r.input, folder: r.folder, files: r.files, duplicates: 0, skipped: r.skipped, millis: t0.elapsed().as_millis() as u64, note: r.note })
+            Ok(ImagesOut { input: r.input, folder: r.folder, files: r.files, duplicates: 0, skipped: r.skipped, millis: t0.elapsed().as_millis() as u64, note: r.note, skipped_items: vec![] })
         }
+        Some("hwp") => crate::hwp::images::extract(input, out_dir),
         Some(k) => extract_office(input, k, out_dir),
-        None => Err(Error::Unsupported(format!("그림 꺼내기는 Word·PowerPoint·Excel·PDF 파일만 됩니다: {}", input.display()))),
+        None => Err(Error::Unsupported(format!("그림 꺼내기는 Word·PowerPoint·Excel·PDF·한글 파일만 됩니다: {}", input.display()))),
     }
 }
 
@@ -247,7 +253,9 @@ mod tests {
         assert_eq!(rel_ids_in_order(xml), vec!["rId7", "rId3", "rId7"]);
         assert_eq!(kind(Path::new("a.PPTX")), Some("ppt"));
         assert_eq!(kind(Path::new("a.xlsm")), Some("xl"));
-        assert_eq!(kind(Path::new("a.hwp")), None);
+        assert_eq!(kind(Path::new("a.hwp")), Some("hwp"));
+        assert_eq!(kind(Path::new("a.HWPX")), Some("hwp"));
+        assert_eq!(kind(Path::new("a.hwt")), None);
         assert!(natural_key("slide10.xml") > natural_key("slide9.xml"));
     }
 }
