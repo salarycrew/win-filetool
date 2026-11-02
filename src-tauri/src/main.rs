@@ -1225,6 +1225,10 @@ fn main() {
             build_tray(app)?;
             update_tray_tooltip(app.handle());
             start_watch_thread(app.handle().clone());
+            // 0.3.3(보안 강화): 지난번 한글 변환이 강제 종료돼 남은 HKCU 보안 모듈 값을 지운다(지금 변환 중이 아니면)
+            std::thread::spawn(|| {
+                filetool_core::hwp::hancom::cleanup_stale_module();
+            });
             // 창은 숨긴 채로 만들어진다(tauri.conf.json visible=false). 자동 실행이 아니면 바로 보인다.
             if !autostart::is_autostart_launch(std::env::args()) {
                 show_main(app.handle());

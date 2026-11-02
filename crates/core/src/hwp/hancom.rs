@@ -369,6 +369,23 @@ mod win {
             .status();
     }
 
+    /// 0.3.3(보안 강화): 앱이 시작할 때 — 한글 변환이 돌고 있지 않으면(잠금을 바로 잡을 수 있으면) 지난번 강제 종료로 남은
+    /// HKCU `WinFileToolPathCheck` 값을 지운다. 지웠으면 true.
+    pub fn cleanup_stale_module() -> bool {
+        if !module_registered() {
+            return false;
+        }
+        let p = hwp_dir().join("hancom.lock");
+        let Ok(f) = std::fs::File::options().create(true).truncate(false).write(true).open(&p) else { return false };
+        if f.try_lock().is_err() {
+            // 다른 앱 창·CLI가 지금 변환 중 — 그쪽이 끝나면 지운다
+            return false;
+        }
+        remove_module_value();
+        drop(f);
+        true
+    }
+
     /// 앱 전체에서 한글 변환은 하나씩(다른 앱 창·감시 폴더와도)
     fn lock(cancel: Option<&Cancel>, timeout: Duration) -> Result<std::fs::File> {
         let dir = hwp_dir();
@@ -447,7 +464,13 @@ mod win {
 }
 
 #[cfg(windows)]
-pub use win::{hwp_pids, module_registered, remove_module_value};
+pub use win::{cleanup_stale_module, hwp_pids, module_registered, remove_module_value};
+
+/// 0.3.3: (Windows가 아니면 할 일 없음)
+#[cfg(not(windows))]
+pub fn cleanup_stale_module() -> bool {
+    false
+}
 
 /// 설치된 한글로 PDF(`target` Pdf) 또는 DOCX를 만든다. 결과는 `이름.pdf`/`이름.docx`(겹치면 ` (1)`).
 pub fn convert(input: &Path, out_dir: Option<&Path>, target: DocTarget, cancel: Option<&Cancel>, timeout: Duration) -> Result<HancomOut> {
