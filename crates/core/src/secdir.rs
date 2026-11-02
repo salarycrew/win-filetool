@@ -89,6 +89,19 @@ pub fn open_dir_nofollow(path: &Path, write_dac: bool) -> std::io::Result<Opened
     imp::open(path, write_dac)
 }
 
+/// 경로 자체가 재분석 지점(접합점·심볼릭 링크 등)인지(따라가지 않고 봄)
+pub fn is_reparse_point(p: &Path) -> bool {
+    let Ok(m) = std::fs::symlink_metadata(p) else { return false };
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt;
+        if m.file_attributes() & 0x400 != 0 {
+            return true;
+        }
+    }
+    m.file_type().is_symlink()
+}
+
 /// 이 사용자만 쓸 수 있는 폴더인지(재분석 지점이면 아니다). 읽지 못하면 아니다.
 pub fn dir_user_only(path: &Path) -> bool {
     imp::user_only(path)

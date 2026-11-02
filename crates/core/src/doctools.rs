@@ -10,6 +10,10 @@
 //!   다 받으면 SHA-256을 확인하고, 다르면 **지우고 거절**한다. 풀기 전에 확인한 파일만 푼다.
 //! - 푸는 곳: `[`crate::bundle::tools_root`]\doctools\lo\`(0.3.x와 같은 LOCALAPPDATA 도구 폴더). `.partial`에 다 푼 뒤 이름을 바꾼다.
 //! - 0.3.0~0.3.2가 이미 풀어 둔 `tools\<판>-<해시>\lo\`가 있으면 받지 않고 그것을 옮겨 쓴다([`migrate`]).
+//!   0.3.3(보안 강화): 옮겨 쓰기 전에 한 번, 폴더 내용 해시([`LO_TREE_SHA256`], 빌드 때 묶음에서 계산)와 같은지 본다 —
+//!   빠지거나 바뀌거나 **더 들어간** 파일(예: 심어 둔 DLL)이 있으면 쓰지 않는다.
+//! - 0.3.3(보안 강화): 해시 확인과 풀기를 **한 번 연 핸들**에서(쓰기 공유 거부) 한다 — 읽으며 해시를 내고 임시 폴더에 풀어,
+//!   해시가 맞을 때만 이름을 바꾼다(확인한 뒤 다시 열어 푸는 사이에 파일이 바뀌는 틈을 없앰).
 //! - 인터넷이 없는 PC: [설정] → 문서 도구 → [파일로 넣기]로 같은 파일을 고르면 같은 확인을 거쳐 푼다(고른 파일은 지우지 않음).
 //!
 //! 이 모듈은 네트워크를 직접 쓰지 않는다: HTTP는 [`RangeFetch`]로 받아서(앱은 WinHTTP, 시험은 가짜) Linux에서 시험한다.
@@ -38,6 +42,8 @@ pub const SIZE: u64 = 105_443_108;
 pub const LO_VERSION: &str = "26.2.6.3";
 /// 풀었을 때(파일 2,426개)
 pub const UNPACKED_BYTES: u64 = 444_364_426;
+/// 0.3.3(보안 강화): 묶음을 풀었을 때 폴더 내용 해시(`scripts/doctools-tree-hash.py`, [`tree_sha256`]과 같은 계산)
+pub const LO_TREE_SHA256: &str = "3eed7615558b5a9b551b71791919c78465753eee800c118a8c2efc70dbcbecc4";
 
 /// 확인에 쓰는 고정값(배포 앱은 언제나 [`Pin::RELEASE`] — 시험만 작은 가짜 묶음으로 바꾼다)
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -90,6 +96,9 @@ pub struct Marker {
     /// "download" | "file" | "0.3.x"
     pub source: String,
     pub lo_version: String,
+    /// 0.3.3(보안 강화): 폴더 내용을 확인했는지(받은 것·넣은 것은 해시를 확인한 묶음에서 풀었으므로 true, 옮긴 것은 내용 해시 확인 뒤)
+    #[serde(default)]
+    pub tree_verified: bool,
 }
 
 fn marker_path(root: &Path) -> PathBuf {
@@ -101,7 +110,7 @@ fn read_marker(root: &Path) -> Option<Marker> {
 }
 
 fn write_marker(root: &Path, source: &str) {
-    let m = Marker { pack_version: PACK_VERSION, sha256: SHA256.into(), source: source.into(), lo_version: LO_VERSION.into() };
+    let m = Marker { pack_version: PACK_VERSION, sha256: SHA256.into(), source: source.into(), lo_version: LO_VERSION.into(), tree_verified: true };
     let _ = std::fs::write(marker_path(root), serde_json::to_vec_pretty(&m).unwrap_or_default());
 }
 
@@ -112,6 +121,55 @@ fn lock(root: &Path) -> Result<File> {
     let f = File::options().create(true).truncate(false).write(true).open(&p).map_err(io_err(&p))?;
     f.lock().map_err(io_err(&p))?;
     Ok(f)
+}
+
+/// 폴더 내용 해시: 모든 파일의 `<상대 경로(/)>\t<크기>\t<SHA-256>\n`을 경로(UTF-8 바이트) 순으로 이은 것의 SHA-256.
+/// 링크·접합점이 하나라도 있거나 읽지 못하면 None.
+pub fn tree_sha256(dir: &Path) -> Option<String> {
+    let mut lines: Vec<(String, String)> = Vec::new();
+    for e in walkdir::WalkDir::new(dir).follow_links(false) {
+        let e = e.ok()?;
+        let ft = e.file_type();
+        if ft.is_symlink() || crate::secdir::is_reparse_point(e.path()) {
+            return None;
+        }
+        if ft.is_dir() {
+            continue;
+        }
+        let rel = e.path().strip_prefix(dir).ok()?.to_string_lossy().replace('\\', "/");
+        let len = e.metadata().ok()?.len();
+        let h = sha256_file(e.path(), None).ok()?;
+        lines.push((rel.clone(), format!("{rel}\t{len}\t{h}\n")));
+    }
+    lines.sort_by(|a, b| a.0.as_bytes().cmp(b.0.as_bytes()));
+    let mut h = Sha256::new();
+    for (_, l) in &lines {
+        h.update(l.as_bytes());
+    }
+    Some(h.finalize().iter().map(|b| format!("{b:02x}")).collect())
+}
+
+/// 옮겨 쓸 예전 `lo` 폴더의 내용이 묶음과 같은지. 다르면 그 폴더를 치운다(다음에 다시 계산하지 않게, 쓰는 중이면 남김).
+fn legacy_ok(lo: &Path, root: &Path) -> bool {
+    if tree_sha256(lo).is_some_and(|h| h == expected_tree(root)) {
+        return true;
+    }
+    if let Some(parent) = lo.parent() {
+        let trash = parent.join(format!(".trash-lo-{}", std::process::id()));
+        if std::fs::rename(lo, &trash).is_ok() {
+            let _ = std::fs::remove_dir_all(&trash);
+        }
+    }
+    false
+}
+
+/// 기대하는 폴더 내용 해시(단위 시험만 작은 가짜 폴더의 값을 `<root>/.test-tree-sha256`에 둘 수 있다)
+fn expected_tree(_root: &Path) -> String {
+    #[cfg(test)]
+    if let Ok(s) = std::fs::read_to_string(_root.join(".test-tree-sha256")) {
+        return s.trim().to_string();
+    }
+    LO_TREE_SHA256.to_string()
 }
 
 /// 0.3.0~0.3.2가 풀어 둔 LibreOffice(`<root>\<판>-<16자 해시>\lo`) 찾기
@@ -135,12 +193,13 @@ pub fn legacy_lo_dirs(root: &Path) -> Vec<PathBuf> {
 
 /// 예전 판이 풀어 둔 LibreOffice를 `doctools\lo`로 옮긴다(같은 드라이브라 이름 바꾸기만). 옮긴 soffice 경로.
 /// 쓰는 중이라 옮기지 못하면 그 자리의 경로를 돌려준다(다음에 다시 옮긴다).
+/// 0.3.3(보안 강화): 내용 해시가 묶음과 같은 폴더만 옮겨 쓴다(다르면 그 폴더는 쓰지 않음 → 필요하면 받기).
 pub fn migrate(root: &Path) -> Option<PathBuf> {
     let target = dir_in(root).join("lo");
     if soffice_rel(&target).is_file() {
         return Some(soffice_rel(&target));
     }
-    let legacy = legacy_lo_dirs(root);
+    let legacy: Vec<PathBuf> = legacy_lo_dirs(root).into_iter().filter(|lo| legacy_ok(lo, root)).collect();
     let first = legacy.first()?.clone();
     let _l = lock(root).ok()?;
     if soffice_rel(&target).is_file() {
@@ -162,9 +221,22 @@ pub fn soffice() -> Option<PathBuf> {
 }
 
 pub fn soffice_in(root: &Path) -> Option<PathBuf> {
-    let s = soffice_rel(&dir_in(root).join("lo"));
+    let lo = dir_in(root).join("lo");
+    let s = soffice_rel(&lo);
     if s.is_file() {
-        return Some(s);
+        // 0.3.3(보안 강화): 확인 기록이 없는 폴더(0.3.3 첫 판이 확인 없이 옮긴 0.3.x 폴더 등)는 한 번 내용 해시를 본다
+        match read_marker(root) {
+            Some(m) if m.tree_verified => return Some(s),
+            m => {
+                if legacy_ok(&lo, root) {
+                    write_marker(root, m.as_ref().map(|m| m.source.as_str()).unwrap_or("0.3.x"));
+                    return Some(s);
+                }
+                // 내용이 다르면 쓰지 않는다(legacy_ok가 그 폴더를 치움). 기록도 지운다
+                let _ = std::fs::remove_file(marker_path(root));
+                return None;
+            }
+        }
     }
     migrate(root)
 }
@@ -352,21 +424,8 @@ pub fn install(pack: &Path, root: &Path, pin: Pin, source: &str, delete_bad: boo
             let _ = std::fs::remove_file(p);
         }
     };
-    match verify(&own, pin, cancel) {
-        Ok(true) => {}
-        Ok(false) => {
-            cleanup_own(&own);
-            return Err(Error::Invalid(if delete_bad { MSG_HASH.into() } else { MSG_HASH_FILE.into() }));
-        }
-        Err(e) => {
-            if own != pack {
-                let _ = std::fs::remove_file(&own);
-            }
-            return Err(e);
-        }
-    }
     let target = dir_in(root).join("lo");
-    if soffice_rel(&target).is_file() {
+    if soffice_rel(&target).is_file() && read_marker(root).is_some_and(|m| m.tree_verified) {
         cleanup_own(&own);
         return Ok(soffice_rel(&target));
     }
@@ -374,14 +433,38 @@ pub fn install(pack: &Path, root: &Path, pin: Pin, source: &str, delete_bad: boo
     if partial.exists() {
         std::fs::remove_dir_all(&partial).map_err(io_err(&partial))?;
     }
-    if target.exists() {
-        // 반쯤 남은 폴더(soffice 없음)
-        std::fs::remove_dir_all(&target).map_err(io_err(&target))?;
+    // 0.3.3(보안 강화): 한 번 연 핸들(쓰기 공유 거부)에서 읽으며 해시를 내고 임시 폴더에 푼다 → 해시가 맞을 때만 이름 바꾸기
+    let f = open_deny_write(&own)?;
+    let len = f.metadata().map_err(io_err(&own))?.len();
+    let bad = |own: &Path| -> Error {
+        cleanup_own(own);
+        Error::Invalid(if delete_bad { MSG_HASH.into() } else { MSG_HASH_FILE.into() })
+    };
+    if len != pin.size {
+        return Err(bad(&own));
     }
-    let f = File::open(&own).map_err(io_err(&own))?;
-    if let Err(e) = crate::bundle::unpack_tar_zst(std::io::BufReader::new(f), pin.size, crate::bundle::LIBREOFFICE, &partial) {
+    let mut tee = HashTee { inner: std::io::BufReader::new(f), h: Sha256::new(), n: 0, cancel };
+    let unpacked = crate::bundle::unpack_tar_zst(&mut tee, pin.size, crate::bundle::LIBREOFFICE, &partial);
+    // tar 끝 뒤에 남은 바이트도 해시에 넣는다(묶음 전체의 해시와 비교하므로)
+    let drained = std::io::copy(&mut tee, &mut std::io::sink());
+    let got: String = tee.h.finalize().iter().map(|b| format!("{b:02x}")).collect();
+    if matches!(&unpacked, Err(Error::Cancelled)) || cancel.is_some_and(Cancel::is_cancelled) {
+        let _ = std::fs::remove_dir_all(&partial);
+        return Err(Error::Cancelled);
+    }
+    if drained.is_err() || tee.n != pin.size || got != pin.sha256 {
+        let _ = std::fs::remove_dir_all(&partial);
+        return Err(bad(&own));
+    }
+    if let Err(e) = unpacked {
         let _ = std::fs::remove_dir_all(&partial);
         return Err(e);
+    }
+    if target.exists() {
+        // 반쯤 남은 폴더(soffice 없음)나 확인 기록 없는 폴더
+        let trash = root.join(format!(".trash-doctools-lo-{}", std::process::id()));
+        std::fs::rename(&target, &trash).map_err(io_err(&target))?;
+        let _ = std::fs::remove_dir_all(&trash);
     }
     std::fs::rename(&partial, &target).map_err(io_err(&target))?;
     write_marker(root, source);
@@ -390,6 +473,39 @@ pub fn install(pack: &Path, root: &Path, pin: Pin, source: &str, delete_bad: boo
         let _ = std::fs::remove_file(&own);
     }
     Ok(soffice_rel(&target))
+}
+
+/// 읽으며 SHA-256을 내는 읽개(멈추기 확인 포함)
+struct HashTee<'a, R> {
+    inner: R,
+    h: Sha256,
+    n: u64,
+    cancel: Option<&'a Cancel>,
+}
+
+impl<R: Read> Read for HashTee<'_, R> {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        if self.cancel.is_some_and(Cancel::is_cancelled) {
+            // (Interrupted는 읽는 쪽이 다시 시도하므로 쓰지 않는다)
+            return Err(std::io::Error::other("멈춤"));
+        }
+        let n = self.inner.read(buf)?;
+        self.h.update(&buf[..n]);
+        self.n += n as u64;
+        Ok(n)
+    }
+}
+
+/// 다른 프로그램이 쓰거나 지우지 못하게 열기(Windows: 읽기 공유만)
+fn open_deny_write(p: &Path) -> Result<File> {
+    let mut o = File::options();
+    o.read(true);
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+        o.share_mode(0x1); // FILE_SHARE_READ
+    }
+    o.open(p).map_err(io_err(p))
 }
 
 /// [지우기]: 문서 도구 폴더와 받던 파일을 지운다. 쓰는 중이면(문서 변환 중) 안내 오류.
@@ -712,6 +828,9 @@ mod tests {
         std::fs::create_dir_all(&old).unwrap();
         std::fs::write(old.join(exe), b"OLD").unwrap();
         std::fs::create_dir_all(root.join("0.3.2-27b0aadb98e3db02").join("ffmpeg")).unwrap();
+        // 0.3.3(보안 강화): 이 가짜 폴더의 내용 해시를 기대값으로(실제 앱은 묶음에서 계산한 LO_TREE_SHA256)
+        let tree = tree_sha256(&root.join("0.3.2-27b0aadb98e3db02").join("lo")).unwrap();
+        std::fs::write(root.join(".test-tree-sha256"), &tree).unwrap();
         // 사용자 폴더는 판 폴더로 보지 않음
         std::fs::create_dir_all(root.join("my-folder").join("lo").join("program")).unwrap();
         let so = soffice_in(root).unwrap();
@@ -734,10 +853,54 @@ mod tests {
         let old = root.join("0.3.1-1111111111111111").join("lo").join("program");
         std::fs::create_dir_all(&old).unwrap();
         std::fs::write(old.join(exe), b"OLD").unwrap();
+        std::fs::write(root.join(".test-tree-sha256"), tree_sha256(&root.join("0.3.1-1111111111111111").join("lo")).unwrap()).unwrap();
         let b = crate::bundle::Bundle { file: root.join("x"), pack_start: 0, index: crate::bundle::Index { version: 1, hash: "aaaaaaaaaaaaaaaa".into(), tools: vec![] }, root: root.to_path_buf(), app_version: "0.3.3".into() };
         b.cleanup_old();
         assert!(!root.join("0.3.1-1111111111111111").exists());
         assert_eq!(std::fs::read(dir_in(root).join("lo").join("program").join(exe)).unwrap(), b"OLD");
+    }
+
+    #[test]
+    fn legacy_folder_with_changed_or_extra_files_not_reused() {
+        let t = tempfile::tempdir().unwrap();
+        let root = t.path();
+        let exe = if cfg!(windows) { "soffice.exe" } else { "soffice" };
+        let lo = root.join("0.3.2-27b0aadb98e3db02").join("lo");
+        std::fs::create_dir_all(lo.join("program")).unwrap();
+        std::fs::write(lo.join("program").join(exe), b"OLD").unwrap();
+        std::fs::write(root.join(".test-tree-sha256"), tree_sha256(&lo).unwrap()).unwrap();
+        // 더 들어간 파일(예: program 폴더에 심어 둔 DLL) → 옮겨 쓰지 않음
+        std::fs::write(lo.join("program").join("version.dll"), b"MZ planted").unwrap();
+        assert!(soffice_in(root).is_none());
+        assert!(!lo.exists() && !dir_in(root).join("lo").exists(), "옮기지 않고 치움");
+        // 바뀐 파일 → 옮겨 쓰지 않음
+        std::fs::create_dir_all(lo.join("program")).unwrap();
+        std::fs::write(lo.join("program").join(exe), b"NEW").unwrap();
+        assert!(soffice_in(root).is_none());
+        // 원래대로면 옮겨 씀
+        std::fs::create_dir_all(lo.join("program")).unwrap();
+        std::fs::write(lo.join("program").join(exe), b"OLD").unwrap();
+        assert!(soffice_in(root).is_some());
+    }
+
+    #[test]
+    fn migrated_without_check_is_verified_once() {
+        // 0.3.3 첫 판이 확인 없이 옮긴 폴더(기록에 tree_verified 없음)
+        let t = tempfile::tempdir().unwrap();
+        let root = t.path();
+        let exe = if cfg!(windows) { "soffice.exe" } else { "soffice" };
+        let lo = dir_in(root).join("lo");
+        std::fs::create_dir_all(lo.join("program")).unwrap();
+        std::fs::write(lo.join("program").join(exe), b"OLD").unwrap();
+        std::fs::write(root.join(".test-tree-sha256"), tree_sha256(&lo).unwrap()).unwrap();
+        std::fs::write(marker_path(root), br#"{"pack_version":1,"sha256":"x","source":"0.3.x","lo_version":"26.2.6.3"}"#).unwrap();
+        assert!(soffice_in(root).is_some());
+        assert!(read_marker(root).unwrap().tree_verified, "한 번 확인하고 기록");
+        // 확인 기록이 없는데 내용이 다르면 쓰지 않고 치움
+        std::fs::write(marker_path(root), br#"{"pack_version":1,"sha256":"x","source":"0.3.x","lo_version":"26.2.6.3"}"#).unwrap();
+        std::fs::write(lo.join("program").join("extra.dll"), b"MZ").unwrap();
+        assert!(soffice_in(root).is_none());
+        assert!(!lo.exists() && read_marker(root).is_none());
     }
 
     #[test]

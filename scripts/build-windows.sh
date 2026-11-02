@@ -45,6 +45,11 @@ fi
 got=$(sha256sum "$DT" | cut -d' ' -f1)
 [ "$got" = "$DT_SHA" ] || { echo "문서 도구 묶음 SHA-256이 앱에 고정한 값과 다릅니다: $got (고정 $DT_SHA)" >&2; exit 1; }
 echo "문서 도구 묶음: $DT_ASSET $(stat -c %s "$DT") B, SHA-256 고정값과 같음"
+# 0.3.3(보안 강화): 0.3.x 폴더 옮겨 쓰기 확인에 쓰는 "폴더 내용 해시"가 이 묶음과 맞는지
+DT_TREE=$(grep -o 'pub const LO_TREE_SHA256: &str = "[0-9a-f]*"' crates/core/src/doctools.rs | sed 's/.*"\(.*\)"/\1/')
+got_tree=$(python3 scripts/doctools-tree-hash.py "$DT" | cut -d' ' -f1)
+[ "$got_tree" = "$DT_TREE" ] || { echo "문서 도구 폴더 내용 해시가 앱의 값과 다릅니다: $got_tree (앱 $DT_TREE)" >&2; exit 1; }
+echo "문서 도구 폴더 내용 해시: 앱의 값과 같음"
 
 # 0.3.0: 오픈소스 고지 + 도구 묶음(설치본 리소스와 휴대용 exe 덧붙이기에 같이 씀)
 mkdir -p target/tools
