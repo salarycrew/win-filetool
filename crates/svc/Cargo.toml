@@ -16,6 +16,7 @@ static_vcruntime = "3.0.0"
 [dependencies]
 filetool-core = { path = "../core" }
 chrono = { version = "0.4.45", default-features = false, features = ["clock", "std"] }
+sha2 = "0.10.9"
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61.2", features = [

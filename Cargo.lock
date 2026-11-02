@@ -1241,6 +1241,7 @@ version = "0.3.3"
 dependencies = [
  "chrono",
  "filetool-core",
+ "sha2 0.10.9",
  "static_vcruntime",
  "windows-sys 0.61.2",
 ]

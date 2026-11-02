@@ -79,6 +79,8 @@ export PATH="$STUB:$PATH" TAURI_LINUX_AYATANA_APPINDICATOR=true
 
 # 점검·자동화용 동반 CLI + 2c 빠른 검색 서비스(설치 파일에 들어가므로 앱보다 먼저)
 cargo xwin build --release --target "$TARGET" -p filetool-cli -p filetool-svc
+# 0.3.3(보안 강화): 서비스 exe에 빌드 확인값(자기 SHA-256)을 넣는다 — 설치 때 복사할 파일이 실행 중인 것과 같은지 본다
+python3 scripts/patch-svc-hash.py "$REL/filetool-svc.exe"
 # GUI 앱 + NSIS 설치 파일(프런트엔드 npm run build까지 tauri CLI가 처리)
 npx tauri build --runner cargo-xwin --target "$TARGET" --bundles nsis
 
@@ -122,6 +124,14 @@ for f in "$PORT" "$SETUP" "$REL/win-filetool.exe" "$REL/filetool-cli.exe" "$REL/
 done
 [ "$leak" = 0 ] || { echo "개인 정보 점검 실패" >&2; exit 1; }
 echo "개인 경로 점검: 없음"
+# 3) 0.3.3(보안 강화): 앱·CLI·서비스는 정적 가져오기 DLL을 System32에서만(DependentLoadFlags 0x800)
+if command -v llvm-readobj >/dev/null; then
+  for f in "$REL/win-filetool.exe" "$REL/filetool-cli.exe" "$REL/filetool-svc.exe"; do
+    dl=$(llvm-readobj --coff-load-config "$f" | sed -n 's/.*DependentLoadFlags: //p')
+    [ "$dl" = "0x800" ] || { echo "오류: $f DependentLoadFlags=$dl (0x800이어야 함)" >&2; exit 1; }
+  done
+  echo "DLL 검색 점검: DependentLoadFlags 0x800 (앱·CLI·서비스)"
+fi
 (cd dist-win && sha256sum "$(basename "$PORT")" "$(basename "$SETUP")" "$DT_ASSET" > SHA256SUMS.txt && cat SHA256SUMS.txt)
 ls -l dist-win dist-win/cli
 sha256sum dist-win/cli/*.exe target/tools/tools.pack

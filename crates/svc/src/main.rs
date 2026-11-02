@@ -24,6 +24,104 @@ fn main() {
     std::process::exit(win::main());
 }
 
+/// 0.3.3(보안 강화): 설치할 때 복사하는 실행 파일이 **지금 돌고 있는 이 빌드와 같은지** 빌드 때 넣은 SHA-256으로 확인한다.
+///
+/// [설치·다시 설치(갱신)]은 사용자가 쓸 수 있는 앱 폴더의 `filetool-svc.exe`를 UAC로 실행하고, 관리자 권한 프로세스가 그 **경로**를
+/// 다시 열어 Program Files로 복사한다. 그 사이 같은 사용자의 다른 프로그램이 실행 중인 exe 이름을 바꾸고 같은 경로에 다른 파일을
+/// 두면, 그 파일이 SYSTEM 서비스가 된다. 그래서:
+/// - 빌드가 끝난 뒤 `scripts/patch-svc-hash.py`가 아래 [`SELF_HASH`]의 32바이트 자리에 "그 자리를 0으로 둔 파일 전체의 SHA-256"을 써 넣는다
+/// - 설치는 경로를 **쓰기·지우기 공유 없이** 한 번 열어 다 읽고, 같은 계산으로 메모리의(=실행 중인 이미지의) 값과 비교한 뒤,
+///   읽은 그 바이트를 복사한다(다시 열지 않음)
+mod selfhash {
+    use sha2::{Digest, Sha256};
+
+    /// `[표식 16][SHA-256 32][끝 표식 16]`. 표식 문자열은 이 정적 값에만 있다(찾을 때도 이 값을 씀 → 파일에 한 번만 나옴)
+    #[used]
+    pub static SELF_HASH: [u8; 64] = *b"WFT-SVC-SHA256::\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0::WFT-SVC-END:::";
+
+    fn embedded() -> [u8; 64] {
+        // 컴파일러가 상수로 접지 않게(빌드 뒤 파일에서 바뀐 값을 읽어야 함)
+        unsafe { std::ptr::read_volatile(&SELF_HASH) }
+    }
+
+    /// 실행 중인 이미지에 든 값(아직 넣지 않았으면 None)
+    pub fn expected() -> Option<[u8; 32]> {
+        let e = embedded();
+        let h: [u8; 32] = e[16..48].try_into().ok()?;
+        (h != [0u8; 32]).then_some(h)
+    }
+
+    /// 파일 바이트에서 표식을 찾아(정확히 한 번) 해시 자리를 0으로 둔 SHA-256과 그 자리에 적힌 값
+    pub fn compute(bytes: &[u8]) -> Result<([u8; 32], [u8; 32]), String> {
+        let e = embedded();
+        let (head, tail) = (&e[..16], &e[48..]);
+        let mut at = None;
+        let mut i = 0;
+        while let Some(off) = bytes[i..].windows(16).position(|w| w == head) {
+            let pos = i + off;
+            if bytes.len() >= pos + 64 && &bytes[pos + 48..pos + 64] == tail {
+                if at.is_some() {
+                    return Err("확인값 자리가 두 번 나옵니다".into());
+                }
+                at = Some(pos);
+            }
+            i = pos + 1;
+        }
+        let pos = at.ok_or("확인값 자리를 찾지 못했습니다")?;
+        let written: [u8; 32] = bytes[pos + 16..pos + 48].try_into().unwrap();
+        let mut h = Sha256::new();
+        h.update(&bytes[..pos + 16]);
+        h.update([0u8; 32]);
+        h.update(&bytes[pos + 48..]);
+        Ok((h.finalize().into(), written))
+    }
+
+    /// 복사할 바이트가 실행 중인 빌드와 같은지
+    pub fn verify(bytes: &[u8]) -> Result<(), String> {
+        let want = expected().ok_or("이 실행 파일에는 빌드 확인값이 없습니다(설치용으로 만든 파일이 아님)")?;
+        let (got, written) = compute(bytes)?;
+        if got != want || written != want {
+            return Err("복사하려는 실행 파일이 지금 실행 중인 것과 다릅니다(UAC 창이 뜬 뒤 바뀌었을 수 있음) — 설치하지 않음".into());
+        }
+        Ok(())
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        fn patched(prefix: &[u8], suffix: &[u8]) -> Vec<u8> {
+            let mut v = prefix.to_vec();
+            v.extend_from_slice(&SELF_HASH);
+            v.extend_from_slice(suffix);
+            let (h, _) = compute(&v).unwrap();
+            let pos = prefix.len();
+            v[pos + 16..pos + 48].copy_from_slice(&h);
+            v
+        }
+
+        #[test]
+        fn hash_slot_rules() {
+            let v = patched(b"MZ....code....", b"...more data...");
+            let (h, written) = compute(&v).unwrap();
+            assert_eq!(h, written, "써 넣은 값 = 자리를 0으로 둔 해시");
+            // 한 바이트라도 바뀌면 다름
+            let mut bad = v.clone();
+            bad[3] ^= 1;
+            let (h2, w2) = compute(&bad).unwrap();
+            assert_ne!(h2, w2);
+            // 표식이 없거나 두 번이면 거절
+            assert!(compute(b"no marker here").is_err());
+            let mut twice = v.clone();
+            twice.extend_from_slice(&SELF_HASH);
+            assert!(compute(&twice).is_err());
+            // 시험 빌드(값을 넣지 않음)는 설치 거절
+            assert!(expected().is_none());
+            assert!(verify(&v).is_err());
+        }
+    }
+}
+
 #[cfg(windows)]
 mod win {
     use std::io::Write;
@@ -94,6 +192,41 @@ mod win {
         }};
     }
 
+    /// 0.3.3(보안 강화): `--report` 파일은 관리자 권한으로 만든다. 사용자 TEMP 아래라 같은 사용자의 프로그램이 그 경로에 링크나
+    /// 접합점을 미리 둘 수 있으므로: 이미 있는 이름은 열지 않고(`CREATE_NEW` — 링크도 이름이 있으므로 실패), 마지막 항목의 재분석 지점을
+    /// 따라가지 않으며(`FILE_FLAG_OPEN_REPARSE_POINT`), 만든 파일의 실제 위치(`GetFinalPathNameByHandleW`)가 준 경로와 다르면(경로 중간의
+    /// 접합점) 그 핸들로 지우고 쓰지 않는다. 결과 파일이 없어도 설치는 계속한다(앱은 종료 코드로 성공·실패를 안다).
+    fn open_report(p: &str) -> Option<std::fs::File> {
+        use std::os::windows::fs::OpenOptionsExt;
+        use std::os::windows::io::AsRawHandle;
+        use windows_sys::Win32::Storage::FileSystem::{GetFinalPathNameByHandleW, GetLongPathNameW, SetFileInformationByHandle, FileDispositionInfo, FILE_DISPOSITION_INFO};
+        const FILE_FLAG_OPEN_REPARSE_POINT: u32 = 0x0020_0000;
+        const DELETE: u32 = 0x1_0000;
+        const GENERIC_WRITE: u32 = 0x4000_0000;
+        let path = Path::new(p);
+        let f = std::fs::OpenOptions::new().access_mode(GENERIC_WRITE | DELETE).create_new(true).custom_flags(FILE_FLAG_OPEN_REPARSE_POINT).open(path).ok()?;
+        let h = f.as_raw_handle() as windows_sys::Win32::Foundation::HANDLE;
+        let mut buf = vec![0u16; 1024];
+        let n = unsafe { GetFinalPathNameByHandleW(h, buf.as_mut_ptr(), buf.len() as u32, 0) } as usize;
+        let actual = String::from_utf16_lossy(&buf[..n.min(buf.len())]);
+        let actual = actual.strip_prefix(r"\\?\").unwrap_or(&actual).to_string();
+        // 준 경로의 폴더를 긴 이름으로(8.3 짧은 이름 차이는 같은 곳)
+        let want = path.parent().map(|d| {
+            let w = wide_path(d);
+            let mut lb = vec![0u16; 1024];
+            let m = unsafe { GetLongPathNameW(w.as_ptr(), lb.as_mut_ptr(), lb.len() as u32) } as usize;
+            let dir = if m > 0 && m < lb.len() { String::from_utf16_lossy(&lb[..m]) } else { d.display().to_string() };
+            format!("{}\\{}", dir.trim_end_matches('\\'), path.file_name().map(|x| x.to_string_lossy().into_owned()).unwrap_or_default())
+        });
+        if n == 0 || want.as_deref().is_none_or(|w| !w.eq_ignore_ascii_case(&actual)) {
+            let di = FILE_DISPOSITION_INFO { DeleteFile: true };
+            unsafe { SetFileInformationByHandle(h, FileDispositionInfo, &di as *const _ as *const _, std::mem::size_of::<FILE_DISPOSITION_INFO>() as u32) };
+            eprintln!("--report 경로가 다른 곳을 가리킵니다({actual}) — 결과 파일을 쓰지 않음");
+            return None;
+        }
+        Some(f)
+    }
+
     pub fn wide(s: &str) -> Vec<u16> {
         std::ffi::OsStr::new(s).encode_wide().chain(std::iter::once(0)).collect()
     }
@@ -128,8 +261,7 @@ mod win {
             }
         };
         if let Some(p) = args.iter().position(|a| a == "--report").and_then(|i| args.get(i + 1)) {
-            let f = std::fs::File::create(p).ok();
-            let _ = REPORT.set(Mutex::new(f));
+            let _ = REPORT.set(Mutex::new(open_report(p)));
         }
         let r = match cmd {
             "run" => return run_dispatcher(),
@@ -260,10 +392,23 @@ mod win {
         Ok(())
     }
 
-    /// 새 exe를 옆에 복사해 두고 바꿔 넣는다. 막 멈춘 서비스·백신 검사가 잠깐 잡고 있을 수 있어 10초까지 다시 해 본다
-    fn replace_exe(src: &Path, dir: &Path, dst: &Path) -> Result<(), String> {
+    /// 0.3.3(보안 강화): 자기 실행 파일을 **쓰기·지우기 공유 없이** 한 번 열어 다 읽고, 빌드 때 넣은 확인값으로 실행 중인 것과 같은지 본다.
+    /// (이 바이트를 그대로 복사한다 — 경로를 다시 열지 않음)
+    fn read_own_image(src: &Path) -> Result<Vec<u8>, String> {
+        use std::io::Read;
+        use std::os::windows::fs::OpenOptionsExt;
+        const FILE_SHARE_READ: u32 = 0x1;
+        let mut f = std::fs::OpenOptions::new().read(true).share_mode(FILE_SHARE_READ).open(src).map_err(|e| format!("{}: {e}", src.display()))?;
+        let mut bytes = Vec::new();
+        f.read_to_end(&mut bytes).map_err(|e| format!("{}: {e}", src.display()))?;
+        crate::selfhash::verify(&bytes)?;
+        Ok(bytes)
+    }
+
+    /// 새 exe를 옆에 써 두고 바꿔 넣는다. 막 멈춘 서비스·백신 검사가 잠깐 잡고 있을 수 있어 10초까지 다시 해 본다
+    fn replace_exe(bytes: &[u8], dir: &Path, dst: &Path) -> Result<(), String> {
         let tmp = dir.join(format!("{EXE_NAME}.new"));
-        std::fs::copy(src, &tmp).map_err(|e| format!("{}: {e}", tmp.display()))?;
+        std::fs::write(&tmp, bytes).map_err(|e| format!("{}: {e}", tmp.display()))?;
         let t0 = Instant::now();
         loop {
             match std::fs::rename(&tmp, dst) {
@@ -427,7 +572,18 @@ mod win {
         set_dacl(&dir, INSTALL_DIR_SDDL)?;
         let same = src.canonicalize().ok() == dst.canonicalize().ok();
         if !same {
-            if let Err(e) = replace_exe(&src, &dir, &dst) {
+            // 0.3.3: 복사할 내용을 서비스를 멈추기 전에 확인할 수 있으면 좋지만, 멈춘 뒤 실패하면 아래에서 다시 켠다
+            let bytes = match read_own_image(&src) {
+                Ok(b) => b,
+                Err(e) => {
+                    if let Some(s) = &existing {
+                        let back = unsafe { StartServiceW(s.0, 0, std::ptr::null()) } != 0;
+                        say!("      확인 실패 → 이전 서비스 {}", if back { "다시 시작함" } else { "다시 시작 못 함" });
+                    }
+                    return Err(e.into());
+                }
+            };
+            if let Err(e) = replace_exe(&bytes, &dir, &dst) {
                 // 갱신하다 실패하면 멈춰 둔 이전 서비스를 다시 켜 둔다(멈춘 채로 두지 않음)
                 if let Some(s) = &existing {
                     let back = unsafe { StartServiceW(s.0, 0, std::ptr::null()) } != 0;
