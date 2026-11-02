@@ -4,6 +4,7 @@
 //! - 별도 프로세스: PowerShell이 [`SCRIPT`]를 실행하고 그 안에서 Office 프로그램을 **새로** 하나 띄운다(앱에 새 의존성 없음).
 //!   새 프로세스가 생기지 않으면(사용자가 쓰는 PowerPoint에 붙음) 아무것도 하지 않고 그만둔다 — 사용자 문서를 건드리지 않는다.
 //! - 원본은 열지 않는다: 작업 임시 폴더에 ASCII 이름(`in.docx`)으로 복사한 것을 읽기 전용으로 열고, 임시 폴더에 저장한 뒤 옮긴다.
+//! - 0.3.3(보안 강화): 그 복사본에서 원격 서식·외부 통합 문서 연결을 먼저 뺀다([`crate::ooxml::extref`]).
 //! - 보안(문서를 열기 전에): `AutomationSecurity = 3`(msoAutomationSecurityForceDisable — 매크로·AutoOpen·Workbook_Open 안 돎),
 //!   알림 끔, 최근 파일에 넣지 않음, 연결 갱신 안 함(Excel `UpdateLinks:=0`, Word `UpdateLinksAtOpen` 잠시 끔), 원본에 저장하지 않음.
 //!   암호 문서는 틀린 암호를 주어 묻지 않고 바로 실패.
@@ -327,6 +328,8 @@ mod win {
         let ext = input.extension().and_then(|e| e.to_str()).unwrap_or("bin").to_ascii_lowercase();
         let tmp_in = job.path().join(format!("in.{ext}"));
         std::fs::copy(input, &tmp_in).map_err(io_err(input))?;
+        // 0.3.3(보안 강화): 원격 서식(attachedTemplate)·외부 통합 문서 연결(externalLink)을 임시 복사본에서 뺀다
+        crate::ooxml::extref::strip_external_refs(&tmp_in)?;
         let tmp_out = job.path().join(format!("out.{}", target.ext()));
         let script = job.path().join("msoffice.ps1");
         std::fs::write(&script, format!("\u{feff}{SCRIPT}")).map_err(io_err(&script))?;

@@ -39,10 +39,21 @@ pub fn engine_label(e: docs::Engine) -> String {
 }
 
 pub fn run(cmd: &str, args: &[String]) -> Result<Option<ExitCode>> {
-    if !matches!(cmd, "engines" | "engine" | "office-convert" | "doctools" | "doctools-serve" | "pdf-blank" | "hwp-script-make") {
+    if !matches!(cmd, "engines" | "engine" | "office-convert" | "doctools" | "doctools-serve" | "pdf-blank" | "hwp-script-make" | "office-extref-make") {
         return Ok(None);
     }
     let f = Flags::parse(&args[1.min(args.len())..]);
+    if cmd == "office-extref-make" {
+        // 0.3.3(보안 강화) 시험용: 원격 서식을 가리키는 docx·외부 통합 문서 연결이 든 xlsx를 만든다(직접 만든 시험 자료)
+        let Some(dir) = f.rest.first() else { return Err(Error::Invalid("office-extref-make <폴더>".into())) };
+        let dir = std::path::Path::new(dir);
+        std::fs::create_dir_all(dir).map_err(|e| Error::Invalid(e.to_string()))?;
+        use filetool_core::ooxml::extref::samples;
+        samples::docx_with_remote_template(&dir.join("remote-template.docx"));
+        samples::xlsx_with_external_link(&dir.join("external-link.xlsx"));
+        println!("만듦: {}, {}", dir.join("remote-template.docx").display(), dir.join("external-link.xlsx").display());
+        return Ok(Some(ExitCode::SUCCESS));
+    }
     if cmd == "hwp-script-make" {
         // 시험용: 한글 5 파일의 문서 스크립트(Scripts/DefaultJScript)에 OnDocument_Open을 넣은 사본을 만든다(매크로가 도는지 보기)
         let (src, dst, js) = (f.rest.first(), f.rest.get(1), f.rest.get(2));

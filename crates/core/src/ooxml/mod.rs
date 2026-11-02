@@ -7,6 +7,7 @@
 //! 두 모듈 모두 결과를 메모리에서 만든 뒤 [`crate::paths::write_new`]로 새 파일로만 쓴다(덮어쓰지 않음).
 
 pub mod docx;
+pub mod extref;
 pub mod pptx;
 
 use std::io::{Cursor, Write};
