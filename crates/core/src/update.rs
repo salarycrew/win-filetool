@@ -182,9 +182,19 @@ pub fn parse_release(body: &str) -> Option<Release> {
     Some(Release { version: v.display(), url })
 }
 
-/// 브라우저로 열어도 되는 주소인가: 이 저장소의 릴리스 쪽, 따옴표·공백·제어 문자 없음
+/// 브라우저로 열어도 되는 주소인가: 0.3.3(보안 강화) 이 저장소의 **릴리스 태그 쪽 한 가지 모양만** —
+/// `https://github.com/salarycrew/win-filetool/releases/tag/v<숫자>.<숫자>.<숫자>`(뒤에 `-` 붙은 미리보기 판 이름은 영숫자·`.`·`-`만).
+/// 접두사만 보던 0.3.2까지는 `…/releases/../../../x` 같은 주소도 통과했다.
 pub fn safe_release_url(u: &str) -> bool {
-    u.starts_with(RELEASES_PREFIX) && u.len() < 300 && u.bytes().all(|b| b.is_ascii_graphic() && b != b'"' && b != b'\'' && b != b'<' && b != b'>' && b != b'\\')
+    let Some(tag) = u.strip_prefix(RELEASES_PREFIX).and_then(|r| r.strip_prefix("tag/v")) else { return false };
+    let (core, pre) = match tag.split_once('-') {
+        Some((c, p)) => (c, Some(p)),
+        None => (tag, None),
+    };
+    let parts: Vec<&str> = core.split('.').collect();
+    let nums_ok = parts.len() == 3 && parts.iter().all(|p| !p.is_empty() && p.len() <= 9 && p.bytes().all(|b| b.is_ascii_digit()));
+    let pre_ok = pre.is_none_or(|p| !p.is_empty() && p.len() <= 32 && p.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'.' || b == b'-') && !p.contains(".."));
+    nums_ok && pre_ok
 }
 
 /// HTTP GET 한 번(본문 문자열). 실패는 짧은 이유 글
@@ -404,6 +414,18 @@ mod tests {
         assert!(safe_release_url("https://github.com/salarycrew/win-filetool/releases/tag/v0.3.2"));
         assert!(!safe_release_url("https://github.com/salarycrew/win-filetool-evil/releases/tag/v1"));
         assert!(!safe_release_url("http://github.com/salarycrew/win-filetool/releases/tag/v1"));
+        // 0.3.3(보안 강화): 태그 주소 한 가지 모양만
+        assert!(safe_release_url("https://github.com/salarycrew/win-filetool/releases/tag/v0.10.123"));
+        assert!(safe_release_url("https://github.com/salarycrew/win-filetool/releases/tag/v1.0.0-beta.1"));
+        assert!(!safe_release_url("https://github.com/salarycrew/win-filetool/releases/../../../x"));
+        assert!(!safe_release_url("https://github.com/salarycrew/win-filetool/releases/tag/v0.3.2/../../../../x"));
+        assert!(!safe_release_url("https://github.com/salarycrew/win-filetool/releases/tag/v0.3"));
+        assert!(!safe_release_url("https://github.com/salarycrew/win-filetool/releases/tag/v0.3.2.1"));
+        assert!(!safe_release_url("https://github.com/salarycrew/win-filetool/releases/tag/v0.3.x"));
+        assert!(!safe_release_url("https://github.com/salarycrew/win-filetool/releases/tag/v0.3.2?x=1"));
+        assert!(!safe_release_url("https://github.com/salarycrew/win-filetool/releases/tag/v0.3.2-..%2f"));
+        assert!(!safe_release_url("https://github.com/salarycrew/win-filetool/releases/download/v0.3.2/x.exe"));
+        assert!(!safe_release_url("https://github.com/salarycrew/win-filetool/releases/latest"));
         // 저장된 주소도 검사
         let st = UpdateSettings { latest: Some("0.3.2".into()), latest_url: Some("file:///C:/x.exe".into()), ..Default::default() };
         assert_eq!(banner(&st, "0.3.1").unwrap().1, RELEASES_LATEST_PAGE);
