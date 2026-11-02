@@ -17,11 +17,12 @@ import { aboutScreen } from "./screens/about";
 import { homeScreen } from "./screens/home";
 import { jobScreen } from "./screens/job";
 import { moreScreen, MORE_IDS } from "./screens/more";
+import { onedriveScreen } from "./screens/onedrive";
 import type { JobId } from "./screens/core";
 
 const NAV: Screen[] = [homeScreen, moreScreen];
 const BOTTOM: Screen[] = [settingsScreen];
-const ALL: Screen[] = [homeScreen, jobScreen, moreScreen, convertScreen, pdfEditScreen, organizeScreen, searchScreen, watchScreen, settingsScreen, aboutScreen];
+const ALL: Screen[] = [homeScreen, jobScreen, moreScreen, convertScreen, pdfEditScreen, organizeScreen, searchScreen, watchScreen, settingsScreen, aboutScreen, onedriveScreen];
 const IDS = ALL.map((s) => s.id) as string[];
 /** 왼쪽 메뉴에서 켜져 보일 항목: 할 일 화면 → 홈, 더 보기 안 화면 → 더 보기 */
 const navOf = (id: ScreenId): ScreenId => (id === "job" ? "home" : MORE_IDS.includes(id) ? "more" : id);

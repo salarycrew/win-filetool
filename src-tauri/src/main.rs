@@ -17,6 +17,7 @@ mod cmd_doctools;
 mod cmd_runtime;
 mod cmd_pdfedit;
 mod cmd_office;
+mod cmd_onedrive;
 mod cmd_tools;
 mod cmd_hwp;
 mod cmd_ui;
@@ -1341,6 +1342,11 @@ fn main() {
             cmd_core::ctx_menu_set,
             cmd_core::ctx_take,
             cmd_core::ui_ready,
+            // 0.3.4 OneDrive가 가져간 폴더 되돌리기
+            cmd_onedrive::onedrive_check,
+            cmd_onedrive::onedrive_restore,
+            cmd_onedrive::onedrive_undo,
+            cmd_onedrive::onedrive_open,
             // 0.3.1 새 버전 알림
             cmd_update::update_view,
             cmd_update::update_check,

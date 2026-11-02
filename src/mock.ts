@@ -141,6 +141,39 @@ const H: Record<string, (a: Args) => unknown> = {
   },
   rename_apply: async (a) => ({ done: (a.pairs as unknown[]).length, failed: [], undo_id: "u1" }),
   rename_undo: async () => ({ done: 5, failed: [] }),
+  // 0.3.4 OneDrive 폴더 되돌리기(?od=A|B|C|D 로 바탕 화면 경우 고르기)
+  onedrive_check: async () => {
+    await sleep(200);
+    const c = (q.get("od") ?? "B") as "A" | "B" | "C" | "D";
+    const U = "C:\\Users\\me", OD = `${U}\\OneDrive`;
+    const cnt = (files: number, bytes: number, cf = 0, cb = 0) => ({ files, bytes, cloud_files: cf, cloud_bytes: cb, truncated: false });
+    const desk = {
+      A: { case: "A", title: "백업 켜짐 — 바탕 화면 파일은 OneDrive 안에 있어요", current: `${OD}\\바탕 화면`, in_onedrive: true, here: cnt(48, 230_000_000, 12, 180_000_000) },
+      B: { case: "B", title: "백업은 꺼졌는데 바탕 화면 파일이 OneDrive 폴더에 남아 있어요", current: `${U}\\Desktop`, in_onedrive: false, here: cnt(2, 4096), onedrive_copy: `${OD}\\바탕 화면`, onedrive_count: cnt(48, 230_000_000, 12, 180_000_000) },
+      C: { case: "C", title: "바탕 화면은 이 PC 폴더에 있어요 — 할 일 없어요", current: `${U}\\Desktop`, in_onedrive: false, here: cnt(31, 52_000_000) },
+      D: { case: "D", title: "바탕 화면이 비어 있고 OneDrive 폴더도 없어요", current: `${U}\\Desktop`, in_onedrive: false, here: cnt(0, 0) },
+    }[c];
+    const base = (key: string, name: string) => ({ key, name, detail: "", current_exists: true, local_default: `${U}\\${key}`, local_default_exists: true });
+    return {
+      folders: [
+        { ...base("desktop", "바탕 화면"), ...desk },
+        { ...base("documents", "문서"), case: "C", title: "문서는 이 PC 폴더에 있어요 — 할 일 없어요", current: `${U}\\Documents`, in_onedrive: false, here: cnt(1204, 3_400_000_000) },
+        { ...base("pictures", "사진"), case: "C", title: "사진은 이 PC 폴더에 있어요 — 할 일 없어요", current: `${U}\\Pictures`, in_onedrive: false, here: cnt(388, 1_900_000_000) },
+      ],
+      accounts: c === "C" ? [] : [{ root: OD, business: false, signed_in: true, exists: c !== "D" }],
+      onedrive_running: c !== "C", onedrive_set_up: c !== "C", fake: true,
+      summary: { A: "1개 폴더를 OneDrive가 백업하고 있어요. 파일은 OneDrive 안에 있어요.", B: "1개 폴더의 파일이 OneDrive 폴더에 남아 있어요 — [가져오기]로 복사할 수 있어요.", C: "OneDrive가 이 PC에 설정되어 있지 않아요. 바탕 화면·문서·사진은 이 PC 폴더에 있어요 — 할 일 없어요.", D: "OneDrive 폴더가 없어요 — 휴지통을 확인해 보세요." }[c],
+      backup_off_steps: "작업 표시줄 오른쪽의 OneDrive 구름 아이콘 → 톱니바퀴(도움말 및 설정) → [설정] → [동기화 및 백업] → [백업 관리] → 끌 폴더의 스위치를 끄고 [백업 중지].",
+      delete_warning: "OneDrive 폴더에서 지우면 클라우드(OneDrive 웹)와 같은 계정의 다른 PC에서도 지워져요.",
+      recycle_help: "OneDrive 폴더를 지웠다면: ① 이 PC의 휴지통 ② OneDrive 웹 → [휴지통].",
+    };
+  },
+  onedrive_restore: async (a) => {
+    for (let i = 1; i <= 8; i++) { await sleep(150); emit("tools_progress", { job: a.job, done: i * 6, total: 48, current: `보고서\\${i}.docx` }); }
+    return { id: "m1", from: "C:\\Users\\me\\OneDrive\\바탕 화면", to: "C:\\Users\\me\\Desktop", copied: 44, same: 2, renamed: 1, copied_bytes: 229_000_000, cloud_skipped: 0, cloud_skipped_bytes: 0, skipped: [{ path: "C:\\Users\\me\\OneDrive\\바탕 화면\\잠긴.xlsx", reason: "다른 프로그램이 쓰고 있어요(잠김)" }], cancelled: false, log: "x", summary: "" };
+  },
+  onedrive_undo: async () => ({ summary: "복사본 45개를 지웠어요" }),
+  onedrive_open: async () => null,
   dup_scan: async (a) => {
     for (let i = 1; i <= 10; i++) { await sleep(120); emit("tools_progress", { job: a.job, done: i * 120, total: 1200, current: `${D}\\사진\\IMG_${4000 + i}.JPG` }); }
     return { scanned: 1200, wasted_bytes: 9_800_000, groups: [

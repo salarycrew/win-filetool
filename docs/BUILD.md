@@ -77,6 +77,8 @@ ssh <windows-pc> "C:\work\filetool-cli.exe selftest C:\work\selftest"     # 휴�
   (한글만 `WIN_FILETOOL_HIDE_HANCOM=1`, Office만 `WIN_FILETOOL_HIDE_OFFICE=1`), 문서 도구 받을 주소 `WIN_FILETOOL_DOCTOOLS_URL=http://127.0.0.1:<포트>/…`.
   시험용 앱: `npx tauri build --runner cargo-xwin --target x86_64-pc-windows-msvc --no-bundle --features test-hooks`(배포 파일에 쓰지 않음).
   해시는 바꿀 수 없으므로 가짜 서버는 진짜 묶음(맞음) 또는 바꾼 묶음(거절 시험)을 준다.
+- 0.3.4 OneDrive 되돌리기 시험: `WIN_FILETOOL_ONEDRIVE_FAKE=<json>`(프로필·폴더 위치·OneDrive 계정·실행 여부)로 가짜 환경을 준다 — **CLI와 시험용 앱에서만**.
+  `filetool-cli onedrive-check`는 진짜 PC를 읽기만 한다(가짜 변수가 없을 때).
 - 검색 벤치마크(합성 100만 항목): `cargo test --release -p filetool-core --test search_bench -- --ignored --nocapture`
 
 ## 배포 이름

@@ -1,5 +1,5 @@
 // 화면 이동(모듈끼리 서로 import하지 않게 한 곳에서)
-export type ScreenId = "home" | "job" | "more" | "convert" | "pdfedit" | "organize" | "search" | "watch" | "settings" | "about";
+export type ScreenId = "home" | "job" | "more" | "convert" | "pdfedit" | "organize" | "search" | "watch" | "settings" | "about" | "onedrive";
 export interface Screen {
   id: ScreenId;
   title: string;

@@ -1078,3 +1078,26 @@ lo-trim에서 다시 만들어도 같은 SHA-256). 주소 `…/releases/download
 | 남는 것 | 휴대용 [설정] "우클릭 메뉴·시작 프로그램 지우기", 제거 프로그램이 LOCALAPPDATA 자료를 한 번 더 물음 | `settings.ts`, `installer-hooks.nsh` |
 | 새 버전 주소 | `…/releases/tag/v<숫자>.<숫자>.<숫자>`만 | `update.rs` |
 | 검색 보이기 | 바꾸지 않음(설계대로). README·[설정]에 "C:\Users 밖 파일은 열 수 없어도 이름이 보일 수 있음" | |
+
+## 0.3.4 OneDrive가 가져간 폴더 되돌리기
+
+[더 보기] → "OneDrive가 가져간 폴더 되돌리기"(홈 6개에는 넣지 않음). 코어 `crates/core/src/onedrive.rs`, 명령 `src-tauri/src/cmd_onedrive.rs`, 화면 `src/screens/onedrive.ts`.
+
+- **진단(읽기만)**: 바탕 화면·문서·사진(다운로드는 OneDrive 안이거나 OneDrive에 남은 것이 있을 때만)의 지금 위치(`SHGetKnownFolderPath`, `KF_FLAG_DONT_VERIFY`),
+  OneDrive 계정 폴더(`HKCU\Software\Microsoft\OneDrive\Accounts\*\UserFolder`, 개인·회사), OneDrive.exe 실행 여부(프로세스 목록), 파일 수·크기,
+  클라우드에만 있는 파일(속성 `RECALL_ON_DATA_ACCESS`·`RECALL_ON_OPEN`·`OFFLINE` — 디렉터리 목록에서 읽어 내려받기를 일으키지 않음), 이 PC 기본 위치(`%USERPROFILE%\Desktop` 등)와 그 파일 수.
+  `desktop.ini`·`Thumbs.db`는 세지도 복사하지도 않는다.
+- **경우**: A 지금 위치가 OneDrive 안(계정 폴더, 또는 계정이 없어도 프로필 아래 `OneDrive…`) · B 지금 위치는 이 PC인데 OneDrive 폴더 안 `Desktop`/`바탕 화면` 등에 파일이 있음 ·
+  C 그 밖 · D 가리키는 폴더가 없음, 또는 이 PC 폴더가 비었고 등록된 OneDrive 폴더가 없음.
+  "백업 켜짐"은 A(위치가 OneDrive 안)로 판단한다 — OneDrive의 내부 값은 읽지 않는다.
+- **A**: [OneDrive 백업 끄기 열기] = `ms-settings:backup`(Windows 백업 → OneDrive 폴더 동기화 → [동기화 설정 관리]) + 직접 하는 순서(구름 아이콘 → 톱니바퀴 →
+  [설정] → [동기화 및 백업] → [백업 관리] → [백업 중지]). 앱은 `User Shell Folders`를 고치지 않고 OneDrive 설정을 바꾸지 않는다. 돌아와 [다시 확인].
+- **B 가져오기 = 복사**: 쓰는 곳이 OneDrive 안이거나 원본 폴더와 겹치면 멈춤(`guard_dest`). 같은 이름 → 크기·SHA-256이 같으면 건너뜀, 다르면 ` (OneDrive에서)`,
+  ` (OneDrive에서 2)` …(그 이름에 같은 내용이 이미 있으면 건너뜀). `create_new`로만 쓰고, 다 쓴 뒤 다시 읽어 크기·SHA-256 비교 — 다르면 만든 파일을 지우고 실패로 적음.
+  수정 시각은 원본 것. 남은 공간 = 새로 쓸 크기 + 64 MB를 먼저 확인. 260자 넘는 경로, 잠김(공유 위반)·권한 없음·내려받기 실패는 까닭을 적고 다음 파일로.
+  클라우드 전용: 진단에서 개수·크기를 보이고, 가져오기 때 한 번 묻는다(받기 / 받지 않고 이 PC에 있는 것만). 받기인데 OneDrive.exe가 없으면 바로 거절(기다리지 않음).
+  기록: 설정 폴더 `onedrive-restore\<번호>.jsonl`(run · 만든 폴더 · 복사한 파일 dest/src/size/sha256).
+- **되돌리기**: 기록의 파일 중 지금도 크기·SHA-256이 같고 OneDrive 쪽 원본이 그대로 있는 것만 지운다(하나뿐인 사본은 남김). 새로 만든 폴더는 비었을 때만. OneDrive 안 경로는 지우지 않음.
+  끝나면 기록을 `.jsonl.undone`으로 바꿔 두 번 되돌리지 않음.
+- **시험용**: `WIN_FILETOOL_ONEDRIVE_FAKE=<json>`(프로필·폴더 위치·계정·실행 여부·`cloud_names`) — CLI와 `test-hooks` 앱만 읽음(배포 앱은 무시).
+  CLI: `onedrive-check [--json]`, `onedrive-restore --folder desktop --dry-run|--apply [--download]`, `onedrive-undo <번호>`.

@@ -8,6 +8,7 @@ const ENTRIES: { id: ScreenId; t: string; d: string; ic: string; tone: string }[
   { id: "pdfedit", t: "PDF 편집", d: "쪽 순서·돌리기·지우기·끼워 넣기, 서명·도장, 쪽 번호, 양식 채우기", ic: "layers", tone: "red" },
   { id: "organize", t: "파일 정리", d: "이름 한꺼번에 바꾸기, 같은 파일 찾기, zip 풀기·묶기", ic: "rename", tone: "purple" },
   { id: "search", t: "검색", d: "모든 드라이브의 파일 이름을 바로 찾기(초성도 돼요)", ic: "search", tone: "teal" },
+  { id: "onedrive", t: "OneDrive가 가져간 폴더 되돌리기", d: "바탕 화면·문서·사진이 비었을 때 — 파일이 어디 있는지 찾아 이 PC 폴더로 복사(OneDrive 쪽은 그대로)", ic: "copy", tone: "blue" },
   { id: "watch", t: "감시 폴더", d: "정해 둔 폴더에 들어온 파일을 자동으로 바꾸기", ic: "watch", tone: "orange" },
   { id: "about", t: "앱 정보", d: "버전, 오픈소스 고지", ic: "info", tone: "gray" },
 ];

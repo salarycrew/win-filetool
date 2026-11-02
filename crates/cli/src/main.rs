@@ -12,6 +12,7 @@ mod conv;
 mod doctools033;
 mod hwp030;
 mod office030;
+mod onedrive034;
 mod pdf1c;
 mod core032;
 mod runtime030;
@@ -60,6 +61,7 @@ const USAGE: &str = "사용법:
   filetool-cli selftest <빈 폴더> [--apple <Pages·Numbers·Keynote 샘플 폴더>] [--only 2a]   샘플을 만들어 모든 작업을 점검
   filetool-cli core032-make <폴더> [--heic <HEIC 폴더>] [--scan-mb 30]   0.3.2 핵심 6개 시험 자료 만들기
   filetool-cli core032-run <폴더> [--only merge,compress,img2pdf,office2pdf,photo,macname]   핵심 6개를 실제 파일로 점검(표)
+  0.3.4 OneDrive가 가져간 폴더: filetool-cli onedrive-check | onedrive-restore --folder desktop --dry-run|--apply | onedrive-undo <번호> (자세히: filetool-cli help-onedrive)
   0.3.3 문서 길·Office·문서 도구: filetool-cli engines | engine | office-convert | doctools (자세히: filetool-cli help-doctools)
   (0.3.0 PDF 편집 명령은 `filetool-cli help-pdfedit`, 사진·영상·파일 정리는 `filetool-cli help-tools`)
 공통 옵션: --ffmpeg <경로> --soffice <경로>  (주면 그 경로를 먼저, 없으면 앱에 든 도구·받은 문서 도구 → 앱 설정 → PATH → 설치 폴더 순으로 찾음)";
@@ -101,11 +103,18 @@ fn run(args: &[String]) -> Result<ExitCode> {
     if let Some(code) = conv::run(cmd, args)? {
         return Ok(code);
     }
+    if cmd == "help-onedrive" {
+        println!("{}", onedrive034::USAGE);
+        return Ok(ExitCode::SUCCESS);
+    }
     if cmd == "help-doctools" {
         println!("{}", doctools033::USAGE);
         return Ok(ExitCode::SUCCESS);
     }
     if let Some(code) = doctools033::run(cmd, args)? {
+        return Ok(code);
+    }
+    if let Some(code) = onedrive034::run(cmd, args)? {
         return Ok(code);
     }
     if let Some(code) = core032::run(cmd, args)? {

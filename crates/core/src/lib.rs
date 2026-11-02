@@ -43,6 +43,7 @@ pub mod media;
 pub mod msoffice;
 pub mod mediaedit;
 pub mod nfc;
+pub mod onedrive;
 pub mod notices;
 pub mod officeimages;
 pub mod ooxml;

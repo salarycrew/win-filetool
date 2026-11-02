@@ -562,3 +562,23 @@ h1.title .tile { display: inline-grid; vertical-align: -8px; margin-right: 10px;
   .job-b { min-height: 104px; padding: 12px; gap: 8px; }
   .job-b .tile { width: 40px; height: 40px; }
 }
+
+/* 0.3.4 OneDrive가 가져간 폴더 되돌리기 */
+.od-sum p { margin: 0; } .od-sum p + p { margin-top: 4px; }
+.od-card .od-h { display: flex; align-items: center; gap: 12px; }
+.od-card .od-t { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 16px; }
+.od-badge { font-size: 12px; line-height: 20px; padding: 0 8px; border-radius: 10px; font-weight: 600; }
+.od-title { margin: 10px 0 6px; font-weight: 600; }
+.od-dl { display: grid; grid-template-columns: max-content 1fr; gap: 2px 12px; margin: 0 0 12px; font-size: 13px; }
+.od-dl dt { color: var(--text-3); }
+.od-dl dd { margin: 0; color: var(--text-2); overflow-wrap: anywhere; }
+.od-card .hint { margin: 8px 0 0; }
+.od-steps { margin-top: 10px; }
+.od-steps p { font-size: 13px; line-height: 20px; color: var(--text-2); margin: 6px 0 0; }
+.od-ok { display: flex; align-items: center; gap: 6px; margin: 0; color: var(--ok); font-weight: 600; }
+.od-res:empty { display: none; }
+.od-res { margin-top: 12px; }
+.od-done p { margin: 0 0 8px; }
+.od-warn { display: flex; gap: 6px; align-items: flex-start; color: var(--text-2); }
+.od-warn .ic { flex: none; width: 16px; height: 16px; }
+.od-skip { margin: 6px 0; padding-left: 18px; font-size: 12px; max-height: 160px; overflow: auto; }
