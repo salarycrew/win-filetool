@@ -161,8 +161,76 @@ pub fn windows_safe_component(c: &str) -> String {
     s
 }
 
+/// 0.3.3(보안 강화): 풀어 쓰는 전체 바이트 상한 — 압축 파일 크기의 이 배수(작은 zip이 수 TB로 풀리는 "zip 폭탄")
+pub const MAX_RATIO: u64 = 1000;
+/// 아주 작은 zip도 이만큼은 풀 수 있게(1 GiB)
+pub const MIN_BUDGET: u64 = 1 << 30;
+/// 풀고 나서도 디스크에 남겨 둘 공간(1 GiB)
+pub const DISK_RESERVE: u64 = 1 << 30;
+
+/// 이 zip을 풀어 쓸 수 있는 전체 바이트: min(max(zip 크기 × 1000, 1 GiB), 남은 디스크 − 1 GiB)
+pub fn extract_budget(zip_len: u64, out_dir: &Path) -> u64 {
+    let by_ratio = zip_len.saturating_mul(MAX_RATIO).max(MIN_BUDGET);
+    let by_disk = crate::paths::free_space(out_dir).map(|f| f.saturating_sub(DISK_RESERVE)).unwrap_or(u64::MAX);
+    by_ratio.min(by_disk)
+}
+
+pub fn msg_too_big(done: usize) -> String {
+    format!(
+        "풀면 너무 커져서(압축 파일의 {MAX_RATIO}배가 넘거나 디스크가 거의 참) 풀기를 멈췄어요. 디스크를 채우지 않으려고요. 지금까지 푼 {done}개는 남겨 뒀어요."
+    )
+}
+
+/// 상한을 넘으면 쓰기를 멈추는 쓰개
+pub(crate) struct Capped<'a, W> {
+    pub inner: W,
+    pub left: &'a mut u64,
+}
+
+#[derive(Debug)]
+pub(crate) struct OverBudget;
+impl std::fmt::Display for OverBudget {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("풀기 상한을 넘음")
+    }
+}
+impl std::error::Error for OverBudget {}
+
+pub(crate) fn is_over_budget(e: &std::io::Error) -> bool {
+    e.get_ref().is_some_and(|x| x.is::<OverBudget>())
+}
+
+impl<W: Write> Write for Capped<'_, W> {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        if buf.len() as u64 > *self.left {
+            return Err(std::io::Error::other(OverBudget));
+        }
+        let n = self.inner.write(buf)?;
+        *self.left -= n as u64;
+        Ok(n)
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.inner.flush()
+    }
+}
+
 /// `zip_path`를 `out_dir`(없으면 zip 옆) 안의 새 폴더 `이름/`(있으면 `이름 (1)/`)에 푼다.
+/// 0.3.3(보안 강화): 다 푼 크기가 [`extract_budget`]을 넘으면 그 파일을 지우고 멈춘다(안내 오류).
 pub fn extract(path: &Path, enc: NameEnc, out_dir: Option<&Path>, cancel: Option<&Cancel>, progress: &mut dyn FnMut(usize, usize, &str)) -> Result<ExtractOut> {
+    let zip_len = std::fs::metadata(path).map(|m| m.len()).unwrap_or(0);
+    let parent = out_dir.map(Path::to_path_buf).or_else(|| path.parent().map(Path::to_path_buf)).unwrap_or_default();
+    extract_limited(path, enc, out_dir, cancel, progress, extract_budget(zip_len, &parent))
+}
+
+pub(crate) fn extract_limited(
+    path: &Path,
+    enc: NameEnc,
+    out_dir: Option<&Path>,
+    cancel: Option<&Cancel>,
+    progress: &mut dyn FnMut(usize, usize, &str),
+    budget: u64,
+) -> Result<ExtractOut> {
+    let mut left = budget;
     let mut a = open(path)?;
     let names = raw_names(&mut a, path)?;
     let (detected, _) = detect(&names.iter().map(|n| (n.raw.as_slice(), n.utf8_flag)).collect::<Vec<_>>());
@@ -226,11 +294,14 @@ pub fn extract(path: &Path, enc: NameEnc, out_dir: Option<&Path>, cancel: Option
             }
             Err(e) => return Err(Error::Io { path: dest, source: e }),
         };
-        let mut w = BufWriter::new(file);
+        let mut w = BufWriter::new(Capped { inner: file, left: &mut left });
         let res = std::io::copy(&mut f, &mut w).and_then(|_| w.flush());
         drop(w);
         if let Err(e) = res {
             let _ = std::fs::remove_file(&dest);
+            if is_over_budget(&e) || e.get_ref().is_some_and(|x| x.to_string().contains("풀기 상한")) {
+                return Err(Error::Invalid(msg_too_big(out.count)));
+            }
             skip(&mut out, &format!("풀다가 오류가 났습니다: {e}"));
             continue;
         }
@@ -385,6 +456,41 @@ pub fn create(inputs: &[PathBuf], output: Option<&Path>, cancel: Option<&Cancel>
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn zip_bomb_stops_before_filling_disk() {
+        use std::io::Write;
+        let t = tempfile::tempdir().unwrap();
+        let z = t.path().join("bomb.zip");
+        {
+            let mut w = zip::ZipWriter::new(std::fs::File::create(&z).unwrap());
+            let o = zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
+            w.start_file("a.txt", o).unwrap();
+            w.write_all(b"small").unwrap();
+            for name in ["zeros1.bin", "zeros2.bin"] {
+                w.start_file(name, o).unwrap();
+                let block = vec![0u8; 1 << 20];
+                for _ in 0..8 {
+                    w.write_all(&block).unwrap();
+                }
+            }
+            w.finish().unwrap();
+        }
+        let zip_len = std::fs::metadata(&z).unwrap().len();
+        assert!(zip_len < 64 * 1024, "16 MiB의 0이 작게 압축됨: {zip_len}");
+        // 상한 10 MiB: 첫 8 MiB는 풀리고 두 번째에서 멈춤
+        let e = super::extract_limited(&z, super::NameEnc::Auto, Some(t.path()), None, &mut |_, _, _| {}, 10 << 20).unwrap_err();
+        assert!(e.to_string().contains("풀기를 멈췄어요") && e.to_string().contains("2개"), "{e}");
+        let folder = t.path().join("bomb");
+        assert!(folder.join("zeros1.bin").exists() && !folder.join("zeros2.bin").exists(), "넘친 파일은 지움");
+        // 상한 안이면 그대로
+        let ok = super::extract_limited(&z, super::NameEnc::Auto, Some(t.path()), None, &mut |_, _, _| {}, 64 << 20).unwrap();
+        assert_eq!(ok.count, 3);
+        // 기본 상한: 작은 zip도 1 GiB, 압축률 1000배
+        let free = crate::paths::free_space(t.path()).unwrap().saturating_sub(super::DISK_RESERVE);
+        assert_eq!(super::extract_budget(1, t.path()), super::MIN_BUDGET.min(free));
+        assert_eq!(super::extract_budget(10 << 30, t.path()), ((10u64 << 30) * super::MAX_RATIO).min(free));
+    }
+
     use super::*;
 
     #[test]

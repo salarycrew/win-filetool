@@ -127,6 +127,13 @@ pub fn default_extract_dir(zip_path: &Path) -> PathBuf {
 
 /// zip을 `out_dir`에 NFC 이름으로 푼다. 이미 있는 파일은 덮어쓰지 않고 `collisions`에 넣는다.
 pub fn extract_nfc(zip_path: &Path, out_dir: &Path) -> Result<ExtractReport> {
+    let zip_len = std::fs::metadata(zip_path).map(|m| m.len()).unwrap_or(0);
+    extract_nfc_limited(zip_path, out_dir, crate::ziptool::extract_budget(zip_len, out_dir))
+}
+
+/// [`extract_nfc`] + 0.3.3(보안 강화) 전체 풀기 상한(넘으면 멈추고 안내 오류)
+pub(crate) fn extract_nfc_limited(zip_path: &Path, out_dir: &Path, budget: u64) -> Result<ExtractReport> {
+    let mut left = budget;
     let mut archive = open_archive(zip_path)?;
     std::fs::create_dir_all(out_dir).map_err(io_err(out_dir))?;
     let mut report = ExtractReport { out_dir: out_dir.to_path_buf(), ..Default::default() };
@@ -158,8 +165,14 @@ pub fn extract_nfc(zip_path: &Path, out_dir: &Path) -> Result<ExtractReport> {
             report.collisions.push(dest);
             continue;
         }
-        let mut buf = Vec::with_capacity(file.size() as usize);
-        file.read_to_end(&mut buf).map_err(io_err(zip_path))?;
+        // 0.3.3(보안 강화): 항목 머리에 적힌 크기를 그대로 믿고 미리 잡지 않는다(작은 zip이 수 TB를 선언하면 할당 실패로 끝남).
+        // 미리 잡는 것은 64 MiB까지, 읽는 것은 남은 상한 + 1바이트까지
+        let mut buf = Vec::with_capacity(file.size().min(64 << 20) as usize);
+        (&mut file).take(left.saturating_add(1)).read_to_end(&mut buf).map_err(io_err(zip_path))?;
+        if buf.len() as u64 > left {
+            return Err(Error::Invalid(crate::ziptool::msg_too_big(report.files.len())));
+        }
+        left -= buf.len() as u64;
         match write_new(&dest, &buf) {
             Ok(()) => report.files.push(dest),
             Err(Error::AlreadyExists(p)) => report.collisions.push(p),
@@ -218,4 +231,32 @@ pub fn rezip_nfc(zip_path: &Path, output: &Path) -> Result<RezipReport> {
 /// zip 옆 기본 출력 이름: `이름_NFC.zip`.
 pub fn default_rezip_path(zip_path: &Path, out_dir: Option<&Path>) -> PathBuf {
     crate::paths::output_path(zip_path, out_dir, "_NFC", "zip")
+}
+
+#[cfg(test)]
+mod budget_tests {
+    use super::*;
+    use std::io::Write;
+
+    #[test]
+    fn extract_nfc_stops_at_budget_and_does_not_trust_declared_size() {
+        let t = tempfile::tempdir().unwrap();
+        let z = t.path().join("big.zip");
+        {
+            let mut w = zip::ZipWriter::new(std::fs::File::create(&z).unwrap());
+            let o = zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
+            w.start_file("ok.txt", o).unwrap();
+            w.write_all(b"hello").unwrap();
+            w.start_file("zeros.bin", o).unwrap();
+            w.write_all(&vec![0u8; 4 << 20]).unwrap();
+            w.finish().unwrap();
+        }
+        let out = t.path().join("out");
+        let e = extract_nfc_limited(&z, &out, 1 << 20).unwrap_err();
+        assert!(e.to_string().contains("풀기를 멈췄어요"), "{e}");
+        assert!(out.join("ok.txt").exists() && !out.join("zeros.bin").exists());
+        let out2 = t.path().join("out2");
+        let r = extract_nfc_limited(&z, &out2, 8 << 20).unwrap();
+        assert_eq!(r.files.len(), 2);
+    }
 }

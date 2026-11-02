@@ -64,3 +64,32 @@ pub fn write_new(path: &Path, bytes: &[u8]) -> Result<()> {
     f.write_all(bytes).map_err(io_err(path))?;
     Ok(())
 }
+
+/// 0.3.3: 폴더가 있는 드라이브의 남은 공간(바이트). 폴더가 아직 없으면 있는 위쪽 폴더로 본다. 모르면 None.
+pub fn free_space(dir: &Path) -> Option<u64> {
+    let mut d = dir;
+    while !d.exists() {
+        d = d.parent()?;
+    }
+    free_space_imp(d)
+}
+
+#[cfg(windows)]
+fn free_space_imp(d: &Path) -> Option<u64> {
+    use std::os::windows::ffi::OsStrExt;
+    let w: Vec<u16> = d.as_os_str().encode_wide().chain(std::iter::once(0)).collect();
+    let mut avail = 0u64;
+    let ok = unsafe { windows_sys::Win32::Storage::FileSystem::GetDiskFreeSpaceExW(w.as_ptr(), &mut avail, std::ptr::null_mut(), std::ptr::null_mut()) } != 0;
+    ok.then_some(avail)
+}
+
+#[cfg(unix)]
+fn free_space_imp(d: &Path) -> Option<u64> {
+    use std::os::unix::ffi::OsStrExt;
+    let c = std::ffi::CString::new(d.as_os_str().as_bytes()).ok()?;
+    let mut st: libc::statvfs = unsafe { std::mem::zeroed() };
+    if unsafe { libc::statvfs(c.as_ptr(), &mut st) } != 0 {
+        return None;
+    }
+    Some((st.f_bavail as u64).saturating_mul(st.f_frsize as u64))
+}
