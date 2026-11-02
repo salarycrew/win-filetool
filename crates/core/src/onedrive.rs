@@ -732,7 +732,7 @@ pub fn restore(env: &Env, folder: Folder, opts: RestoreOpts, log_dir: &Path, can
     let cloud_n = srcs.iter().filter(|s| s.cloud).count();
     if !opts.dry_run && opts.allow_download && cloud_n > 0 && !env.onedrive_running {
         return Err(Error::Invalid(format!(
-            "클라우드에만 있는 파일 {cloud_n}개를 받으려면 OneDrive가 켜져 있고 로그인되어 있어야 해요. 지금은 OneDrive가 꺼져 있어요. 받지 않고 가져오려면 [받지 않고 가져오기]를 골라 주세요."
+            "클라우드에만 있는 파일 {cloud_n}개를 받으려면 OneDrive가 켜져 있고 로그인되어 있어야 해요. 지금은 OneDrive가 꺼져 있어요. 받지 않고 이 PC에 있는 파일만 가져오려면 [받아서 같이 가져오기]를 끄고 다시 해 주세요."
         )));
     }
     // 2) 남은 공간(이름이 겹쳐도 크기가 같으면 같은 파일일 수 있으니 빼고 셈)
