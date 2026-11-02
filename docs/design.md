@@ -195,6 +195,7 @@ qpdf·Ghostscript를 쓰지 않은 이유: 동봉하면 크기·라이선스(Gho
 
 - 관리자 권한 불필요: `pdfium.dll`(약 7 MB)을 exe 옆에 둔다. **설치 파일과 휴대용 묶음 모두 같은 위치에 넣는다**(일관되게 동봉). 라이선스 파일은 `licenses\pdfium\`.
 - 찾는 순서: 환경 변수 `WIN_FILETOOL_PDFIUM`(파일/폴더) → exe 옆 → exe 옆 `pdfium\`, `tools\pdfium\(bin)`. 없으면 한국어 안내.
+  (0.3.3 보안 강화: 지금은 (시험용 CLI·앱만) `WIN_FILETOOL_PDFIUM` → 앱에 든 도구 묶음에서 푼 것만. exe 옆 후보는 뺐다 — 아래 "0.3.3 보안 강화" 절)
 - 크기: 쪽 크기(pt, /Rotate 반영) × DPI / 72. 예: A4 595×842pt, 150 DPI → 1240×1754(PDFium이 반올림). PNG/JPG, 쪽 범위(`1-3,5`) 지정. 결과 폴더 `이름_쪽이미지\이름_p01.png`.
 - 다른 후보: MuPDF(AGPL — 앱 전체 공개 의무), poppler(GPL), Ghostscript(AGPL), pdf.js(웹뷰 안에서 렌더 — CLI·감시와 공유 불가). 허용적 라이선스이고 품질이 검증된 PDFium을 골랐다.
 - **들어 있는 사진만 꺼내기**: lopdf로 이미지 객체를 그대로 저장(JPEG는 바이트 그대로 `.jpg`, 8비트 Flate RGB/흑백은 `.png`, 그 밖은 건너뛰고 개수만 알림). PDFium 불필요.
@@ -1057,3 +1058,23 @@ lo-trim에서 다시 만들어도 같은 SHA-256). 주소 `…/releases/download
 **네트워크**(다시 점검): ① 새 버전 확인 `GET api.github.com/…/releases/latest`(하루 한 번까지, 끌 수 있음) ② 문서 도구 `GET github.com/…/releases/download/v0.3.3/…`
 (사용자가 [받기]를 누를 때만, 이어받기 때 `Range`). 둘 다 User-Agent `win-filetool/<판>`만, 쿠키·식별자 없음. 그 밖에 앱이 인터넷에 연결하는 코드는 없다
 (검색 서비스는 이름 있는 파이프, 화면은 로컬 WebView2).
+
+
+## 0.3.3 보안 강화 (보안 점검 1 반영)
+
+| 항목 | 한 일 | 코드 |
+|---|---|---|
+| DLL 검색 | 앱·CLI·서비스 `/DEPENDENTLOADFLAG:0x800`(각 `build.rs`, MSVC만), `main` 첫 줄 `SetDefaultDllDirectories(SYSTEM32 \| USER_DIRS)`, 앱 `dwmapi`·`winhttp`·CLI `winhttp` 지연 로드(`/DELAYLOAD` + `delayimp.lib`, lld-link). PDFium은 묶음에서 푼 전체 경로만 | `dllsafe.rs`, `pdfrender.rs`, `build-windows.sh`(0x800 확인) |
+| 서비스 자료 폴더 | 재분석 지점을 따라가지 않고 열기(`FILE_FLAG_OPEN_REPARSE_POINT \| BACKUP_SEMANTICS`), 접합점이면 링크만 지움, 소유자 검사·DACL을 같은 핸들로(`GetSecurityInfo`/`SetSecurityInfo`), 새 폴더는 보안 설명자를 넘겨 만듦 | `secdir.rs`, `filetool-svc` `prepare_data_dir` |
+| 감시 폴더 | MOTW `ZoneId >= 3` 파일은 자동 실행에서 문서·영상·HEIC 작업을 건너뜀(안내 문구 기록) | `watch.rs` |
+| Office 바깥 참조 | 임시 복사본에서 docx `attachedTemplate`(External)·xlsx `externalLink` 제거 | `ooxml/extref.rs` |
+| 파이프 | 서버 겹친 I/O, 첫 요청 5초·유휴 60초, 사용자(클라이언트 프로세스 SID)당 4개 | `svcpipe.rs`, `svcproto.rs` |
+| 서비스 자기 설치 | 빌드 뒤 `patch-svc-hash.py`가 exe에 자기 SHA-256(자리를 0으로 둔 계산)을 넣음 → 설치는 쓰기 공유 없이 한 번 읽어 비교한 바이트를 복사. `--report`는 `CREATE_NEW` + 재분석 지점 거절 + 실제 경로 비교 | `filetool-svc` `selfhash`, `open_report` |
+| 문서 도구 | 한 핸들(쓰기 공유 거부)에서 해시하며 `lo.partial`로 풀고 해시가 맞을 때만 이름 바꿈. 옮겨 쓰는 0.3.x 폴더는 폴더 내용 해시(`LO_TREE_SHA256`, `doctools-tree-hash.py`)로 한 번 확인 | `doctools.rs` |
+| 환경 변수 | `TOOLS_DIR`·`BUNDLE`·`PDFIUM`·`CONFIG_DIR`·`INDEX_DIR`·`LO_PROFILES`는 `testhooks::var`(배포 앱 무시). 휴대용 모드는 exe 옆 `win-filetool-data\`만 써서 필요 없음. exe 옆 `tools\`는 현재 사용자 전용 ACL일 때만 | `testhooks.rs`, `bundle.rs`, `tools.rs` |
+| 한글 모듈 값 | 앱 시작 때 한글 변환 잠금을 바로 잡을 수 있으면 HKCU 값 지움 | `hancom.rs` `cleanup_stale_module` |
+| zip | 선언 크기로 미리 잡는 것은 64 MiB까지, 전체 상한 `min(max(zip×1000, 1 GiB), 남은 디스크−1 GiB)` | `ziptool.rs`, `zipnfc.rs` |
+| 우클릭 경로 | 로컬 드라이브 문자 경로만, `\\?\`·`\\.\`·`\??\` 거절, UNC·네트워크 드라이브는 `exists()` 없이 안내 | `ctxmenu.rs` |
+| 남는 것 | 휴대용 [설정] "우클릭 메뉴·시작 프로그램 지우기", 제거 프로그램이 LOCALAPPDATA 자료를 한 번 더 물음 | `settings.ts`, `installer-hooks.nsh` |
+| 새 버전 주소 | `…/releases/tag/v<숫자>.<숫자>.<숫자>`만 | `update.rs` |
+| 검색 보이기 | 바꾸지 않음(설계대로). README·[설정]에 "C:\Users 밖 파일은 열 수 없어도 이름이 보일 수 있음" | |

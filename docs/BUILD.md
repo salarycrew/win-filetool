@@ -69,7 +69,10 @@ ssh <windows-pc> "C:\work\filetool-cli.exe selftest C:\work\selftest"     # 휴�
 ```
 
 - 화면(GUI)은 ssh 세션(세션 0)에서는 보이지 않습니다. 로그인한 사용자 세션에서 띄우려면 `schtasks /create … /it`로 예약 작업을 만들어 실행합니다.
-- 설정·색인을 시험 폴더로 돌리기: `WIN_FILETOOL_CONFIG_DIR`, `WIN_FILETOOL_INDEX_DIR`.
+- 설정·색인을 시험 폴더로 돌리기: `WIN_FILETOOL_CONFIG_DIR`, `WIN_FILETOOL_INDEX_DIR`(0.3.3 보안 강화부터 도구·DLL·설정 위치 변수
+  `WIN_FILETOOL_TOOLS_DIR`·`_BUNDLE`·`_PDFIUM`·`_CONFIG_DIR`·`_INDEX_DIR`·`_LO_PROFILES`도 **CLI와 시험용 앱에서만** 읽는다).
+- 0.3.3 보안 강화: `build-windows.sh`가 서비스 exe에 빌드 확인값을 넣고(`scripts/patch-svc-hash.py`), 앱·CLI·서비스의
+  `DependentLoadFlags`가 `0x800`인지, 문서 도구 폴더 내용 해시(`scripts/doctools-tree-hash.py`)가 앱의 값과 같은지 확인한다.
 - 0.3.3 시험용 바꾸기는 **CLI와 시험용 앱에서만** 읽는다(배포 앱은 무시): 한글·Office가 없는 것처럼 `WIN_FILETOOL_HIDE_COM=1`
   (한글만 `WIN_FILETOOL_HIDE_HANCOM=1`, Office만 `WIN_FILETOOL_HIDE_OFFICE=1`), 문서 도구 받을 주소 `WIN_FILETOOL_DOCTOOLS_URL=http://127.0.0.1:<포트>/…`.
   시험용 앱: `npx tauri build --runner cargo-xwin --target x86_64-pc-windows-msvc --no-bundle --features test-hooks`(배포 파일에 쓰지 않음).
