@@ -16,7 +16,7 @@ pub const PORTABLE_MARK: &str = "portable.txt";
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ConfigSource {
-    /// `WIN_FILETOOL_CONFIG_DIR`(시험용)
+    /// `WIN_FILETOOL_CONFIG_DIR`(시험용 — 점검용 CLI·시험용 앱만 읽음)
     Env,
     /// exe 옆 `win-filetool-data\`
     Portable,
@@ -31,9 +31,10 @@ pub fn portable_dir(exe_dir: &Path) -> Option<PathBuf> {
     (marked && crate::bundle::writable_dir(&d)).then_some(d)
 }
 
-/// 설정 폴더 고르기: `WIN_FILETOOL_CONFIG_DIR` → 휴대용 → `default`(보통 Tauri의 app_config_dir = %APPDATA%\…)
+/// 설정 폴더 고르기: (시험용) `WIN_FILETOOL_CONFIG_DIR` → 휴대용 → `default`(보통 Tauri의 app_config_dir = %APPDATA%\…).
+/// 0.3.3(보안 강화): 휴대용 모드는 exe 옆 `win-filetool-data\`만 쓰고 환경 변수는 필요 없으므로, 배포 앱은 이 변수를 읽지 않는다.
 pub fn config_dir(exe_dir: Option<&Path>, default: PathBuf) -> (PathBuf, ConfigSource) {
-    if let Some(d) = std::env::var_os("WIN_FILETOOL_CONFIG_DIR").filter(|v| !v.is_empty()) {
+    if let Some(d) = crate::testhooks::var("WIN_FILETOOL_CONFIG_DIR") {
         return (PathBuf::from(d), ConfigSource::Env);
     }
     if let Some(p) = exe_dir.and_then(portable_dir) {
@@ -67,7 +68,7 @@ mod tests {
         std::fs::write(exe2.join(PORTABLE_DIR), b"not a dir").unwrap();
         std::fs::write(exe2.join(PORTABLE_MARK), b"").unwrap();
         assert_eq!(portable_dir(&exe2), None);
-        if std::env::var_os("WIN_FILETOOL_CONFIG_DIR").is_none() {
+        if crate::testhooks::var("WIN_FILETOOL_CONFIG_DIR").is_none() {
             assert_eq!(config_dir(Some(&exe2), def.clone()), (def.clone(), ConfigSource::Default));
             assert_eq!(config_dir(Some(&exe), def.clone()).1, ConfigSource::Portable);
             assert_eq!(config_dir(None, def.clone()).1, ConfigSource::Default);

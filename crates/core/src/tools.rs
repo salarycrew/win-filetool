@@ -180,9 +180,13 @@ pub fn known_dirs(tool: Tool, env: &SearchEnv) -> Vec<PathBuf> {
             }
         }
     }
-    // 앱 옆 tools\<아무 이름>\(bin|program) — 휴대용 배치
+    // 앱 옆 tools\<아무 이름>\(bin|program) — 휴대용 배치.
+    // 0.3.3(보안 강화): 그 `tools\`가 현재 사용자 전용일 때만(다운로드·공유 폴더에 다른 사람이 둔 ffmpeg.exe를 실행하지 않게)
     if let Some(ed) = &env.exe_dir {
         for base in [ed.join("tools"), ed.join("..").join("tools")] {
+            if !crate::secdir::dir_user_only(&base) {
+                continue;
+            }
             for sub in subdirs(&base) {
                 dirs.push(sub.join("bin"));
                 dirs.push(sub.join("program"));

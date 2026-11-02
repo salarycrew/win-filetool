@@ -12,7 +12,8 @@
 //! `%LOCALAPPDATA%\kr.salarycrew.winfiletool\tools\<앱 버전>-<내용 해시>\<도구>\`.
 //! - `<도구>.partial`에 다 푼 뒤 이름을 바꾼다 → 폴더가 있으면 "다 풀렸음".
 //! - 같은 도구를 여러 프로그램(앱 두 개, 앱 + CLI)이 동시에 풀지 않도록 `.<도구>.lock` 파일 잠금. 기다린 쪽은 다시 확인만 한다.
-//! - LOCALAPPDATA에 쓸 수 없을 때만 exe 옆 `tools\`. 시험용으로 `WIN_FILETOOL_TOOLS_DIR`로 바꿀 수 있다.
+//! - LOCALAPPDATA에 쓸 수 없을 때만 exe 옆 `tools\`(0.3.3 보안 강화: 그 폴더가 현재 사용자 전용일 때만).
+//!   시험용으로 `WIN_FILETOOL_TOOLS_DIR`로 바꿀 수 있다(점검용 CLI·시험용 앱만, [`crate::testhooks`]).
 //! - 새 버전 폴더에서 도구가 풀리면 지난 버전 폴더는 지운다(쓰는 중이라 이름을 바꿀 수 없는 폴더는 남겨 두고 다음에).
 
 use std::fs::File;
@@ -150,21 +151,24 @@ fn exe_dir() -> Option<PathBuf> {
     std::env::current_exe().ok().and_then(|p| p.parent().map(Path::to_path_buf))
 }
 
-/// 도구를 풀 곳: `WIN_FILETOOL_TOOLS_DIR` → LOCALAPPDATA\…\tools(쓸 수 있으면) → exe 옆 `tools\`
+/// 도구를 풀 곳: (시험용) `WIN_FILETOOL_TOOLS_DIR` → LOCALAPPDATA\…\tools(쓸 수 있으면) → exe 옆 `tools\`(현재 사용자 전용일 때만)
 pub fn tools_root() -> PathBuf {
-    if let Some(d) = std::env::var_os("WIN_FILETOOL_TOOLS_DIR").filter(|v| !v.is_empty()) {
+    if let Some(d) = crate::testhooks::var("WIN_FILETOOL_TOOLS_DIR") {
         return PathBuf::from(d);
     }
     choose_root(&local_app_dir().join("tools"), exe_dir().map(|d| d.join("tools")).as_deref())
 }
 
-/// LOCALAPPDATA 쪽에 쓸 수 있으면 그곳, 아니면 exe 옆(그것도 안 되면 그래도 LOCALAPPDATA 쪽을 돌려줘 오류 문구에 쓰게 한다)
+/// LOCALAPPDATA 쪽에 쓸 수 있으면 그곳, 아니면 exe 옆(그것도 안 되면 그래도 LOCALAPPDATA 쪽을 돌려줘 오류 문구에 쓰게 한다).
+///
+/// 0.3.3(보안 강화): exe 옆 `tools\`는 그 폴더가 **현재 사용자 전용**일 때만 쓴다([`crate::secdir::dir_user_only`]).
+/// 공유 폴더·USB(FAT, ACL 없음)처럼 다른 사람이 쓸 수 있는 곳이면, 그 사람이 바꿔 넣은 ffmpeg·PDFium을 우리가 실행하게 되므로.
 pub fn choose_root(local: &Path, beside_exe: Option<&Path>) -> PathBuf {
     if writable_dir(local) {
         return local.to_path_buf();
     }
     if let Some(b) = beside_exe {
-        if writable_dir(b) {
+        if writable_dir(b) && crate::secdir::dir_user_only(b) {
             return b.to_path_buf();
         }
     }
@@ -367,10 +371,10 @@ pub fn is_portable_name(lower: &str) -> bool {
     lower.ends_with("-portable.exe") || lower.ends_with("_portable.exe") || lower == "win-filetool.exe"
 }
 
-/// 묶음을 찾을 파일 후보: `WIN_FILETOOL_BUNDLE` → 실행 중인 exe(휴대용 exe) → exe 옆 `tools.pack`(설치본) → exe 옆 휴대용 exe들(CLI용)
+/// 묶음을 찾을 파일 후보: (시험용) `WIN_FILETOOL_BUNDLE` → 실행 중인 exe(휴대용 exe) → exe 옆 `tools.pack`(설치본) → exe 옆 휴대용 exe들(CLI용)
 pub fn candidates() -> Vec<PathBuf> {
     let mut v = Vec::new();
-    if let Some(p) = std::env::var_os("WIN_FILETOOL_BUNDLE").filter(|x| !x.is_empty()) {
+    if let Some(p) = crate::testhooks::var("WIN_FILETOOL_BUNDLE") {
         v.push(PathBuf::from(p));
     }
     if let Ok(exe) = std::env::current_exe() {
@@ -594,6 +598,27 @@ mod tests {
         std::fs::write(&blocker, b"").unwrap();
         let bad = blocker.join("tools");
         let beside = t.path().join("exe").join("tools");
+        // (Unix 시험: umask와 상관없이 나만 쓰기 — Windows는 프로필 아래 임시 폴더라 원래 나만 쓰기)
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::create_dir_all(&beside).unwrap();
+            std::fs::set_permissions(&beside, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
         assert_eq!(choose_root(&bad, Some(&beside)), beside);
+        // 0.3.3(보안 강화): exe 옆 폴더를 다른 사람도 쓸 수 있으면 쓰지 않는다
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let shared = t.path().join("shared").join("tools");
+            std::fs::create_dir_all(&shared).unwrap();
+            std::fs::set_permissions(&shared, std::fs::Permissions::from_mode(0o777)).unwrap();
+            assert_eq!(choose_root(&bad, Some(&shared)), bad);
+            // 링크로 된 tools\도 쓰지 않는다
+            let link = t.path().join("exe2").join("tools");
+            std::fs::create_dir_all(link.parent().unwrap()).unwrap();
+            std::os::unix::fs::symlink(&beside, &link).unwrap();
+            assert_eq!(choose_root(&bad, Some(&link)), bad);
+        }
     }
 }

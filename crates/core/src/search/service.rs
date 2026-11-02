@@ -28,10 +28,10 @@ use super::scan::{self, DirWalkSource, Excludes, IndexSource, ScanControl, ScanO
 const DEBOUNCE: Duration = Duration::from_millis(300);
 const SAVE_EVERY: Duration = Duration::from_secs(600);
 
-/// 색인 폴더: `WIN_FILETOOL_INDEX_DIR` → `%LOCALAPPDATA%\kr.salarycrew.winfiletool\index`
+/// 색인 폴더: (시험용 — 점검용 CLI·시험용 앱만) `WIN_FILETOOL_INDEX_DIR` → `%LOCALAPPDATA%\kr.salarycrew.winfiletool\index`
 /// (Windows가 아니면 `~/.local/share/kr.salarycrew.winfiletool/index`)
 pub fn default_index_dir() -> PathBuf {
-    if let Some(d) = std::env::var_os("WIN_FILETOOL_INDEX_DIR") {
+    if let Some(d) = crate::testhooks::var("WIN_FILETOOL_INDEX_DIR") {
         return PathBuf::from(d);
     }
     let base = std::env::var_os("LOCALAPPDATA")

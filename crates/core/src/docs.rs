@@ -150,9 +150,9 @@ pub const PROFILE_POOL: usize = 3;
 
 /// 프로필 묶음을 둘 폴더: 앱에 든 LibreOffice면 그 버전 폴더(`tools\<버전>-<해시>\`) 안,
 /// 아니면 `%LOCALAPPDATA%\kr.salarycrew.winfiletool\lo-profiles\<soffice 경로 해시>\`.
-/// 시험용으로 `WIN_FILETOOL_LO_PROFILES`로 바꿀 수 있다.
+/// 시험용으로 `WIN_FILETOOL_LO_PROFILES`로 바꿀 수 있다(점검용 CLI·시험용 앱만).
 pub fn profile_base(soffice: &Path) -> PathBuf {
-    if let Some(d) = std::env::var_os("WIN_FILETOOL_LO_PROFILES").filter(|v| !v.is_empty()) {
+    if let Some(d) = crate::testhooks::var("WIN_FILETOOL_LO_PROFILES") {
         return PathBuf::from(d);
     }
     if let Some(b) = crate::bundle::current() {

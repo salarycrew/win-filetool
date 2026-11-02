@@ -5,6 +5,10 @@
 //! - `WIN_FILETOOL_HIDE_HANCOM=1` — 한글만 없는 것처럼, `WIN_FILETOOL_HIDE_OFFICE=1` — Office만 없는 것처럼
 //! - `WIN_FILETOOL_HANCOM_TIMEOUT_SECS`, `WIN_FILETOOL_OFFICE_TIMEOUT_SECS` — 시간 제한 줄이기
 //! - `WIN_FILETOOL_DOCTOOLS_URL` — 문서 도구를 받을 주소(로컬 가짜 서버)
+//! - 0.3.3(보안 강화) 도구·DLL·설정 위치: `WIN_FILETOOL_TOOLS_DIR`, `WIN_FILETOOL_BUNDLE`, `WIN_FILETOOL_PDFIUM`,
+//!   `WIN_FILETOOL_CONFIG_DIR`, `WIN_FILETOOL_INDEX_DIR`, `WIN_FILETOOL_LO_PROFILES`
+//!   (이 앱을 띄우는 다른 프로그램의 환경이 도구·DLL 위치를 바꾸지 못하게. 휴대용 모드는 exe 옆 `win-filetool-data\`만 쓰고
+//!   환경 변수가 필요 없다)
 //!
 //! 켜는 곳: 점검용 CLI(`filetool-cli`, 배포하지 않음), 시험 기능(`test-hooks`)을 켜고 만든 시험용 앱, 단위 시험.
 //! 문서 도구 묶음의 SHA-256은 여기로 바꿀 수 없다(언제나 exe에 고정한 값).
