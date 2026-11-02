@@ -8,6 +8,9 @@
 //!   관리자 = Administrators 그룹이 켜져 있음(권한 상승 안 된 관리자 계정의 토큰은 그 그룹이 deny-only라 일반 사용자로 본다).
 //! - 클라이언트는 연결한 뒤 `GetNamedPipeServerProcessId`가 SCM이 아는 서비스 프로세스 번호와 같은지 확인한다(가짜 서버 방지).
 //! - 클라이언트 읽기·쓰기는 겹친 I/O + 시간 제한([`CLIENT_TIMEOUT`]) — 서비스가 멈춰도 앱이 멈추지 않는다.
+//! - 0.3.3(보안 강화): 서버도 겹친 I/O + 시간 제한 — 첫 요청은 [`svcproto::FIRST_FRAME_TIMEOUT`] 안에 다 와야 하고, 그 뒤
+//!   읽기·쓰기 하나마다 [`svcproto::IDLE_TIMEOUT`]. 같은 사용자(클라이언트 프로세스 SID)는 동시에
+//!   [`svcproto::MAX_CLIENTS_PER_USER`]개까지만(한 사람이 연결 16개를 열어 두고 아무것도 보내지 않아 다른 사람을 막던 것).
 
 use std::time::Duration;
 
@@ -150,7 +153,7 @@ mod win {
     use windows_sys::Win32::Foundation::{CloseHandle, GetLastError, LocalFree, HANDLE, INVALID_HANDLE_VALUE};
     use windows_sys::Win32::Security::Authorization::{ConvertSidToStringSidW, ConvertStringSecurityDescriptorToSecurityDescriptorW};
     use windows_sys::Win32::Security::{GetTokenInformation, LookupAccountSidW, RevertToSelf, SECURITY_ATTRIBUTES, TOKEN_GROUPS, TOKEN_USER};
-    use windows_sys::Win32::Storage::FileSystem::{CreateFileW, FlushFileBuffers, ReadFile, WriteFile, OPEN_EXISTING};
+    use windows_sys::Win32::Storage::FileSystem::{CreateFileW, ReadFile, WriteFile, OPEN_EXISTING};
     use windows_sys::Win32::System::Pipes::{
         ConnectNamedPipe, CreateNamedPipeW, DisconnectNamedPipe, GetNamedPipeClientProcessId, GetNamedPipeServerProcessId, ImpersonateNamedPipeClient,
         WaitNamedPipeW,
@@ -309,11 +312,12 @@ mod win {
 
     // ---------- 클라이언트 ----------
 
-    /// 겹친 I/O 파이프(시간 제한)
+    /// 겹친 I/O 파이프(시간 제한: 읽기·쓰기 하나마다 `timeout`, `deadline`이 있으면 그때까지)
     pub struct PipeStream {
         h: HANDLE,
         ev: HANDLE,
         timeout: Duration,
+        deadline: Option<std::time::Instant>,
     }
     unsafe impl Send for PipeStream {}
 
@@ -339,7 +343,11 @@ mod win {
                 if e != ERROR_IO_PENDING {
                     return Err(std::io::Error::from_raw_os_error(e as i32));
                 }
-                let w = unsafe { WaitForSingleObject(self.ev, self.timeout.as_millis() as u32) };
+                let mut wait = self.timeout;
+                if let Some(d) = self.deadline {
+                    wait = wait.min(d.saturating_duration_since(std::time::Instant::now()));
+                }
+                let w = unsafe { WaitForSingleObject(self.ev, wait.as_millis() as u32) };
                 if w != WAIT_OBJECT_0 {
                     let mut n = 0u32;
                     unsafe {
@@ -405,7 +413,7 @@ mod win {
             return Err("서비스가 바쁩니다(연결 수 한도)".into());
         }
         let ev = unsafe { CreateEventW(std::ptr::null(), 1, 0, std::ptr::null()) };
-        let stream = PipeStream { h, ev, timeout: CLIENT_TIMEOUT };
+        let stream = PipeStream { h, ev, timeout: CLIENT_TIMEOUT, deadline: None };
         // 가짜 서버(같은 이름을 먼저 차지한 프로세스)에 붙지 않도록: 파이프 서버 = SCM이 아는 서비스 프로세스
         let mut server_pid = 0u32;
         if unsafe { GetNamedPipeServerProcessId(h, &mut server_pid) } == 0 {
@@ -420,38 +428,6 @@ mod win {
     }
 
     // ---------- 서버 ----------
-
-    struct ServerPipe(HANDLE);
-    unsafe impl Send for ServerPipe {}
-
-    impl Read for ServerPipe {
-        fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
-            let mut n = 0u32;
-            let ok = unsafe { ReadFile(self.0, buf.as_mut_ptr(), buf.len().min(1 << 20) as u32, &mut n, std::ptr::null_mut()) };
-            if ok == 0 {
-                let e = unsafe { GetLastError() };
-                if e == ERROR_BROKEN_PIPE || e == ERROR_NO_DATA {
-                    return Ok(0);
-                }
-                return Err(std::io::Error::from_raw_os_error(e as i32));
-            }
-            Ok(n as usize)
-        }
-    }
-
-    impl Write for ServerPipe {
-        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-            let mut n = 0u32;
-            let ok = unsafe { WriteFile(self.0, buf.as_ptr(), buf.len().min(1 << 20) as u32, &mut n, std::ptr::null_mut()) };
-            if ok == 0 {
-                return Err(std::io::Error::from_raw_os_error(unsafe { GetLastError() } as i32));
-            }
-            Ok(n as usize)
-        }
-        fn flush(&mut self) -> std::io::Result<()> {
-            Ok(())
-        }
-    }
 
     struct SecDesc(*mut core::ffi::c_void);
     unsafe impl Send for SecDesc {}
@@ -506,11 +482,12 @@ mod win {
     }
 
     fn accept_loop(handler: Arc<Handler>, sd: Arc<SecDesc>, stop: Arc<AtomicBool>, clients: Arc<AtomicUsize>, log: Log) {
+        let limiter = Arc::new(svcproto::ConnLimiter::default());
         let name = wide(PIPE_NAME);
         let mut first = true;
         while !stop.load(Ordering::SeqCst) {
             let sa = SECURITY_ATTRIBUTES { nLength: std::mem::size_of::<SECURITY_ATTRIBUTES>() as u32, lpSecurityDescriptor: sd.0, bInheritHandle: 0 };
-            let open = PIPE_ACCESS_DUPLEX | if first { FILE_FLAG_FIRST_PIPE_INSTANCE } else { 0 };
+            let open = PIPE_ACCESS_DUPLEX | FILE_FLAG_OVERLAPPED | if first { FILE_FLAG_FIRST_PIPE_INSTANCE } else { 0 };
             let h = unsafe {
                 CreateNamedPipeW(
                     name.as_ptr(),
@@ -538,30 +515,91 @@ mod win {
                 log(format!("파이프 대기: {PIPE_NAME} ({})", PIPE_SDDL));
             }
             first = false;
-            let ok = unsafe { ConnectNamedPipe(h, std::ptr::null_mut()) } != 0 || unsafe { GetLastError() } == ERROR_PIPE_CONNECTED;
-            if !ok || stop.load(Ordering::SeqCst) {
+            let ev = unsafe { CreateEventW(std::ptr::null(), 1, 0, std::ptr::null()) };
+            // 겹친 I/O 핸들이라 연결 기다리기도 OVERLAPPED로(새 클라이언트가 올 때까지 기다림)
+            let ok = {
+                let mut ov: OVERLAPPED = unsafe { std::mem::zeroed() };
+                ov.hEvent = ev;
+                if unsafe { ConnectNamedPipe(h, &mut ov) } != 0 {
+                    true
+                } else {
+                    match unsafe { GetLastError() } {
+                        ERROR_PIPE_CONNECTED => true,
+                        ERROR_IO_PENDING => {
+                            unsafe { WaitForSingleObject(ev, u32::MAX) };
+                            let mut n = 0u32;
+                            unsafe { GetOverlappedResult(h, &ov, &mut n, 0) != 0 }
+                        }
+                        _ => false,
+                    }
+                }
+            };
+            // 같은 사용자(클라이언트 프로세스의 SID)의 연결 수 한도 — 첫 요청을 기다리기 전에(아무것도 안 보내고 붙잡는 연결도 셈)
+            let mut pid = 0u32;
+            if ok {
+                unsafe { GetNamedPipeClientProcessId(h, &mut pid) };
+            }
+            let key = process_user_sid(pid).unwrap_or_else(|| "?".into());
+            if !ok || stop.load(Ordering::SeqCst) || !limiter.try_acquire(&key, svcproto::MAX_CLIENTS_PER_USER) {
+                if ok && !stop.load(Ordering::SeqCst) {
+                    log(format!("연결 거절: pid {pid} ({key}) — 같은 사용자의 연결이 {}개(한도)", svcproto::MAX_CLIENTS_PER_USER));
+                }
                 unsafe {
                     DisconnectNamedPipe(h);
+                    CloseHandle(ev);
                     CloseHandle(h);
                 }
                 continue;
             }
-            let (handler, clients, log) = (handler.clone(), clients.clone(), log.clone());
-            let pipe = ServerPipe(h);
-            let _ = std::thread::Builder::new().name("pipe-conn".into()).spawn(move || {
+            let (handler, clients, log, lim2, key2) = (handler.clone(), clients.clone(), log.clone(), limiter.clone(), key.clone());
+            let pipe = PipeStream { h, ev, timeout: svcproto::FIRST_FRAME_TIMEOUT, deadline: Some(std::time::Instant::now() + svcproto::FIRST_FRAME_TIMEOUT) };
+            let spawned = std::thread::Builder::new().name("pipe-conn".into()).spawn(move || {
                 clients.fetch_add(1, Ordering::SeqCst);
-                serve_conn(pipe, &handler, &log);
+                serve_conn(pipe, pid, &handler, &log);
                 clients.fetch_sub(1, Ordering::SeqCst);
+                lim2.release(&key2);
             });
+            if spawned.is_err() {
+                // 스레드를 못 만들면 클로저와 함께 파이프도 닫혔다 → 센 것만 돌려준다
+                limiter.release(&key);
+            }
         }
     }
 
-    fn serve_conn(mut pipe: ServerPipe, handler: &Handler, log: &Log) {
-        let h = pipe.0;
-        // 첫 요청을 읽은 뒤(그래야 흉내 내기가 됨) 호출자를 확인
+    /// 클라이언트 프로세스의 사용자 SID(연결 수 한도의 키). 모르면 None
+    fn process_user_sid(pid: u32) -> Option<String> {
+        if pid == 0 {
+            return None;
+        }
+        let p = Handle(unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid) });
+        if p.0.is_null() {
+            return None;
+        }
+        let mut tok: HANDLE = std::ptr::null_mut();
+        if unsafe { OpenProcessToken(p.0, TOKEN_QUERY, &mut tok) } == 0 {
+            return None;
+        }
+        let tok = Handle(tok);
+        let u = token_info(tok.0, TOKEN_USER_CLASS).ok()?;
+        let tu = unsafe { &*(u.as_ptr() as *const TOKEN_USER) };
+        Some(sid_string(tu.User.Sid)).filter(|s| !s.is_empty())
+    }
+
+    /// 오류 응답을 쓴 뒤 클라이언트가 읽고 닫을 시간을 조금 준다(끝없이 기다리는 FlushFileBuffers 대신)
+    fn linger(pipe: &mut PipeStream) {
+        pipe.timeout = Duration::from_secs(2);
+        pipe.deadline = None;
+        let mut b = [0u8; 64];
+        let _ = pipe.read(&mut b);
+    }
+
+    fn serve_conn(mut pipe: PipeStream, pid: u32, handler: &Handler, log: &Log) {
+        let h = pipe.h;
+        // 첫 요청을 읽은 뒤(그래야 흉내 내기가 됨) 호출자를 확인. 첫 요청은 FIRST_FRAME_TIMEOUT 안에 다 와야 한다
         let first = svcproto::read_frame(&mut pipe, svcproto::MAX_REQUEST_BYTES);
-        let mut pid = 0u32;
-        unsafe { GetNamedPipeClientProcessId(h, &mut pid) };
+        // 그 뒤로는 읽기·쓰기 하나마다 IDLE_TIMEOUT
+        pipe.timeout = svcproto::IDLE_TIMEOUT;
+        pipe.deadline = None;
         let ident = identify(h, pid);
         match (first, ident) {
             (Ok(Some(frame)), Ok(id)) => {
@@ -581,19 +619,24 @@ mod win {
             (Ok(Some(_)), Err(e)) => {
                 log(format!("호출자 확인 실패(pid {pid}): {e}"));
                 let r = svcproto::Response::error("identity", format!("호출자를 확인할 수 없습니다: {e}"));
-                let _ = svcproto::write_frame(&mut pipe, &svcproto::encode_response(&r));
+                if svcproto::write_frame(&mut pipe, &svcproto::encode_response(&r)).is_ok() {
+                    linger(&mut pipe);
+                }
             }
             (Err(svcproto::FrameErr::TooLarge(n)), _) => {
                 let r = svcproto::Response::error("limit", format!("요청이 너무 큽니다({n} 바이트)"));
-                let _ = svcproto::write_frame(&mut pipe, &svcproto::encode_response(&r));
+                if svcproto::write_frame(&mut pipe, &svcproto::encode_response(&r)).is_ok() {
+                    linger(&mut pipe);
+                }
+            }
+            (Err(svcproto::FrameErr::Io(e)), _) if e.kind() == std::io::ErrorKind::TimedOut => {
+                log(format!("연결 끊음: pid {pid} — 첫 요청이 {}초 안에 오지 않음", svcproto::FIRST_FRAME_TIMEOUT.as_secs()));
             }
             _ => {}
         }
-        unsafe {
-            FlushFileBuffers(h);
-            DisconnectNamedPipe(h);
-            CloseHandle(h);
-        }
+        unsafe { DisconnectNamedPipe(h) };
+        // 핸들·이벤트는 PipeStream이 닫는다
+        drop(pipe);
     }
 
     struct Handle(HANDLE);

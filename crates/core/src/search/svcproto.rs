@@ -42,6 +42,44 @@ pub const MAX_EXCLUDES: usize = 64;
 pub const MAX_EXCLUDE_BYTES: usize = 520;
 /// 동시에 붙을 수 있는 클라이언트 수(파이프 인스턴스 수)
 pub const MAX_CLIENTS: usize = 16;
+/// 0.3.3(보안 강화): 같은 사용자(클라이언트 프로세스의 SID)가 동시에 붙잡을 수 있는 연결 수 — 한 사람이 16개를 다 붙잡아
+/// 다른 사용자의 빠른 검색을 막지 못하게
+pub const MAX_CLIENTS_PER_USER: usize = 4;
+/// 0.3.3: 연결한 뒤 첫 요청이 다 올 때까지(이 안에 안 오면 끊음)
+pub const FIRST_FRAME_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+/// 0.3.3: 요청 사이에 아무것도 오지 않으면 끊는 시간(읽기·쓰기 하나마다)
+pub const IDLE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
+
+/// 0.3.3: 사용자별 연결 수 세기(서버가 연결을 받자마자 확인, 끝나면 돌려줌)
+#[derive(Debug, Default)]
+pub struct ConnLimiter {
+    per: std::sync::Mutex<std::collections::HashMap<String, usize>>,
+}
+
+impl ConnLimiter {
+    /// `key`(사용자 SID, 모르면 "?")의 연결을 하나 더 받을 수 있으면 세고 true
+    pub fn try_acquire(&self, key: &str, max: usize) -> bool {
+        let mut m = self.per.lock().unwrap_or_else(|e| e.into_inner());
+        let n = m.entry(key.to_string()).or_insert(0);
+        if *n >= max {
+            return false;
+        }
+        *n += 1;
+        true
+    }
+    pub fn release(&self, key: &str) {
+        let mut m = self.per.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(n) = m.get_mut(key) {
+            *n = n.saturating_sub(1);
+            if *n == 0 {
+                m.remove(key);
+            }
+        }
+    }
+    pub fn count(&self, key: &str) -> usize {
+        self.per.lock().unwrap_or_else(|e| e.into_inner()).get(key).copied().unwrap_or(0)
+    }
+}
 
 // ---------- 메시지 ----------
 
@@ -652,6 +690,26 @@ pub const SERVICE_SOURCE_LABEL: &str = "빠른 색인(서비스)";
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn per_user_connection_cap() {
+        let l = super::ConnLimiter::default();
+        let (a, b) = ("S-1-5-21-1-1001", "S-1-5-21-1-1002");
+        for _ in 0..super::MAX_CLIENTS_PER_USER {
+            assert!(l.try_acquire(a, super::MAX_CLIENTS_PER_USER));
+        }
+        // 한 사용자가 한도를 채워도 다른 사용자는 들어온다
+        assert!(!l.try_acquire(a, super::MAX_CLIENTS_PER_USER));
+        assert!(l.try_acquire(b, super::MAX_CLIENTS_PER_USER));
+        assert!(super::MAX_CLIENTS_PER_USER * 2 < super::MAX_CLIENTS, "한 사람이 전체를 못 채움");
+        l.release(a);
+        assert_eq!(l.count(a), super::MAX_CLIENTS_PER_USER - 1);
+        assert!(l.try_acquire(a, super::MAX_CLIENTS_PER_USER));
+        for _ in 0..10 {
+            l.release(b);
+        }
+        assert_eq!(l.count(b), 0);
+    }
+
     use super::*;
 
     #[test]
