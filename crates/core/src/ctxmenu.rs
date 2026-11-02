@@ -114,9 +114,76 @@ pub fn parse_args<I: IntoIterator<Item = S>, S: AsRef<str>>(args: I) -> Option<(
     Some((job, files))
 }
 
-/// 절대 경로이고 실제로 있는 것만(없는 경로·상대 경로·이상한 인자는 버림)
+/// 0.3.3(보안 강화): 우클릭으로 온 경로의 종류(파일 시스템을 건드리지 않고 글자만 보고)
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CtxPath {
+    /// 로컬 드라이브 문자 경로(`C:\…`)
+    Local,
+    /// 네트워크 위치(`\\server\share\…`, 연결한 네트워크 드라이브) — 있는지 보지도 않는다(SMB 연결·NTLM 인증 시도가 생기므로)
+    Network,
+    /// 장치 경로(`\\?\…`, `\\.\…`, `\??\…`)·상대 경로·옵션처럼 생긴 것
+    Rejected,
+}
+
+/// 네트워크 위치 파일을 받지 않았을 때 보이는 말
+pub const MSG_NETWORK: &str = "네트워크 위치의 파일은 직접 골라 주세요";
+
+/// 글자만 보고 나누기(드라이브가 네트워크 드라이브인지는 [`classify_path`]가 따로 본다)
+pub fn classify_text(s: &str) -> CtxPath {
+    let b = s.as_bytes();
+    let sep = |c: u8| c == b'\\' || c == b'/';
+    if b.len() >= 4 && sep(b[0]) && sep(b[1]) && (b[2] == b'?' || b[2] == b'.') && sep(b[3]) {
+        return CtxPath::Rejected;
+    }
+    if b.len() >= 4 && sep(b[0]) && b[1] == b'?' && b[2] == b'?' && sep(b[3]) {
+        return CtxPath::Rejected;
+    }
+    if b.len() >= 2 && sep(b[0]) && sep(b[1]) {
+        return CtxPath::Network;
+    }
+    if b.len() >= 3 && b[0].is_ascii_alphabetic() && b[1] == b':' && sep(b[2]) {
+        return CtxPath::Local;
+    }
+    // (Windows가 아닌 개발·시험 PC의 절대 경로)
+    #[cfg(not(windows))]
+    if b.first() == Some(&b'/') {
+        return CtxPath::Local;
+    }
+    CtxPath::Rejected
+}
+
+/// [`classify_text`] + (Windows) 연결한 네트워크 드라이브 문자(`GetDriveTypeW` = `DRIVE_REMOTE`)는 네트워크로
+pub fn classify_path(s: &str) -> CtxPath {
+    let k = classify_text(s);
+    #[cfg(windows)]
+    if k == CtxPath::Local {
+        let root: Vec<u16> = s[..3].encode_utf16().chain(std::iter::once(0)).collect();
+        // DRIVE_REMOTE = 4
+        if unsafe { windows_sys::Win32::Storage::FileSystem::GetDriveTypeW(root.as_ptr()) } == 4 {
+            return CtxPath::Network;
+        }
+    }
+    k
+}
+
+/// 로컬 드라이브 문자 경로이고 실제로 있는 것만(없는 경로·상대 경로·장치 경로·이상한 인자는 버림).
+/// 네트워크 위치는 있는지 보지 않고 버리며 그 개수를 돌려준다(화면에 [`MSG_NETWORK`]).
+pub fn split_paths(files: Vec<String>) -> (Vec<String>, usize) {
+    let mut ok = Vec::new();
+    let mut network = 0;
+    for f in files {
+        match classify_path(&f) {
+            CtxPath::Local if Path::new(&f).exists() => ok.push(f),
+            CtxPath::Network => network += 1,
+            _ => {}
+        }
+    }
+    (ok, network)
+}
+
+/// [`split_paths`]의 쓸 수 있는 경로만
 pub fn existing_paths(files: Vec<String>) -> Vec<String> {
-    files.into_iter().filter(|f| { let p = Path::new(f); p.is_absolute() && p.exists() }).collect()
+    split_paths(files).0
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -237,12 +304,17 @@ pub fn set(enabled: bool, exe: &Path) -> Result<CtxStatus> {
 pub struct Collector {
     pending: Vec<(String, Vec<String>)>,
     last: Option<Instant>,
+    /// 0.3.3: 받지 않은 네트워크 위치 파일 수
+    network: usize,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct CtxBatch {
     pub job: String,
     pub paths: Vec<String>,
+    /// 0.3.3: 화면에 보일 안내(네트워크 위치 파일을 받지 않았을 때)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
 }
 
 pub const QUIET: Duration = Duration::from_millis(700);
@@ -251,6 +323,11 @@ impl Collector {
     pub fn push(&mut self, job: String, files: Vec<String>, now: Instant) {
         self.pending.push((job, files));
         self.last = Some(now);
+    }
+    /// 0.3.3: 받은 경로 + 받지 않은 네트워크 위치 파일 수(파일이 하나도 없어도 안내를 위해 넣는다)
+    pub fn push_with_network(&mut self, job: String, files: Vec<String>, network: usize, now: Instant) {
+        self.network += network;
+        self.push(job, files, now);
     }
     pub fn is_empty(&self) -> bool {
         self.pending.is_empty()
@@ -273,7 +350,7 @@ impl Collector {
             let b = match out.iter_mut().position(|b| b.job == job) {
                 Some(i) => &mut out[i],
                 None => {
-                    out.push(CtxBatch { job, paths: Vec::new() });
+                    out.push(CtxBatch { job, paths: Vec::new(), note: None });
                     out.last_mut().unwrap()
                 }
             };
@@ -284,6 +361,12 @@ impl Collector {
             }
         }
         self.last = None;
+        if self.network > 0 {
+            if let Some(b) = out.last_mut() {
+                b.note = Some(MSG_NETWORK.to_string());
+            }
+            self.network = 0;
+        }
         out
     }
 }
@@ -360,6 +443,32 @@ mod tests {
     }
 
     #[test]
+    fn only_local_drive_paths() {
+        assert_eq!(classify_text(r"C:\Users\a\b.pdf"), CtxPath::Local);
+        assert_eq!(classify_text("d:/x.pdf"), CtxPath::Local);
+        assert_eq!(classify_text(r"\\server\share\a.pdf"), CtxPath::Network);
+        assert_eq!(classify_text("//server/share/a.pdf"), CtxPath::Network);
+        assert_eq!(classify_text(r"\\?\C:\a.pdf"), CtxPath::Rejected);
+        assert_eq!(classify_text(r"\\?\UNC\server\share\a.pdf"), CtxPath::Rejected);
+        assert_eq!(classify_text(r"\\.\PhysicalDrive0"), CtxPath::Rejected);
+        assert_eq!(classify_text(r"\\.\pipe\x"), CtxPath::Rejected);
+        assert_eq!(classify_text(r"\??\C:\a.pdf"), CtxPath::Rejected);
+        assert_eq!(classify_text("relative.pdf"), CtxPath::Rejected);
+        assert_eq!(classify_text("C:relative.pdf"), CtxPath::Rejected);
+        assert_eq!(classify_text("--autostart"), CtxPath::Rejected);
+        assert_eq!(classify_text(""), CtxPath::Rejected);
+        // 네트워크 위치는 세기만(있는지 보지 않음)
+        let (ok, net) = split_paths(vec![r"\\192.0.2.1\share\a.pdf".into(), "//192.0.2.1/s/b.pdf".into(), r"\\?\C:\a.pdf".into()]);
+        assert!(ok.is_empty());
+        assert_eq!(net, 2);
+        let mut c = Collector::default();
+        let t0 = Instant::now();
+        c.push_with_network("merge".into(), ok, net, t0);
+        let b = c.take();
+        assert_eq!(b, vec![CtxBatch { job: "merge".into(), paths: vec![], note: Some(MSG_NETWORK.into()) }]);
+    }
+
+    #[test]
     fn collector_waits_for_quiet_and_groups() {
         let t0 = Instant::now();
         let mut c = Collector::default();
@@ -373,8 +482,8 @@ mod tests {
         assert!(c.is_quiet(t0 + Duration::from_millis(1300), QUIET));
         let b = c.take_if_quiet(t0 + Duration::from_millis(1300), QUIET).unwrap();
         assert_eq!(b, vec![
-            CtxBatch { job: "merge".into(), paths: vec!["a.pdf".into(), "b.pdf".into()] },
-            CtxBatch { job: "photo".into(), paths: vec!["c.jpg".into()] },
+            CtxBatch { job: "merge".into(), paths: vec!["a.pdf".into(), "b.pdf".into()], note: None },
+            CtxBatch { job: "photo".into(), paths: vec!["c.jpg".into()], note: None },
         ]);
         assert!(c.is_empty());
     }

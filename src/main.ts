@@ -3,7 +3,7 @@
 // 화면 모듈은 src/screens/*. 처음 쓰는 사람도 설명 없이 쓸 수 있게 짧은 존댓말로.
 import { invoke, listen } from "./api";
 import { I } from "./icons";
-import { $, $$, el, esc, installTips } from "./ui";
+import { $, $$, el, esc, installTips, toast } from "./ui";
 import { Screen, ScreenId, setGo } from "./router";
 import { applyTheme, initTheme } from "./theme";
 import { convertScreen } from "./screens/convert";
@@ -121,9 +121,13 @@ const pick = (t: string | null | undefined): ScreenId | null => (!t ? null : IDS
 
 // ---------- 0.3.2 우클릭 메뉴로 온 파일 ----------
 
-interface CtxBatch { job: JobId; paths: string[] }
+interface CtxBatch { job: JobId; paths: string[]; note?: string }
 async function takeCtx() {
-  const b = await invoke<CtxBatch[]>("ctx_take").catch(() => [] as CtxBatch[]);
+  const all = await invoke<CtxBatch[]>("ctx_take").catch(() => [] as CtxBatch[]);
+  // 0.3.3: 네트워크 위치 파일은 받지 않음 → 안내만
+  const note = all.find((x) => x.note)?.note;
+  if (note) toast(note, 5000);
+  const b = all.filter((x) => x.paths.length);
   if (!b.length) return;
   const last = b[b.length - 1];
   const cur = jobScreen.current();

@@ -125,10 +125,11 @@ impl CtxQueue {
     pub fn push_args<I: IntoIterator<Item = S>, S: AsRef<str>>(&self, args: I) -> bool {
         match ctxmenu::parse_args(args) {
             Some((job, files)) => {
-                // `--` 뒤 인자는 경로로만 보고, 없는 경로는 버린다(보안)
-                let files = ctxmenu::existing_paths(files);
-                if !files.is_empty() {
-                    self.0.lock().unwrap().push(job, files, Instant::now());
+                // `--` 뒤 인자는 경로로만 보고, 없는 경로는 버린다(보안).
+                // 0.3.3(보안 강화): 로컬 드라이브 경로만. 네트워크 위치는 있는지 보지도 않고 "직접 골라 주세요" 안내만
+                let (files, network) = ctxmenu::split_paths(files);
+                if !files.is_empty() || network > 0 {
+                    self.0.lock().unwrap().push_with_network(job, files, network, Instant::now());
                 }
                 true
             }
