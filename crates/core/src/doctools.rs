@@ -441,18 +441,22 @@ pub fn install(pack: &Path, root: &Path, pin: Pin, source: &str, delete_bad: boo
         Error::Invalid(if delete_bad { MSG_HASH.into() } else { MSG_HASH_FILE.into() })
     };
     if len != pin.size {
+        drop(f);
         return Err(bad(&own));
     }
     let mut tee = HashTee { inner: std::io::BufReader::new(f), h: Sha256::new(), n: 0, cancel };
     let unpacked = crate::bundle::unpack_tar_zst(&mut tee, pin.size, crate::bundle::LIBREOFFICE, &partial);
     // tar 끝 뒤에 남은 바이트도 해시에 넣는다(묶음 전체의 해시와 비교하므로)
     let drained = std::io::copy(&mut tee, &mut std::io::sink());
-    let got: String = tee.h.finalize().iter().map(|b| format!("{b:02x}")).collect();
+    // 핸들을 먼저 닫는다(Windows는 쓰기·지우기 공유 없이 연 파일을 열린 채로 지울 수 없음)
+    let HashTee { inner, h, n: read_n, .. } = tee;
+    drop(inner);
+    let got: String = h.finalize().iter().map(|b| format!("{b:02x}")).collect();
     if matches!(&unpacked, Err(Error::Cancelled)) || cancel.is_some_and(Cancel::is_cancelled) {
         let _ = std::fs::remove_dir_all(&partial);
         return Err(Error::Cancelled);
     }
-    if drained.is_err() || tee.n != pin.size || got != pin.sha256 {
+    if drained.is_err() || read_n != pin.size || got != pin.sha256 {
         let _ = std::fs::remove_dir_all(&partial);
         return Err(bad(&own));
     }
