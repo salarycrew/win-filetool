@@ -22,6 +22,7 @@ const WB_RELS: &str = "xl/_rels/workbook.xml.rels";
 const WB: &str = "xl/workbook.xml";
 const CT: &str = "[Content_Types].xml";
 const EXT_LINKS: &str = "xl/externalLinks/";
+const CALC_CHAIN: &str = "xl/calcChain.xml";
 
 fn rel_re() -> regex::Regex {
     regex::Regex::new(r#"(?s)<Relationship\b[^>]*?(?:/>|>\s*</Relationship>)"#).expect("정규식")
@@ -103,6 +104,52 @@ pub fn drop_external_link_types(xml: &str) -> String {
     re.replace_all(xml, "").into_owned()
 }
 
+/// 수식이 외부 통합 문서(`[1]Sheet1!A1`, `'[2]표'!B2`)를 가리키는지
+fn is_external_formula(f: &str) -> bool {
+    regex::Regex::new(r"\[\d+\]").expect("정규식").is_match(f)
+}
+
+/// 시트 XML에서 외부 통합 문서를 가리키는 `<f>`를 지운다(저장된 값 `<v>`는 남김). 그 수식이 공유 수식의 머리였으면
+/// 같은 `si`를 쓰는 다른 칸의 `<f t="shared" si=…/>`도 지운다.
+pub fn drop_external_formulas(xml: &str) -> String {
+    let re = regex::Regex::new(r#"(?s)<f\b([^>]*?)(?:/>|>(.*?)</f>)"#).expect("정규식");
+    let mut shared: Vec<String> = Vec::new();
+    for c in re.captures_iter(xml) {
+        let body = c.get(2).map(|m| m.as_str()).unwrap_or("");
+        if is_external_formula(body) {
+            if let Some(si) = attr(&c[0], "si") {
+                shared.push(si.to_string());
+            }
+        }
+    }
+    re.replace_all(xml, |c: &regex::Captures| {
+        let body = c.get(2).map(|m| m.as_str()).unwrap_or("");
+        let si = attr(&c[0], "si");
+        if is_external_formula(body) || si.is_some_and(|x| shared.iter().any(|s| s == x)) {
+            String::new()
+        } else {
+            c[0].to_string()
+        }
+    })
+    .into_owned()
+}
+
+/// `xl/workbook.xml`의 이름 정의 중 외부 통합 문서를 가리키는 것을 지운다
+pub fn drop_external_defined_names(xml: &str) -> String {
+    let re = regex::Regex::new(r#"(?s)<definedName\b[^>]*?(?:/>|>(.*?)</definedName>)"#).expect("정규식");
+    let s = re
+        .replace_all(xml, |c: &regex::Captures| if c.get(1).is_some_and(|m| is_external_formula(m.as_str())) { String::new() } else { c[0].to_string() })
+        .into_owned();
+    let empty = regex::Regex::new(r#"(?s)<definedNames\b[^>]*>\s*</definedNames>"#).expect("정규식");
+    empty.replace_all(&s, "").into_owned()
+}
+
+/// `[Content_Types].xml`에서 `/xl/calcChain.xml` Override를 지운다
+pub fn drop_calc_chain_type(xml: &str) -> String {
+    let re = regex::Regex::new(r#"(?is)<Override\b[^>]*\bPartName\s*=\s*["']/xl/calcChain\.xml["'][^>]*?(?:/>|>\s*</Override>)"#).expect("정규식");
+    re.replace_all(xml, "").into_owned()
+}
+
 /// zip 기반 OOXML의 바깥 참조를 임시 복사본에서 지운다. 바꿨으면 true(없었거나 zip이 아니면 false).
 pub fn strip_external_refs(p: &Path) -> Result<bool> {
     let mut head = [0u8; 4];
@@ -138,23 +185,47 @@ pub fn strip_external_refs(p: &Path) -> Result<bool> {
     }
     // Excel: 외부 통합 문서 연결
     let ext_parts: Vec<usize> = names.iter().enumerate().filter(|(_, n)| n.len() >= EXT_LINKS.len() && n[..EXT_LINKS.len()].eq_ignore_ascii_case(EXT_LINKS)).map(|(i, _)| i).collect();
-    let mut wb_ids = Vec::new();
-    if let Some(ri) = find(WB_RELS) {
-        let (xml, ids) = drop_external_link_rels(&read(ri)?);
-        if !ids.is_empty() {
-            replace.push((ri, xml));
+    let wb_rels = match find(WB_RELS) {
+        Some(ri) => Some((ri, read(ri)?)),
+        None => None,
+    };
+    let has_link_rel = wb_rels.as_ref().is_some_and(|(_, x)| !drop_external_link_rels(x).1.is_empty());
+    if !ext_parts.is_empty() || has_link_rel {
+        drop.extend(ext_parts);
+        // 그 연결을 가리키는 수식은 값만 남기고 지운다(가리킬 곳이 없는 `[1]Sheet1!A1`이 남으면 Excel이 파일을 열지 못함).
+        // 계산 순서 목록(calcChain)도 지운다 — 수식이 없어진 칸을 가리키면 Excel이 "복구"하려 하므로(열 때 다시 만듦)
+        let mut wb_ids = Vec::new();
+        if let Some((ri, x)) = &wb_rels {
+            let (xml, ids) = drop_rels(x, |el| type_ends(el, "/externalLink") || type_ends(el, "/calcChain"));
+            replace.push((*ri, xml));
             wb_ids = ids;
         }
-    }
-    if !ext_parts.is_empty() || !wb_ids.is_empty() {
-        drop.extend(ext_parts);
+        if let Some(ci) = find(CALC_CHAIN) {
+            drop.insert(ci);
+        }
         if let Some(wi) = find(WB) {
             let s = read(wi)?;
-            replace.push((wi, drop_external_references(&s, &wb_ids)));
+            replace.push((wi, drop_external_defined_names(&drop_external_references(&s, &wb_ids))));
         }
         if let Some(ci) = find(CT) {
             let s = read(ci)?;
-            replace.push((ci, drop_external_link_types(&s)));
+            replace.push((ci, drop_calc_chain_type(&drop_external_link_types(&s))));
+        }
+        let sheets: Vec<usize> = names
+            .iter()
+            .enumerate()
+            .filter(|(_, n)| {
+                let l = n.to_ascii_lowercase();
+                l.starts_with("xl/worksheets/") && !l.contains("/_rels/") && l.ends_with(".xml")
+            })
+            .map(|(i, _)| i)
+            .collect();
+        for si in sheets {
+            let x = read(si)?;
+            let y = drop_external_formulas(&x);
+            if y != x {
+                replace.push((si, y));
+            }
         }
     }
     if replace.is_empty() && drop.is_empty() {
@@ -300,7 +371,21 @@ mod tests {
         let all: String = files.iter().map(|(_, v)| v.as_str()).collect();
         assert!(!all.contains("externalLink") && !all.contains("externalReference") && !all.contains("attacker"), "{all}");
         assert!(all.contains("<v>42</v>") && all.contains("Sheet1"), "셀 값·시트는 그대로");
+        assert!(!all.contains("<f>"), "외부를 가리키던 수식은 지움(값만 남김): {all}");
         assert!(!strip_external_refs(&p).unwrap());
+    }
+
+    #[test]
+    fn external_formulas_and_names() {
+        let x = r#"<sheetData><row r="1"><c r="A1"><f>SUM(B1:B2)</f><v>3</v></c><c r="B1"><f t="shared" ref="B1:B3" si="0">[1]Sheet1!A1</f><v>1</v></c></row><row r="2"><c r="B2"><f t="shared" si="0"/><v>2</v></c><c r="C2"><f t="shared" ref="C2:C3" si="1">A1*2</f><v>6</v></c></row><row r="3"><c r="C3"><f t="shared" si="1"/><v>6</v></c><c r="D3"><f>'[2]표 1'!B2+1</f><v>9</v></c></row></sheetData>"#;
+        let y = drop_external_formulas(x);
+        assert!(y.contains("<f>SUM(B1:B2)</f>") && y.contains(r#"si="1">A1*2</f>"#) && y.contains(r#"<f t="shared" si="1"/>"#), "{y}");
+        assert!(!y.contains("[1]") && !y.contains("[2]") && !y.contains(r#"si="0""#), "{y}");
+        assert!(y.contains("<v>1</v>") && y.contains("<v>2</v>") && y.contains("<v>9</v>"));
+        let w = r#"<workbook><definedNames><definedName name="ext">[1]Sheet1!$A$1</definedName><definedName name="mine">Sheet1!$A$1</definedName></definedNames></workbook>"#;
+        let z = drop_external_defined_names(w);
+        assert!(z.contains("mine") && !z.contains("ext"), "{z}");
+        assert_eq!(drop_external_defined_names(r#"<workbook><definedNames><definedName name="e">[1]S!A1</definedName></definedNames></workbook>"#), "<workbook></workbook>");
     }
 
     #[test]
