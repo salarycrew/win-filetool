@@ -401,11 +401,21 @@ mod tests {
     fn open_nofollow_refuses_links() {
         let t = tempfile::tempdir().unwrap();
         let real = t.path().join("real");
-        std::fs::create_dir(&real).unwrap();
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
+            std::fs::create_dir(&real).unwrap();
             std::fs::set_permissions(&real, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        // Windows: 상속받는 TEMP의 ACL은 PC마다 다르다(다른 계정에 수정 권한이 붙은 PC도 있음) → 시험 폴더는 나·SYSTEM·관리자만으로 만든다
+        #[cfg(windows)]
+        {
+            let me = current_user_sid().unwrap();
+            create_dir_with_sddl(&real, &format!("D:P(A;OICI;FA;;;{me})(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)")).unwrap();
+            // 다른 사람(Authenticated Users)이 수정할 수 있는 폴더 → 아님
+            let shared = t.path().join("shared");
+            create_dir_with_sddl(&shared, &format!("D:P(A;OICI;FA;;;{me})(A;OICI;0x1301bf;;;AU)")).unwrap();
+            assert!(!dir_user_only(&shared));
         }
         assert!(matches!(open_dir_nofollow(&real, false).unwrap(), Opened::Dir(_)));
         assert!(matches!(open_dir_nofollow(&t.path().join("none"), false).unwrap(), Opened::NotFound));

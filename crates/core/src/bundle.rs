@@ -605,6 +605,13 @@ mod tests {
             std::fs::create_dir_all(&beside).unwrap();
             std::fs::set_permissions(&beside, std::fs::Permissions::from_mode(0o755)).unwrap();
         }
+        // (Windows 시험: 상속 ACL은 PC마다 다르므로 나·SYSTEM·관리자만으로 만든다)
+        #[cfg(windows)]
+        {
+            let me = crate::secdir::current_user_sid().unwrap();
+            std::fs::create_dir_all(beside.parent().unwrap()).unwrap();
+            crate::secdir::create_dir_with_sddl(&beside, &format!("D:P(A;OICI;FA;;;{me})(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)")).unwrap();
+        }
         assert_eq!(choose_root(&bad, Some(&beside)), beside);
         // 0.3.3(보안 강화): exe 옆 폴더를 다른 사람도 쓸 수 있으면 쓰지 않는다
         #[cfg(unix)]
