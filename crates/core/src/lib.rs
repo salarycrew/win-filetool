@@ -61,6 +61,7 @@ pub mod rename;
 pub mod runtime;
 pub mod samples;
 pub mod search;
+pub mod secdir;
 pub mod settings;
 pub mod tempdir;
 pub mod testhooks;

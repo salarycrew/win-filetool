@@ -340,10 +340,6 @@ mod win {
         Ok(out)
     }
 
-    fn owner_sid(sddl: &str) -> Option<&str> {
-        sddl.strip_prefix("O:").map(|r| r.split("D:").next().unwrap_or(r))
-    }
-
     fn account_sid(name: &str) -> Result<(Vec<u8>, String), String> {
         let n = wide(name);
         let mut sid = vec![0u8; 256];
@@ -561,20 +557,54 @@ mod win {
         Err(format!("서비스는 실행 중이지만 파이프가 답하지 않습니다: {last}").into())
     }
 
-    /// 자료 폴더 준비. 일반 사용자가 먼저 만들어 둔 폴더(소유자가 SYSTEM·관리자가 아님)는 지우고 새로 만든다
+    /// 자료 폴더 준비(0.3.3 보안 강화).
+    ///
+    /// 서비스를 처음 설치하기 전에는 일반 사용자도 `C:\ProgramData\kr.salarycrew.winfiletool`을 만들 수 있다. 그것이 다른 폴더를
+    /// 가리키는 접합점이면 경로로 소유자를 읽고(`GetNamedSecurityInfoW`) 경로로 DACL을 바꾸는(`SetNamedSecurityInfoW`) 방식은
+    /// **대상** 폴더를 검사·변경한다. 그래서:
+    /// - 재분석 지점을 따라가지 않고 연다(`FILE_FLAG_OPEN_REPARSE_POINT | FILE_FLAG_BACKUP_SEMANTICS`), 접합점·링크면 링크만 지운다
+    /// - 소유자 검사와 DACL 설정을 **같은 핸들**로(`GetSecurityInfo`/`SetSecurityInfo`)
+    /// - 새로 만들 때는 `CreateDirectoryW`에 보안 설명자를 넘겨 만드는 순간부터 SYSTEM·관리자만
     fn prepare_data_dir(data: &Path, sddl: &str) -> Result<(), String> {
-        if data.exists() {
-            let cur = sddl_of(&data.to_string_lossy()).unwrap_or_default();
-            let owner = owner_sid(&cur).unwrap_or("");
-            if owner != "SY" && owner != "BA" && owner != "S-1-5-18" && owner != "S-1-5-32-544" {
-                say!("      소유자가 SYSTEM·관리자가 아닌 폴더({owner}) → 지우고 새로 만듦");
-                std::fs::remove_dir_all(data).map_err(|e| format!("{}: {e}", data.display()))?;
+        use filetool_core::secdir::{create_dir_with_sddl, data_dir_action, open_dir_nofollow, DataDirAction, Opened};
+        let err = |e: std::io::Error| format!("{}: {e}", data.display());
+        // 지우고 새로 만드는 사이에 누군가 다시 끼워 넣으면(경쟁) 몇 번만 다시 해 보고 멈춘다
+        for _ in 0..4 {
+            match open_dir_nofollow(data, true).map_err(err)? {
+                Opened::NotFound => match create_dir_with_sddl(data, sddl) {
+                    Ok(()) => say!("      새로 만듦(만들 때부터 SYSTEM·관리자만)"),
+                    Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
+                    Err(e) => return Err(err(e)),
+                },
+                Opened::Reparse => {
+                    say!("      접합점·링크로 된 폴더 → 따라가지 않고 링크만 지움");
+                    // 디렉터리 접합점·디렉터리 링크는 RemoveDirectoryW로 링크만 지워진다(대상은 그대로)
+                    if let Err(e) = std::fs::remove_dir(data) {
+                        // 파일 링크면
+                        std::fs::remove_file(data).map_err(|_| err(e))?;
+                    }
+                    continue;
+                }
+                Opened::Dir(h) => {
+                    let (owner, _) = h.owner_and_aces().map_err(err)?;
+                    match data_dir_action(false, &owner) {
+                        DataDirAction::Keep => {
+                            h.set_protected_dacl(sddl).map_err(|e| format!("{}: 권한을 설정할 수 없습니다({e})", data.display()))?;
+                            std::fs::create_dir_all(service_index_dir(data)).map_err(|e| e.to_string())?;
+                            return Ok(());
+                        }
+                        _ => {
+                            say!("      소유자가 SYSTEM·관리자가 아닌 폴더({owner}) → 지우고 새로 만듦");
+                            drop(h);
+                            // remove_dir_all은 안의 접합점·링크를 따라가지 않고 링크만 지운다(Rust 1.58+)
+                            std::fs::remove_dir_all(data).map_err(err)?;
+                            continue;
+                        }
+                    }
+                }
             }
         }
-        std::fs::create_dir_all(data).map_err(|e| format!("{}: {e}", data.display()))?;
-        set_dacl(data, sddl)?;
-        std::fs::create_dir_all(service_index_dir(data)).map_err(|e| e.to_string())?;
-        Ok(())
+        Err(format!("{}: 자료 폴더를 안전하게 준비하지 못했습니다(다른 프로그램이 계속 바꿈)", data.display()))
     }
 
     fn uninstall() -> Result<(), Fail> {
