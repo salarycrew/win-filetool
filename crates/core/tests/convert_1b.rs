@@ -74,6 +74,15 @@ fn tool_discovery_fake_dirs() {
     std::fs::remove_file(&portable).unwrap();
     let side = root.join("app/tools/lo/program").join(exe(Tool::Soffice));
     touch(&side);
+    // 0.3.3(보안 강화): 앱 옆 tools\는 현재 사용자 전용일 때만 찾는다(Unix 시험: umask와 상관없이 그룹·기타 쓰기 없게)
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let tools_dir = root.join("app/tools");
+        std::fs::set_permissions(&tools_dir, std::fs::Permissions::from_mode(0o777)).unwrap();
+        assert!(tools::find(Tool::Soffice, None, None, &env).is_none(), "다른 사람도 쓸 수 있는 tools 폴더는 보지 않음");
+        std::fs::set_permissions(&tools_dir, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
     assert_eq!(tools::find(Tool::Soffice, None, None, &env).unwrap().0, side);
 
     // 버전 줄 해석
