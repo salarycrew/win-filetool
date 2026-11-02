@@ -19,6 +19,8 @@ fn main() {
 
 #[cfg(windows)]
 fn main() {
+    // 0.3.3(보안 강화): DLL은 System32에서만 찾는다 — 맨 먼저
+    filetool_core::dllsafe::harden();
     std::process::exit(win::main());
 }
 

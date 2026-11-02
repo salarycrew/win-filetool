@@ -449,7 +449,7 @@ fn search_config(s: &SearchSettings, covered: &[PathBuf]) -> SearchConfig {
     SearchConfig::new(roots, s.excludes.clone(), &index_dir())
 }
 
-/// 색인 폴더(시험용 WIN_FILETOOL_INDEX_DIR, 기본 %LOCALAPPDATA%\kr.salarycrew.winfiletool\index)
+/// 색인 폴더(시험용 WIN_FILETOOL_INDEX_DIR — 시험용 앱만, 기본 %LOCALAPPDATA%\kr.salarycrew.winfiletool\index)
 fn index_dir() -> PathBuf {
     default_index_dir()
 }
@@ -1130,6 +1130,8 @@ fn forward_ctx_fast() -> bool {
 }
 
 fn main() {
+    // 0.3.3(보안 강화): DLL은 System32에서만 찾는다(휴대용 exe 옆·다운로드 폴더의 DLL을 불러오지 않게) — 맨 먼저
+    filetool_core::dllsafe::harden();
     let started = Instant::now();
     // 0.3.3: 시험용 바꾸기(한글·Office 숨기기, 문서 도구 주소)는 개발 빌드·시험용 exe(`test-hooks`)에서만 읽는다
     #[cfg(any(debug_assertions, feature = "test-hooks"))]
@@ -1175,7 +1177,7 @@ fn main() {
         })
         .setup(move |app| {
             cmd_core::mark("setup", started);
-            // 설정 폴더: WIN_FILETOOL_CONFIG_DIR(시험용) → exe 옆 win-filetool-data\(휴대용, 0.3.0) → %APPDATA%
+            // 설정 폴더: WIN_FILETOOL_CONFIG_DIR(시험용 앱만) → exe 옆 win-filetool-data\(휴대용, 0.3.0) → %APPDATA%
             let default_dir = app.path().app_config_dir().unwrap_or_else(|_| std::env::temp_dir().join("win-filetool"));
             let exe_dir = std::env::current_exe().ok().and_then(|p| p.parent().map(Path::to_path_buf));
             let (config_dir, config_source) = filetool_core::portable::config_dir(exe_dir.as_deref(), default_dir);

@@ -9,6 +9,8 @@ use filetool_core::pdfrender::{self, PageImageFormat, RenderOpts};
 use filetool_core::{autostart, samples};
 
 fn use_repo_pdfium() -> bool {
+    // 0.3.3(보안 강화): WIN_FILETOOL_PDFIUM은 시험용 바꾸기를 켰을 때만 읽는다
+    filetool_core::testhooks::enable();
     if std::env::var_os("WIN_FILETOOL_PDFIUM").is_none() {
         let p = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../third_party/pdfium/linux-x64/lib");
         std::env::set_var("WIN_FILETOOL_PDFIUM", p);

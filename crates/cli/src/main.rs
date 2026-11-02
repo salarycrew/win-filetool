@@ -65,6 +65,8 @@ const USAGE: &str = "사용법:
 공통 옵션: --ffmpeg <경로> --soffice <경로>  (주면 그 경로를 먼저, 없으면 앱에 든 도구·받은 문서 도구 → 앱 설정 → PATH → 설치 폴더 순으로 찾음)";
 
 fn main() -> ExitCode {
+    // 0.3.3(보안 강화): DLL은 System32에서만 찾는다 — 맨 먼저
+    filetool_core::dllsafe::harden();
     // 0.3.3: 점검용 CLI는 시험용 바꾸기(한글·Office 숨기기, 문서 도구 주소)를 읽는다(배포 앱은 읽지 않음)
     filetool_core::testhooks::enable();
     let args: Vec<String> = std::env::args().skip(1).collect();

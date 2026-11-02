@@ -1,7 +1,7 @@
 //! PDF → 이미지.
 //!
-//! - 쪽 렌더링: PDFium(BSD-3-Clause, `pdfium-render`로 실행 중에 불러옴). `pdfium.dll`은 앱 exe 옆에 둔다
-//!   (설치 파일·휴대용 묶음 모두 같은 위치). 없으면 한국어 안내로 끝낸다.
+//! - 쪽 렌더링: PDFium(BSD-3-Clause, `pdfium-render`로 실행 중에 불러옴). `pdfium.dll`은 앱에 든 도구 묶음에서
+//!   LOCALAPPDATA로 풀어 전체 경로로 불러온다(설치 파일·휴대용 모두). 없으면 한국어 안내로 끝낸다.
 //! - 들어 있는 이미지만 꺼내기: lopdf로 이미지 객체를 그대로 저장(JPEG는 다시 인코딩하지 않음, Flate RGB/흑백은 PNG).
 //!   PDFium이 필요 없다.
 
@@ -73,11 +73,15 @@ pub fn library_name() -> std::ffi::OsString {
     Pdfium::pdfium_platform_library_name()
 }
 
-/// 찾는 순서: 환경 변수 `WIN_FILETOOL_PDFIUM`(파일 또는 폴더) → 앱에 든 도구 묶음(0.3.0, 처음 쓸 때 풂) → exe 옆 → exe 옆 `pdfium\` → exe 옆 `tools\pdfium\(bin)`
+/// 찾는 순서: (점검용 CLI·시험용 앱만) 환경 변수 `WIN_FILETOOL_PDFIUM`(파일 또는 폴더) → 앱에 든 도구 묶음(0.3.0, 처음 쓸 때 풂).
+///
+/// 0.3.3(보안 강화): exe 옆 `pdfium.dll`·`pdfium\`·`tools\pdfium\`은 더 이상 찾지 않는다 — 휴대용 exe를 다운로드 폴더에서
+/// 실행하면 그 폴더에 먼저 받아져 있던 같은 이름의 DLL이 불릴 수 있어서. 설치본도 `pdfium.dll`을 앱 폴더에 두지 않고
+/// 묶음(`tools.pack`)에서 LOCALAPPDATA로 풀어 쓰므로 바뀌는 것이 없다.
 pub fn find_library() -> Option<PathBuf> {
     let name = library_name();
     let mut cands = Vec::new();
-    if let Some(v) = std::env::var_os("WIN_FILETOOL_PDFIUM").map(PathBuf::from) {
+    if let Some(v) = crate::testhooks::var("WIN_FILETOOL_PDFIUM").map(PathBuf::from) {
         if v.is_file() {
             cands.push(v.clone());
         }
@@ -88,12 +92,6 @@ pub fn find_library() -> Option<PathBuf> {
     let name_s = name.to_string_lossy().into_owned();
     if let Some(Ok(p)) = crate::bundle::ensure_file(crate::bundle::PDFIUM, &[name_s.as_str()]) {
         cands.push(p);
-    }
-    if let Some(dir) = std::env::current_exe().ok().and_then(|p| p.parent().map(Path::to_path_buf)) {
-        cands.push(dir.join(&name));
-        cands.push(dir.join("pdfium").join(&name));
-        cands.push(dir.join("tools").join("pdfium").join(&name));
-        cands.push(dir.join("tools").join("pdfium").join("bin").join(&name));
     }
     cands.into_iter().find(|p| p.is_file())
 }
