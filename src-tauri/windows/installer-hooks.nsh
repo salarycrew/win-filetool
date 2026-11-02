@@ -8,6 +8,8 @@
 ;        남아 있을 수 있는 HKCU 등록값(변환 중에만 두지만, 변환 중 강제 종료됐을 때 대비)을 지운다.
 ; 0.3.2: 탐색기 우클릭 메뉴("파일도구"). 설치하면 켠다(사용자가 [설정]에서 끈 적이 있으면 앱이 그대로 둠),
 ;        지우면 HKCU\Software\Classes 아래 우리 키만 지운다(앱이 지우고, 앱을 못 부를 때를 대비해 여기서도 지움).
+;  0.3.3(보안 강화): 지운 뒤 %LOCALAPPDATA%\kr.salarycrew.winfiletool(받은 문서 도구·영상/PDF 도구 약 445 MB, 검색 색인, 화면 캐시)이
+;        남아 있으면(제거 창의 "애플리케이션 데이터 삭제하기"를 고르지 않았으면) 한 번 묻고 지운다. 조용히 제거(/S)면 묻지 않고 남긴다.
 !macro NSIS_HOOK_POSTINSTALL
   ExecWait '"$INSTDIR\win-filetool.exe" --ctx-menu=install'
 !macroend
@@ -50,4 +52,12 @@
   MessageBox MB_YESNO|MB_ICONQUESTION "빠른 검색 서비스(FileToolSvc)가 설치되어 있습니다.$\r$\n함께 제거할까요? 관리자 권한 확인 창이 뜹니다.$\r$\n$\r$\n[아니요]를 누르면 서비스는 그대로 남습니다." IDNO wft_svc_done
   ExecShellWait "runas" "$INSTDIR\filetool-svc.exe" "uninstall" SW_HIDE
   wft_svc_done:
+!macroend
+
+!macro NSIS_HOOK_POSTUNINSTALL
+  IfSilent wft_data_done
+  IfFileExists "$LOCALAPPDATA\kr.salarycrew.winfiletool\*.*" 0 wft_data_done
+  MessageBox MB_YESNO|MB_ICONQUESTION "이 PC에 파일 도구 자료가 남아 있어요.$\r$\n(받은 문서 도구·영상/PDF 도구 약 445 MB, 검색 색인 등)$\r$\n$\r$\n$LOCALAPPDATA\kr.salarycrew.winfiletool$\r$\n$\r$\n함께 지울까요? [아니요]를 누르면 남겨 둡니다(다시 설치하면 그대로 써요)." IDNO wft_data_done
+  RMDir /r "$LOCALAPPDATA\kr.salarycrew.winfiletool"
+  wft_data_done:
 !macroend

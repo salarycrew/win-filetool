@@ -35,7 +35,9 @@ function render() {
     <div class="sc ctx-sc"><span class="sc-ic">${I("grid")}</span><div class="sc-t"><b>우클릭 메뉴</b><span class="ctx-state">확인하는 중…</span></div>
       <button type="button" class="btn accent" data-act="ctx-relink" hidden>${I("refresh")}다시 연결</button>${toggle("ctxmenu", false, "", "우클릭 메뉴")}</div>
     <div class="sc"><span class="sc-ic">${I("power")}</span><div class="sc-t"><b>윈도우 시작 시 실행</b><span class="as-state">확인하는 중…</span></div>${toggle("autostart", false, "")}</div>
-    <div class="sc svc"><span class="sc-ic">${I("bolt")}</span><div class="sc-t"><b>빠른 검색 서비스</b><span class="svc-state">확인하는 중…</span></div>
+    <div class="sc leave-sc" hidden><span class="sc-ic">${I("trash")}</span><div class="sc-t"><b>우클릭 메뉴·시작 프로그램 지우기</b><span>휴대용 앱은 제거 프로그램이 없어요. 앱 파일을 지우기 전에 눌러 두면 탐색기 메뉴와 시작 프로그램 값이 남지 않아요</span></div>
+      <button type="button" class="btn" data-act="leave">${I("trash")}지우기</button></div>
+    <div class="sc svc"><span class="sc-ic">${I("bolt")}</span><div class="sc-t"><b>빠른 검색 서비스</b><span class="svc-state">확인하는 중…</span><span class="svc-note">C:\\Users 밖의 파일은 내가 열 수 없는 파일이라도 이름이 보일 수 있어요</span></div>
       <span class="state off svc-chip"><i></i>…</span><button type="button" class="btn accent svc-up" data-svc="update" aria-label="빠른 검색 서비스 다시 설치(갱신)" title="빠른 검색 서비스 다시 설치(갱신)" hidden>${I("refresh")}다시 설치(갱신)</button><button type="button" class="btn svc-btn" disabled>…</button></div>
     <div class="sc"><span class="sc-ic">${I("keyboard")}</span><div class="sc-t"><b>단축키로 검색 열기</b><span>어디서든 눌러 검색 창을 띄워요. 칸을 누르고 쓸 단축키를 누르세요</span></div>
       <input class="txt sm hk" id="hk" placeholder="예: Ctrl+Alt+F" aria-label="단축키" readonly>${toggle("hk-on", false, "")}</div>
@@ -61,7 +63,10 @@ function render() {
 }
 
 async function loadAll() {
-  invoke<{ version: string }>("app_info").then((a) => { $(".ver", root)!.innerHTML = `파일 도구 ${esc(a.version)} · <button type="button" class="link" data-act="about">앱 정보</button>`; }).catch(() => {});
+  invoke<{ version: string; portable?: boolean }>("app_info").then((a) => {
+    $(".ver", root)!.innerHTML = `파일 도구 ${esc(a.version)} · <button type="button" class="link" data-act="about">앱 정보</button>`;
+    $<HTMLElement>(".leave-sc", root)!.hidden = !a.portable;
+  }).catch(() => {});
   invoke<CtxStatus>("ctx_menu_get").then(showCtx).catch((e) => { $(".ctx-state", root)!.textContent = friendly(e).title; });
   invoke<AutostartStatus>("autostart_get").then(showAutostart).catch((e) => { $(".as-state", root)!.textContent = friendly(e).title; });
   refreshSearch();
@@ -287,6 +292,13 @@ export const settingsScreen: Screen = {
         case "reset-roots": if (view) saveSearch({ ...view.settings, roots: [] }); break;
         case "rescan": await invoke("search_rescan").catch(() => {}); toast("다시 색인을 시작했어요"); break;
         case "save-ex": if (view) saveSearch({ ...view.settings, excludes: ($<HTMLTextAreaElement>("#excludes", root)!).value.split("\n").map((x) => x.trim()).filter(Boolean) }); break;
+        case "leave":
+          try {
+            showCtx(await invoke<CtxStatus>("ctx_menu_set", { enabled: false }));
+            showAutostart(await invoke<AutostartStatus>("autostart_set", { enabled: false }));
+            toast("우클릭 메뉴와 시작 프로그램 값을 지웠어요. 이제 앱 파일을 지워도 돼요", 4000);
+          } catch (err) { toast(friendly(err).title); }
+          break;
         case "ctx-relink": try { showCtx(await invoke<CtxStatus>("ctx_menu_set", { enabled: true })); toast("우클릭 메뉴를 이 위치의 앱에 다시 연결했어요"); } catch (err) { toast(friendly(err).title); } break;
         case "welcome": resetWelcome(); toast("변환 화면에 안내를 다시 보여 드려요"); go("convert"); break;
         case "about": go("about"); break;

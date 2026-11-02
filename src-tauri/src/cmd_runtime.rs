@@ -41,6 +41,8 @@ pub struct AppInfoOut {
     /// "env" | "portable" | "default"
     pub config_source: ConfigSource,
     pub webview2: Option<String>,
+    /// 0.3.3: 휴대용 exe로 실행 중인지(설치본은 exe 옆에 tools.pack이 있다) — [설정]의 "우클릭 메뉴·시작 프로그램 지우기"
+    pub portable: bool,
 }
 
 /// 앱 정보: 버전, 오픈소스 고지 전문, 설정 위치(휴대용 여부), WebView2 버전
@@ -57,6 +59,7 @@ pub async fn app_info(info: tauri::State<'_, RuntimeInfo>) -> Result<AppInfoOut,
             config_dir,
             config_source,
             webview2: runtime::webview2_version(),
+            portable: !std::env::current_exe().ok().and_then(|p| p.parent().map(|d| d.join("tools.pack").is_file())).unwrap_or(false),
         }
     })
     .await
